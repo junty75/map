@@ -27,7 +27,6 @@ document.addEventListener('keydown', function(e) {
 <form id="search-form">
   <input id="address-input" type="text" placeholder="주소 검색" style="padding:5px; width:180px;"/>
   <button type="submit" style="padding:5px;">검색</button>
-    <span id=\"address-display\" style=\"margin-left:10px;font-weight:bold;\"></span>
 </form>
 <div id="myLocationBtn" title="내 위치로 이동">📍</div>
 <div class="controls">
@@ -36,12 +35,14 @@ document.addEventListener('keydown', function(e) {
   <button onclick="copyCoordinates()">복사 (Ctrl+C)</button>
   <button onclick="startDrawing()">선 그리기 (Ctrl+L)</button>
   <button onclick="resetPolylines()">선 초기화</button>
+  <label>주소:</label><input id="address-display" readonly size="30"/>
   <button onclick="exportGPX()">GPX 내보내기</button>
 </div>
 <div id="map"></div>
 <script>
 let map, drawingMode=false, isFirstDraw=true;
-let geocoder;let markers=[], polylines=[];
+let geocoder;
+let markers=[], polylines=[];
 let selectedLatLng=null, currentPolyline=null, currentPath=[];
 
 // 맵 초기화 (항공영상)
@@ -51,7 +52,7 @@ function initializeMap(center){
     level: 4,
     mapTypeId: kakao.maps.MapTypeId.SKYVIEW
   });
-  geocoder = new kakao.maps.services.Geocoder();  geocoder = new kakao.maps.services.Geocoder();
+  geocoder = new kakao.maps.services.Geocoder();
   map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPRIGHT);
   map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
 
@@ -62,15 +63,11 @@ function initializeMap(center){
     geocoder.coord2Address(
       selectedLatLng.getLng(), selectedLatLng.getLat(),
       function(result, status) {
-        let addr = '';
         if (status === kakao.maps.services.Status.OK) {
-          let road = result[0].road_address ? result[0].road_address.address_name : '';
-          let jibun = result[0].address ? result[0].address.address_name : '';
-          addr = road || jibun;
+          document.getElementById('address-display').value = result[0].address.address_name;
         } else {
-          addr = '주소 없음';
+          document.getElementById('address-display').value = '주소 없음';
         }
-        document.getElementById('address-display').textContent = addr;
       }
     );
     if(drawingMode){
