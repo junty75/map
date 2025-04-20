@@ -2,7 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8"/>
-<title>GPX 마커 및 경로 지도 (v9)</title>
+<title>GPX 마커 및 경로 지도</title>
 <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services">
 // 키보드 단축키 리스너
 document.addEventListener('keydown', function(e) {
@@ -27,6 +27,8 @@ document.addEventListener('keydown', function(e) {
 <form id="search-form">
   <input id="address-input" type="text" placeholder="주소 검색" style="padding:5px; width:180px;"/>
   <button type="submit" style="padding:5px;">검색</button>
+    <div id=\"address-display\" style=\"margin-left:10px; font-weight:bold;\"></div>
+    <span id=\"address-display\" style=\"margin-left:10px;font-weight:bold;\"></span>
 </form>
 <div id="myLocationBtn" title="내 위치로 이동">📍</div>
 <div class="controls">
@@ -35,14 +37,12 @@ document.addEventListener('keydown', function(e) {
   <button onclick="copyCoordinates()">복사 (Ctrl+C)</button>
   <button onclick="startDrawing()">선 그리기 (Ctrl+L)</button>
   <button onclick="resetPolylines()">선 초기화</button>
-  <label>주소:</label><input id="address-display" readonly size="30"/>
   <button onclick="exportGPX()">GPX 내보내기</button>
 </div>
 <div id="map"></div>
 <script>
 let map, drawingMode=false, isFirstDraw=true;
-let geocoder;
-let markers=[], polylines=[];
+let geocoder;let markers=[], polylines=[];
 let selectedLatLng=null, currentPolyline=null, currentPath=[];
 
 // 맵 초기화 (항공영상)
@@ -52,7 +52,7 @@ function initializeMap(center){
     level: 4,
     mapTypeId: kakao.maps.MapTypeId.SKYVIEW
   });
-  geocoder = new kakao.maps.services.Geocoder();
+  geocoder = new kakao.maps.services.Geocoder();  geocoder = new kakao.maps.services.Geocoder();
   map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPRIGHT);
   map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
 
@@ -63,11 +63,13 @@ function initializeMap(center){
     geocoder.coord2Address(
       selectedLatLng.getLng(), selectedLatLng.getLat(),
       function(result, status) {
+        let road = '', jibun = '';
         if (status === kakao.maps.services.Status.OK) {
-          document.getElementById('address-display').value = result[0].address.address_name;
-        } else {
-          document.getElementById('address-display').value = '주소 없음';
+          road = result[0].road_address ? result[0].road_address.address_name : '';
+          jibun = result[0].address ? result[0].address.address_name : '';
         }
+        const addrText = road && jibun ? road + ' (' + jibun + ')' : (road || jibun || '주소 없음');
+        document.getElementById('address-display').textContent = addrText;
       }
     );
     if(drawingMode){
