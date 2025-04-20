@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<meta charset="utf-8"/>
+<title>GPX 마커 및 경로 지도</title>
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&amp;libraries=services"></script>
+<style>
+    #map { width: 100%; height: 850px; }
+    .controls { display: flex; justify-content: space-between; margin-top: 10px; margin-bottom: 10px; }
+    #myLocationBtn { position: absolute; bottom: 20px; right: 20px; z-index: 10; background: white; padding: 5px; border-radius: 5px; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
+</style>
+</head>
+<body>
+<form id="search-form" style="position: absolute; top: 0px; left: 10px; z-index: 9999; background: white; padding: 5px; border-radius: 5px; box-shadow: 0 2px 6px rgba(0,0,0,0.3);">
+<input id="address-input" placeholder="주소 검색" style="padding: 5px; width: 180px;" type="text"/>
+<button style="padding: 5px;" type="submit">검색</button>
+</form>
+<div id="myLocationBtn" onclick="moveToMyLocation()">📍 내 위치로 이동</div>
+<div class="controls">
+<div>
+<label>위도:</label>
+<input id="latitude" readonly="" size="20" type="text"/>
+<label>경도:</label>
+<input id="longitude" readonly="" size="20" type="text"/>
+<button onclick="copyCoordinates()">클립보드 복사 (Ctrl+C)</button>
+<button onclick="startDrawing()">선 그리기 (Ctrl+L)</button>
+<button onclick="resetPolyline()">선 지우기 (Ctrl+E)</button>
+<button onclick="addMarker(selectedLatLng)">마커 생성 (Ctrl+M)</button>
+</div>
+<button onclick="exportGPX()">GPX로 내보내기</button>
+</div>
+<div id="map"></div>
+<script>
+let map, drawingMode = false, isFirstDraw = true;
+let polylines = [], markers = [];
+let currentLinePath = [], currentPolyline = null;
+let selectedLatLng = null;
+
+function initializeMap(center) {
+    map = new kakao.maps.Map(document.getElementById('map'), {
+        center: center,
+        level: 4,
+        mapTypeId: kakao.maps.MapTypeId.HYBRID
+    });
+    map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPRIGHT);
+    map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
+
+    kakao.maps.event.addListener(map, 'click', function(mouseEvent) {
+        selectedLatLng = mouseEvent.latLng;
+        document.getElementById('latitude').value = selectedLatLng.getLat();
+        document.getElementById('longitude').value = selectedLatLng.getLng();
+        if (drawingMode) {
+            currentLinePath.push(selectedLatLng);
+            currentPolyline.setPath(currentLinePath);
+        }
+    });
+
+    kakao.maps.event.addListener(map, 'rightclick', function(mouseEvent) {
+        if (drawingMode) {
+            drawingMode = false;
+        } else {
+            // 사용자가 마커를 추가할 때 addMarker 함수를 호출
+            addMarker(mouseEvent.latLng);
+        }
+    });
+}
+
+function moveToMyLocation() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(position) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const myPos = new kakao.maps.LatLng(lat, lng);
+            map.setCenter(myPos);
+            selectedLatLng = myPos;
+            document.getElementById('latitude').value = lat;
+            document.getElementById('longitude').value = lng;
+        }, () => alert("위치 정보를 가져올 수 없습니다."));
+    } else {
+        alert("이 브라우저는 위치 정보를 지원하지 않습니다.");
+    }
+}
+
+function startDrawing() {
+    if (drawingMode) {
+        drawingMode = false;
+        alert("선 그리기 모드가 해제되었습니다.");
+        return;
+    }
+    drawingMode = true;
+    currentLinePath = [];
+    currentPolyline = new kakao.maps.Polyline({
+        map: map, path: currentLinePath,
+        strokeWeight: 3, strokeColor: '#FF0000', strokeOpacity: 0.8, strokeStyle: 'solid'
+    });
+    polylines.push(currentPolyline);
+    if (isFirstDraw) {
+        alert("지도를 클릭하여 경로를 그리세요. 우클릭하면 선 그리기가 중단됩니다.");
+        isFirstDraw = false;
+    }
+}
+
+function addMarker(position) {
+    if (!position) return alert("마커를 추가할 위치를 먼저 클릭해주세요.");
+    const desc = prompt("마커의 설명을 입력하세요", "설명 없음");
+    const marker = new kakao.maps.Marker({ position, map });
+    
+    // 인포윈도우 내용을 DOM 요소로 생성
+    const contentEl = document.createElement('div');
+    contentEl.style.position = 'relative';
+    contentEl.style.padding = '5px 25px 5px 5px';
+    contentEl.style.fontSize = '13px';
+    contentEl.innerHTML = desc;
+    
+    // 우측 끝에 닫기(X) 버튼 생성
+    const closeBtn = document.createElement('div');
+    closeBtn.innerHTML = '✖';
+    closeBtn.style.position = 'absolute';
+    closeBtn.style.top = '5px';
+    closeBtn.style.right = '0px';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.style.fontWeight = 'bold';
+    
+    contentEl.appendChild(closeBtn);
+    
+    const infowindow = new kakao.maps.InfoWindow({
+        content: contentEl
+    });
+    
+    kakao.maps.event.addListener(marker, 'click', function() {
+        infowindow.open(map, marker);
+    });
+    
+    closeBtn.onclick = function() {
+        infowindow.close();
+    };
+
+    markers.push({ marker, desc, infowindow });
+}
+
+document.addEventListener("DOMContentLoaded", function() {
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(function(pos) {
+            initializeMap(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude));
+            document.getElementById('latitude').value = pos.coords.latitude;
+            document.getElementById('longitude').value = pos.coords.longitude;
+        }, () => initializeMap(new kakao.maps.LatLng(37.5665, 126.9780)));
+    } else {
+        initializeMap(new kakao.maps.LatLng(37.5665, 126.9780));
+    }
+
+    document.addEventListener("keydown", function(e) {
+        if (e.ctrlKey && e.key === 'm') { e.preventDefault(); addMarker(selectedLatLng); }
+        if (e.ctrlKey && e.key === 'l') { e.preventDefault(); startDrawing(); }
+        if (e.ctrlKey && e.key === 'e') { e.preventDefault(); resetPolyline(); }
+        if (e.ctrlKey && e.key === 'c') { e.preventDefault(); copyCoordinates(); }
+    });
+});
+
+function copyCoordinates() {
+    const lat = document.getElementById('latitude').value;
+    const lng = document.getElementById('longitude').value;
+    navigator.clipboard.writeText(`${lat}, ${lng}`).then(() => alert("좌표가 복사되었습니다.")).catch(() => alert("클립보드 복사 실패"));
+}
+
+function exportGPX() {
+    let filename = prompt("파일명을 입력하세요", "kakao_data");
+    if (!filename) return;
+    let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="KakaoMap">\n';
+    polylines.forEach((line, i) => {
+        gpx += `<trk><name>${filename}_${i + 1}</name><trkseg>\n`;
+        line.getPath().forEach(pt => gpx += `<trkpt lat="${pt.getLat()}" lon="${pt.getLng()}"></trkpt>\n`);
+        gpx += '</trkseg></trk>\n';
+    });
+    markers.forEach(m => {
+        const pos = m.marker.getPosition();
+        gpx += `<wpt lat="${pos.getLat()}" lon="${pos.getLng()}"><name>${m.desc}</name></wpt>\n`;
+    });
+    gpx += '</gpx>';
+    const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename + '.gpx';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function resetPolyline() {
+    polylines.forEach(p => p.setMap(null));
+    polylines = [];
+    drawingMode = false;
+}
+</script>
+<script>
+document.addEventListener('dragover', function(e) {
+    e.preventDefault();
+});
+document.addEventListener('drop', function(e) {
+    e.preventDefault();
+    const file = e.dataTransfer.files[0];
+    if (!file || !file.name.endsWith('.gpx')) {
+        alert('GPX 파일만 지원됩니다.');
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        const gpxText = event.target.result;
+        const parser = new DOMParser();
+        const xml = parser.parseFromString(gpxText, "application/xml");
+
+        // 트랙포인트 처리
+        const trkpts = xml.getElementsByTagName("trkpt");
+        if (trkpts.length > 0) {
+            let path = [];
+            for (let i = 0; i < trkpts.length; i++) {
+                const lat = parseFloat(trkpts[i].getAttribute("lat"));
+                const lon = parseFloat(trkpts[i].getAttribute("lon"));
+                path.push(new kakao.maps.LatLng(lat, lon));
+            }
+            const polyline = new kakao.maps.Polyline({
+                path: path,
+                strokeWeight: 4,
+                strokeColor: '#0033FF',
+                strokeOpacity: 0.9,
+                strokeStyle: 'solid',
+                map: map
+            });
+            if (path.length > 0) {
+                const bounds = new kakao.maps.LatLngBounds();
+                path.forEach(p => bounds.extend(p));
+                map.setBounds(bounds);
+            }
+            
+        }
+
+        // 웨이포인트 처리 (GPX 파일에서 추가된 마커)
+        const wpts = xml.getElementsByTagName("wpt");
+        for (let i = 0; i < wpts.length; i++) {
+            const lat = parseFloat(wpts[i].getAttribute("lat"));
+            const lon = parseFloat(wpts[i].getAttribute("lon"));
+            const name = wpts[i].getElementsByTagName("name")[0]?.textContent || "WayPoint";
+
+            const marker = new kakao.maps.Marker({
+                position: new kakao.maps.LatLng(lat, lon),
+                map: map
+            });
+
+            const iwContent = document.createElement('div');
+            iwContent.style.position = 'relative';
+            iwContent.style.padding = '5px 25px 5px 5px';
+            iwContent.style.fontSize = '13px';
+            iwContent.innerHTML = name;
+
+            const closeBtn = document.createElement('div');
+            closeBtn.innerHTML = '✖';
+            closeBtn.style.position = 'absolute';
+            closeBtn.style.top = '5px';
+            closeBtn.style.right = '0px';
+            closeBtn.style.cursor = 'pointer';
+            closeBtn.style.fontWeight = 'bold';
+
+            iwContent.appendChild(closeBtn);
+
+            const infowindow = new kakao.maps.InfoWindow({
+                content: iwContent
+            });
+
+            closeBtn.onclick = function () {
+                infowindow.close();
+            };
+
+            kakao.maps.event.addListener(marker, 'click', function() {
+                infowindow.open(map, marker);
+            });
+        }
+    };
+    reader.readAsText(file);
+});
+</script>
+<!-- 수동 마커 생성 예시: 오른쪽 클릭 시 생성되는 마커에 대해 인포윈도우 DOM 요소를 사용 -->
+<script>
+kakao.maps.event.addListener(map, 'rightclick', function(mouseEvent) {
+    if (drawingMode) {
+        drawingMode = false;
+        return; // 선 그리기 모드 해제 전용
+    }
+
+    const latlng = mouseEvent.latLng;
+
+    const marker = new kakao.maps.Marker({
+        position: latlng,
+        map: map
+    });
+
+    // 인포윈도우 내용을 DOM 요소로 구성 (설명 없음)
+    const contentEl = document.createElement('div');
+    contentEl.style.position = 'relative';
+    contentEl.style.padding = '5px 25px 5px 5px';
+    contentEl.style.fontSize = '13px';
+    contentEl.innerHTML = "설명 없음";
+
+    // 오른쪽 끝에 닫기(X) 버튼 추가
+    const closeBtn = document.createElement('div');
+    closeBtn.innerHTML = '✖';
+    closeBtn.style.position = 'absolute';
+    closeBtn.style.top = '5px';
+    closeBtn.style.right = '0px';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.style.fontWeight = 'bold';
+    
+    contentEl.appendChild(closeBtn);
+
+    const infowindow = new kakao.maps.InfoWindow({
+        position: latlng,
+        content: contentEl
+    });
+
+    kakao.maps.event.addListener(marker, 'click', function() {
+        infowindow.open(map, marker);
+    });
+    
+    closeBtn.onclick = function() {
+        infowindow.close();
+    };
+});
+</script>
+<script>
+  var addressInput = document.getElementById("address-input");
+  var geocoder = new kakao.maps.services.Geocoder();
+
+  document.getElementById("search-form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    geocoder.addressSearch(addressInput.value, function (result, status) {
+      if (status === kakao.maps.services.Status.OK) {
+        var coords = new kakao.maps.LatLng(result[0].y, result[0].x);
+        map.setCenter(coords);
+      } else {
+        var exampleCoords = new kakao.maps.LatLng(37.54699, 127.09598);
+        alert("검색 실패! 예시 좌표 " + exampleCoords.toString() + " 로 이동합니다.");
+        map.setCenter(exampleCoords);
+      }
+    });
+  });
+</script>
+</body>
+</html>
