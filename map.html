@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>GPX & 사진 지도 (완성본)</title>
+  <title>GPX & 사진 지도</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -53,24 +53,27 @@ function initializeMap(center) {
       return;
     }
     markers.forEach(m => m.iw.close());
-  });
-
-  kakao.maps.event.addListener(map, 'rightclick', e => {
-    if (drawingMode) drawingMode = false;
-    else showMarkerInput(e.latLng);
-  });
-
-  kakao.maps.event.addListener(map, 'click', e => {
     document.getElementById('latitude').value = e.latLng.getLat();
     document.getElementById('longitude').value = e.latLng.getLng();
     geocoder.coord2Address(e.latLng.getLng(), e.latLng.getLat(), (res, status) => {
       const el = document.getElementById('address-display');
       if (status === kakao.maps.services.Status.OK) {
-        const legal = res[0].address?.address_name;
-        const road = res[0].road_address?.address_name;
-        el.innerText = road ? trimCityProvince(road) : trimCityProvince(legal);
-      } else el.innerText = '주소 없음';
+        const legal = res[0].address?.address_name || '주소 없음';
+        const roadFull = res[0].road_address?.address_name;
+        const road = roadFull ? roadFull.split(' ').slice(1).join(' ') : null;
+        el.innerText = road ? `${legal} / ${road}` : legal;
+      } else {
+        el.innerText = '주소 없음';
+      }
     });
+  });
+
+  kakao.maps.event.addListener(map, 'rightclick', e => {
+    if (drawingMode) {
+      drawingMode = false;
+    } else {
+      showMarkerInput(e.latLng);
+    }
   });
 }
 function showMarkerInput(latlng) {
@@ -95,7 +98,11 @@ function showMarkerInput(latlng) {
     }
   });
 
-  addBtn.onclick = () => { addMarker(latlng, input.value.trim() || '설명 없음'); markerInputOverlay.setMap(null); };
+  addBtn.onclick = () => {
+    const text = input.value.trim() || '설명 없음';
+    addMarker(latlng, text);
+    markerInputOverlay.setMap(null);
+  };
   cancelBtn.onclick = () => markerInputOverlay.setMap(null);
 }
 
