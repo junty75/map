@@ -299,8 +299,6 @@ document.addEventListener('drop', e => {
               bounds.extend(ll);
               addPhotoMarker(ll, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
               map.setBounds(bounds);
-            } else {
-              alert(file.name + ' 에 GPS 정보가 없습니다.');
             }
           });
         };
