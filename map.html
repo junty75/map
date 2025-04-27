@@ -81,7 +81,7 @@ function initializeMap(center) {
     }
   });
 
-  // 주소 검색 기능 복원
+  // 주소 검색
   document.getElementById('search-form').addEventListener('submit', e => {
     e.preventDefault();
     geocoder.addressSearch(document.getElementById('address-input').value, (res, status) => {
@@ -93,7 +93,7 @@ function initializeMap(center) {
     });
   });
 
-  // 단축키 복원 (Ctrl+C, Ctrl+L)
+  // Ctrl+C, Ctrl+L 단축키
   document.addEventListener('keydown', e => {
     if (e.ctrlKey && e.key.toLowerCase() === 'c') {
       e.preventDefault();
@@ -104,6 +104,18 @@ function initializeMap(center) {
       startDrawing();
     }
   });
+
+  // 내 위치 버튼 (📍) 복구
+  document.getElementById('myLocationBtn').onclick = () => {
+    navigator.geolocation.getCurrentPosition(pos => {
+      const ll = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+      map.setCenter(ll);
+      document.getElementById('latitude').value = pos.coords.latitude;
+      document.getElementById('longitude').value = pos.coords.longitude;
+    }, err => {
+      alert('위치 정보를 가져올 수 없습니다: ' + err.message);
+    });
+  };
 }
 function showMarkerInput(latlng) {
   if (markerInputOverlay) markerInputOverlay.setMap(null);
@@ -113,7 +125,7 @@ function showMarkerInput(latlng) {
                          <button style="margin-top:4px;">추가</button>
                          <button style="margin-top:4px;">취소</button>`;
   container.style = 'background:white;padding:6px;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;flex-direction:column;gap:4px;';
-
+  
   markerInputOverlay = new kakao.maps.CustomOverlay({ position: latlng, content: container, yAnchor: 1 });
   markerInputOverlay.setMap(map);
 
@@ -244,7 +256,7 @@ function exportGPX() {
   document.body.removeChild(a);
 }
 
-// 파일 드래그: 사진 + GPX 처리
+// 파일 드래그로 사진/GPX 업로드
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', e => {
   e.preventDefault();
