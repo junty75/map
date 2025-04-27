@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>GPX & 사진 지도 (업데이트 최종)</title>
+  <title>GPX & 사진 지도 (완성본)</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -47,6 +47,20 @@ function initializeMap(center) {
   geocoder = new kakao.maps.services.Geocoder();
 
   kakao.maps.event.addListener(map, 'click', e => {
+    if (markerInputOverlay) {
+      markerInputOverlay.setMap(null);
+      markerInputOverlay = null;
+      return;
+    }
+    markers.forEach(m => m.iw.close());
+  });
+
+  kakao.maps.event.addListener(map, 'rightclick', e => {
+    if (drawingMode) drawingMode = false;
+    else showMarkerInput(e.latLng);
+  });
+
+  kakao.maps.event.addListener(map, 'click', e => {
     document.getElementById('latitude').value = e.latLng.getLat();
     document.getElementById('longitude').value = e.latLng.getLng();
     geocoder.coord2Address(e.latLng.getLng(), e.latLng.getLat(), (res, status) => {
@@ -57,15 +71,6 @@ function initializeMap(center) {
         el.innerText = road ? trimCityProvince(road) : trimCityProvince(legal);
       } else el.innerText = '주소 없음';
     });
-    if (drawingMode) {
-      currentPath.push(e.latLng);
-      currentPolyline.setPath(currentPath);
-    }
-  });
-
-  kakao.maps.event.addListener(map, 'rightclick', e => {
-    if (drawingMode) drawingMode = false;
-    else showMarkerInput(e.latLng);
   });
 }
 function showMarkerInput(latlng) {
@@ -108,6 +113,9 @@ function showEditInput(markerObj, label) {
 
   const [input, editBtn, deleteBtn] = container.querySelectorAll('input, button');
   input.focus();
+  const val = input.value;
+  input.value = '';
+  input.value = val;
   input.addEventListener('mousedown', e => e.stopPropagation());
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
@@ -145,6 +153,7 @@ function addPhotoMarker(latlng, imgSrc, filename) {
   const [title, btn] = div.querySelectorAll('div');
 
   const iw = new kakao.maps.InfoWindow({ content: div });
+
   kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
   kakao.maps.event.addListener(marker, 'rightclick', () => showEditInput({ marker, iw, name: filename }, title));
   btn.onclick = () => iw.close();
@@ -182,7 +191,6 @@ function exportGPX() {
   document.body.removeChild(a);
 }
 
-// 파일 드래그 복구
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', e => {
   e.preventDefault();
