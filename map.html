@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>GPX & 사진 지도</title>
+  <title>GPX & 사진 지도 (v1)</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -60,7 +60,7 @@ function initializeMap(center) {
       if (status === kakao.maps.services.Status.OK) {
         const legal = res[0].address?.address_name || '주소 없음';
         const roadFull = res[0].road_address?.address_name;
-        const road = roadFull ? roadFull.split(' ').slice(1).join(' ') : null;
+        const road = roadFull ? roadFull.split(' ').slice(1).join(' ') : '';
         el.innerText = road ? `${legal} / ${road}` : legal;
       } else {
         el.innerText = '주소 없음';
@@ -76,6 +76,18 @@ function initializeMap(center) {
     }
   });
 }
+
+// 단축키 복원
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+    e.preventDefault();
+    copyCoordinates();
+  }
+  if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+    e.preventDefault();
+    startDrawing();
+  }
+});
 function showMarkerInput(latlng) {
   if (markerInputOverlay) markerInputOverlay.setMap(null);
 
@@ -104,6 +116,21 @@ function showMarkerInput(latlng) {
     markerInputOverlay.setMap(null);
   };
   cancelBtn.onclick = () => markerInputOverlay.setMap(null);
+}
+
+function addMarker(latlng, desc) {
+  const marker = new kakao.maps.Marker({ map, position: latlng });
+  const div = document.createElement('div');
+  div.style = 'position:relative; display:flex; align-items:center; justify-content:space-between; padding:5px;';
+  div.innerHTML = `<span>${desc}</span><div style="cursor:pointer; font-weight:bold;">✖</div>`;
+  const [label, btn] = div.querySelectorAll('span, div');
+  const iw = new kakao.maps.InfoWindow({ content: div });
+
+  kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
+  kakao.maps.event.addListener(marker, 'rightclick', () => showEditInput({ marker, iw, name: desc }, label));
+  btn.onclick = () => iw.close();
+
+  markers.push({ marker, iw, name: desc });
 }
 
 function showEditInput(markerObj, label) {
@@ -135,42 +162,11 @@ function showEditInput(markerObj, label) {
   deleteBtn.onclick = () => { markerObj.marker.setMap(null); markerObj.iw.close(); markerInputOverlay.setMap(null); };
 }
 
-function addMarker(latlng, desc) {
-  const marker = new kakao.maps.Marker({ map, position: latlng });
-  const div = document.createElement('div');
-  div.style = 'position:relative; display:flex; align-items:center; justify-content:space-between; padding:5px;';
-  div.innerHTML = `<span>${desc}</span><div style="cursor:pointer; font-weight:bold;">✖</div>`;
-  const [label, btn] = div.querySelectorAll('span, div');
-  const iw = new kakao.maps.InfoWindow({ content: div });
-
-  kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
-  kakao.maps.event.addListener(marker, 'rightclick', () => showEditInput({ marker, iw, name: desc }, label));
-  btn.onclick = () => iw.close();
-
-  markers.push({ marker, iw, name: desc });
+function copyCoordinates() {
+  const lat = document.getElementById('latitude').value;
+  const lng = document.getElementById('longitude').value;
+  navigator.clipboard.writeText(`${lat}, ${lng}`);
 }
-
-function addPhotoMarker(latlng, imgSrc, filename) {
-  const marker = new kakao.maps.Marker({ map, position: latlng });
-  const div = document.createElement('div');
-  div.style = 'position:relative; padding:5px;';
-  div.innerHTML = `<div style="font-weight:bold; margin-bottom:5px;">${filename}</div>
-                   <div style="position:absolute; top:2px; right:2px; cursor:pointer;">✖</div>
-                   <img src="${imgSrc}" style="height:400px;width:auto;display:block;">`;
-  const [title, btn] = div.querySelectorAll('div');
-
-  const iw = new kakao.maps.InfoWindow({ content: div });
-
-  kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
-  kakao.maps.event.addListener(marker, 'rightclick', () => showEditInput({ marker, iw, name: filename }, title));
-  btn.onclick = () => iw.close();
-
-  markers.push({ marker, iw, name: filename });
-}
-
-const resetPolylines = () => { polylines.forEach(p => p.setMap(null)); polylines = []; drawingMode = false; };
-const resetAll = () => { markers.forEach(m => m.marker.setMap(null)); markers = []; resetPolylines(); };
-const copyCoordinates = () => navigator.clipboard.writeText(`${latitude.value}, ${longitude.value}`);
 
 function startDrawing() {
   if (drawingMode) return drawingMode = false;
@@ -178,7 +174,17 @@ function startDrawing() {
   currentPath = [];
   currentPolyline = new kakao.maps.Polyline({ map, path: currentPath, strokeWeight:3, strokeColor:'#FF0000', strokeOpacity:0.8 });
   polylines.push(currentPolyline);
+
+  kakao.maps.event.addListener(map, 'click', e => {
+    if (drawingMode && !markerInputOverlay) {
+      currentPath.push(e.latLng);
+      currentPolyline.setPath(currentPath);
+    }
+  });
 }
+
+const resetPolylines = () => { polylines.forEach(p => p.setMap(null)); polylines = []; drawingMode = false; };
+const resetAll = () => { markers.forEach(m => m.marker.setMap(null)); markers = []; resetPolylines(); };
 
 function exportGPX() {
   const fname = prompt('파일명', 'data'); if (!fname) return;
@@ -235,33 +241,11 @@ document.addEventListener('drop', e => {
         const ll = new kakao.maps.LatLng(conv(lat, EXIF.getTag(this, 'GPSLatitudeRef')), conv(lon, EXIF.getTag(this, 'GPSLongitudeRef')));
         bounds.extend(ll);
         const name = file.name.replace(/\.[^/.]+$/, '');
-        addPhotoMarker(ll, URL.createObjectURL(file), name);
+        addMarker(ll, name);
         if (!bounds.isEmpty()) map.setBounds(bounds);
       });
     }
   });
-});
-
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('search-form').addEventListener('submit', e => {
-    e.preventDefault();
-    geocoder.addressSearch(document.getElementById('address-input').value, (res, status) => {
-      if (status === kakao.maps.services.Status.OK) {
-        map.setCenter(new kakao.maps.LatLng(res[0].y, res[0].x));
-      } else {
-        alert('검색 실패');
-      }
-    });
-  });
-
-  document.getElementById('myLocationBtn').onclick = () => {
-    navigator.geolocation.getCurrentPosition(pos => {
-      const ll = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-      map.setCenter(ll);
-      document.getElementById('latitude').value = pos.coords.latitude;
-      document.getElementById('longitude').value = pos.coords.longitude;
-    }, err => alert('위치 정보를 가져올 수 없습니다: ' + err.message));
-  };
 });
 
 window.onload = () => {
