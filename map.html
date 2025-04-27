@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>GPX & 사진 지도 (v1)</title>
+  <title>GPX & 사진 지도 (v3)</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -96,13 +96,14 @@ function showMarkerInput(latlng) {
                          <button style="margin-top:4px;">추가</button>
                          <button style="margin-top:4px;">취소</button>`;
   container.style = 'background:white;padding:6px;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;flex-direction:column;gap:4px;';
-
+  
   markerInputOverlay = new kakao.maps.CustomOverlay({ position: latlng, content: container, yAnchor: 1 });
   markerInputOverlay.setMap(map);
 
+  container.addEventListener('mousedown', e => e.stopPropagation());
+
   const [input, addBtn, cancelBtn] = container.querySelectorAll('input, button');
   input.focus();
-  input.addEventListener('mousedown', e => e.stopPropagation());
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -133,6 +134,26 @@ function addMarker(latlng, desc) {
   markers.push({ marker, iw, name: desc });
 }
 
+function addPhotoMarker(latlng, imgSrc, filename) {
+  const marker = new kakao.maps.Marker({ map, position: latlng });
+  const div = document.createElement('div');
+  div.style = 'position:relative; padding:5px;';
+  div.innerHTML = `
+    <div style="font-weight:bold; margin-bottom:5px;">${filename}</div>
+    <div style="position:absolute; top:2px; right:2px; cursor:pointer;">✖</div>
+    <img src="${imgSrc}" style="max-height:360px; display:block;">
+  `;
+  const [title, btn] = div.querySelectorAll('div');
+
+  const iw = new kakao.maps.InfoWindow({ content: div });
+
+  kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
+  kakao.maps.event.addListener(marker, 'rightclick', () => showEditInput({ marker, iw, name: filename }, title));
+  btn.onclick = () => iw.close();
+
+  markers.push({ marker, iw, name: filename });
+}
+
 function showEditInput(markerObj, label) {
   if (markerInputOverlay) markerInputOverlay.setMap(null);
 
@@ -145,12 +166,13 @@ function showEditInput(markerObj, label) {
   markerInputOverlay = new kakao.maps.CustomOverlay({ position: markerObj.marker.getPosition(), content: container, yAnchor: 1 });
   markerInputOverlay.setMap(map);
 
+  container.addEventListener('mousedown', e => e.stopPropagation());
+
   const [input, editBtn, deleteBtn] = container.querySelectorAll('input, button');
   input.focus();
   const val = input.value;
   input.value = '';
   input.value = val;
-  input.addEventListener('mousedown', e => e.stopPropagation());
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -158,8 +180,16 @@ function showEditInput(markerObj, label) {
     }
   });
 
-  editBtn.onclick = () => { label.textContent = input.value.trim() || '설명 없음'; markerObj.name = label.textContent; markerInputOverlay.setMap(null); };
-  deleteBtn.onclick = () => { markerObj.marker.setMap(null); markerObj.iw.close(); markerInputOverlay.setMap(null); };
+  editBtn.onclick = () => {
+    label.textContent = input.value.trim() || '설명 없음';
+    markerObj.name = label.textContent;
+    markerInputOverlay.setMap(null);
+  };
+  deleteBtn.onclick = () => {
+    markerObj.marker.setMap(null);
+    markerObj.iw.close();
+    markerInputOverlay.setMap(null);
+  };
 }
 
 function copyCoordinates() {
@@ -174,13 +204,6 @@ function startDrawing() {
   currentPath = [];
   currentPolyline = new kakao.maps.Polyline({ map, path: currentPath, strokeWeight:3, strokeColor:'#FF0000', strokeOpacity:0.8 });
   polylines.push(currentPolyline);
-
-  kakao.maps.event.addListener(map, 'click', e => {
-    if (drawingMode && !markerInputOverlay) {
-      currentPath.push(e.latLng);
-      currentPolyline.setPath(currentPath);
-    }
-  });
 }
 
 const resetPolylines = () => { polylines.forEach(p => p.setMap(null)); polylines = []; drawingMode = false; };
@@ -204,6 +227,7 @@ function exportGPX() {
   document.body.removeChild(a);
 }
 
+// 파일 드래그: 사진(GPS) 업로드 복구
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', e => {
   e.preventDefault();
@@ -233,17 +257,27 @@ document.addEventListener('drop', e => {
       };
       reader.readAsText(file);
     } else if (file.type.startsWith('image/')) {
-      EXIF.getData(file, function() {
-        const lat = EXIF.getTag(this, 'GPSLatitude');
-        const lon = EXIF.getTag(this, 'GPSLongitude');
-        if (!lat || !lon) return alert('사진에 GPS 정보 없음');
-        const conv = (dms, ref) => (dms[0] + dms[1]/60 + dms[2]/3600) * (ref === 'S' || ref === 'W' ? -1 : 1);
-        const ll = new kakao.maps.LatLng(conv(lat, EXIF.getTag(this, 'GPSLatitudeRef')), conv(lon, EXIF.getTag(this, 'GPSLongitudeRef')));
-        bounds.extend(ll);
-        const name = file.name.replace(/\.[^/.]+$/, '');
-        addMarker(ll, name);
-        if (!bounds.isEmpty()) map.setBounds(bounds);
-      });
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const img = new Image();
+        img.onload = () => {
+          EXIF.getData(img, function() {
+            const lat = EXIF.getTag(this, 'GPSLatitude');
+            const lon = EXIF.getTag(this, 'GPSLongitude');
+            if (lat && lon) {
+              const conv = (dms, ref) => (dms[0] + dms[1]/60 + dms[2]/3600) * (ref === 'S' || ref === 'W' ? -1 : 1);
+              const ll = new kakao.maps.LatLng(conv(lat, EXIF.getTag(this, 'GPSLatitudeRef')), conv(lon, EXIF.getTag(this, 'GPSLongitudeRef')));
+              bounds.extend(ll);
+              addPhotoMarker(ll, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
+              map.setBounds(bounds);
+            } else {
+              alert(file.name + ' 에 GPS 정보가 없습니다.');
+            }
+          });
+        };
+        img.src = ev.target.result;
+      };
+      reader.readAsDataURL(file);
     }
   });
 });
