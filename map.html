@@ -28,7 +28,7 @@
     <label>위도:</label><input id="latitude" readonly size="12">
     <label>경도:</label><input id="longitude" readonly size="12">
     <button type="button" onclick="copyCoordinates()">복사 (Ctrl+C)</button>
-    <button type="button" onclick="startDrawing()">선 그리기 (Ctrl+L)</button>
+    <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
     <button type="button" onclick="resetPolylines()">선 초기화</button>
     <button type="button" onclick="resetAll()">화면 초기화</button>
     <button type="button" onclick="exportGPX()">GPX 내보내기</button>
@@ -93,13 +93,13 @@ function initializeMap(center) {
     });
   });
 
-  // Ctrl+C, Ctrl+L 단축키
+  // Ctrl+C, Alt 단축키
   document.addEventListener('keydown', e => {
     if (e.ctrlKey && e.key.toLowerCase() === 'c') {
       e.preventDefault();
       copyCoordinates();
     }
-    if (e.ctrlKey && e.key.toLowerCase() === 'l') {
+    if (e.altKey) {
       e.preventDefault();
       startDrawing();
     }
@@ -170,7 +170,7 @@ function addPhotoMarker(latlng, imgSrc, filename) {
   div.innerHTML = `
     <div style="font-weight:bold; margin-bottom:5px;">${filename}</div>
     <div style="position:absolute; top:2px; right:2px; cursor:pointer;">✖</div>
-    <img src="${imgSrc}" style="max-height:400px; display:block;">
+    <img src="${imgSrc}" style="max-height:360px; display:block;">
   `;
   const [title, btn] = div.querySelectorAll('div');
 
@@ -299,6 +299,8 @@ document.addEventListener('drop', e => {
               bounds.extend(ll);
               addPhotoMarker(ll, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
               map.setBounds(bounds);
+            } else {
+              alert(file.name + ' 에 GPS 정보가 없습니다.');
             }
           });
         };
