@@ -39,6 +39,7 @@
 let map, geocoder, drawingMode = false;
 let markers = [], polylines = [], markerInputOverlay = null;
 let currentPolyline, currentPath = [];
+let searchMarker = null;
 
 const trimCityProvince = str => str?.split(' ').slice(1).join(' ') || '';
 
@@ -84,9 +85,21 @@ function initializeMap(center) {
   // 주소 검색
   document.getElementById('search-form').addEventListener('submit', e => {
     e.preventDefault();
-    geocoder.addressSearch(document.getElementById('address-input').value, (res, status) => {
+    const keyword = document.getElementById('address-input').value;
+    geocoder.addressSearch(keyword, (res, status) => {
       if (status === kakao.maps.services.Status.OK) {
-        map.setCenter(new kakao.maps.LatLng(res[0].y, res[0].x));
+        const pos = new kakao.maps.LatLng(res[0].y, res[0].x);
+        map.setCenter(pos);
+
+        // 이전에 생성한 검색 마커가 있으면 제거
+        if (searchMarker) {
+          searchMarker.setMap(null);
+        }
+        // 새 검색 마커 생성
+        searchMarker = new kakao.maps.Marker({
+          map,
+          position: pos
+        });
       } else {
         alert('주소를 찾을 수 없습니다');
       }
@@ -263,28 +276,47 @@ document.addEventListener('drop', e => {
   const files = Array.from(e.dataTransfer.files);
   if (!files.length) return;
   const bounds = new kakao.maps.LatLngBounds();
+
   files.forEach(file => {
+    // 1) GPX 파일 처리 (trkseg 단위로 Polyline)
     if (file.name.toLowerCase().endsWith('.gpx')) {
       const reader = new FileReader();
       reader.onload = ev => {
         const xml = new DOMParser().parseFromString(ev.target.result, 'application/xml');
-        const pts = Array.from(xml.getElementsByTagName('trkpt')).map(pt => {
-          const ll = new kakao.maps.LatLng(parseFloat(pt.getAttribute('lat')), parseFloat(pt.getAttribute('lon')));
-          bounds.extend(ll);
-          return ll;
+        const trksegs = xml.getElementsByTagName('trkseg');
+        Array.from(trksegs).forEach(seg => {
+          const pts = Array.from(seg.getElementsByTagName('trkpt')).map(pt => {
+            const ll = new kakao.maps.LatLng(
+              parseFloat(pt.getAttribute('lat')),
+              parseFloat(pt.getAttribute('lon'))
+            );
+            bounds.extend(ll);
+            return ll;
+          });
+          if (pts.length) {
+            const poly = new kakao.maps.Polyline({
+              map,
+              path: pts,
+              strokeWeight: 4,
+              strokeColor: '#FF7F00',
+              strokeOpacity: 0.9
+            });
+            polylines.push(poly);
+          }
         });
-        if (pts.length) {
-          const poly = new kakao.maps.Polyline({ map, path: pts, strokeWeight:4, strokeColor:'#FF7F00', strokeOpacity:0.9 });
-          polylines.push(poly);
-        }
         Array.from(xml.getElementsByTagName('wpt')).forEach(wpt => {
-          const ll = new kakao.maps.LatLng(parseFloat(wpt.getAttribute('lat')), parseFloat(wpt.getAttribute('lon')));
+          const ll = new kakao.maps.LatLng(
+            parseFloat(wpt.getAttribute('lat')),
+            parseFloat(wpt.getAttribute('lon'))
+          );
           bounds.extend(ll);
           addMarker(ll, wpt.getElementsByTagName('name')[0]?.textContent || '설명 없음');
         });
         if (!bounds.isEmpty()) map.setBounds(bounds);
       };
       reader.readAsText(file);
+
+    // 2) 이미지 파일 처리 (EXIF GPS → 마커)
     } else if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = ev => {
@@ -293,14 +325,20 @@ document.addEventListener('drop', e => {
           EXIF.getData(img, function() {
             const lat = EXIF.getTag(this, 'GPSLatitude');
             const lon = EXIF.getTag(this, 'GPSLongitude');
-            if (lat && lon) {
-              const conv = (dms, ref) => (dms[0] + dms[1]/60 + dms[2]/3600) * (ref === 'S' || ref === 'W' ? -1 : 1);
-              const ll = new kakao.maps.LatLng(conv(lat, EXIF.getTag(this, 'GPSLatitudeRef')), conv(lon, EXIF.getTag(this, 'GPSLongitudeRef')));
+            const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
+            const lonRef = EXIF.getTag(this, 'GPSLongitudeRef');
+            if (lat && lon && latRef && lonRef) {
+              const conv = (dms, ref) =>
+                (dms[0] + dms[1]/60 + dms[2]/3600) * (ref === 'S' || ref === 'W' ? -1 : 1);
+              const ll = new kakao.maps.LatLng(
+                conv(lat, latRef),
+                conv(lon, lonRef)
+              );
               bounds.extend(ll);
               addPhotoMarker(ll, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
-              map.setBounds(bounds);
+              if (!bounds.isEmpty()) map.setBounds(bounds);
             } else {
-              alert(file.name + ' 에 GPS 정보가 없습니다.');
+              alert(`${file.name}에 GPS 정보가 없습니다.`);
             }
           });
         };
