@@ -278,7 +278,7 @@ document.addEventListener('drop', e => {
   const bounds = new kakao.maps.LatLngBounds();
 
   files.forEach(file => {
-    // 1) GPX 파일 처리 (trkseg 단위로 Polyline)
+    // 1) GPX 트랙(seg) 그리기
     if (file.name.toLowerCase().endsWith('.gpx')) {
       const reader = new FileReader();
       reader.onload = ev => {
@@ -295,11 +295,8 @@ document.addEventListener('drop', e => {
           });
           if (pts.length) {
             const poly = new kakao.maps.Polyline({
-              map,
-              path: pts,
-              strokeWeight: 4,
-              strokeColor: '#FF7F00',
-              strokeOpacity: 0.9
+              map, path: pts,
+              strokeWeight: 4, strokeColor: '#FF7F00', strokeOpacity: 0.9
             });
             polylines.push(poly);
           }
@@ -316,7 +313,7 @@ document.addEventListener('drop', e => {
       };
       reader.readAsText(file);
 
-    // 2) 이미지 파일 처리 (EXIF GPS → 마커)
+    // 2) 이미지(EXIF) → 마커
     } else if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = ev => {
