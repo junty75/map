@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>GPX & 사진 지도 (v4.1)</title>
+  <title>GPX & 사진 지도 (v5)</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -52,13 +52,17 @@ let searchMarker = null;
 let moveLine = null;
 let distanceOverlay = null;
 
+function getRandomColor() {
+  return `#${Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0')}`;
+}
+
 function updateDistance(mouseEvent) {
   if (!drawingMode || currentPath.length === 0) return;
+
   const lastPos = currentPath[currentPath.length - 1];
   const mousePosition = mouseEvent.latLng;
   const movepath = [lastPos, mousePosition];
 
-  // 마우스 라인
   if (!moveLine) {
     moveLine = new kakao.maps.Polyline({
       strokeWeight: 3,
@@ -70,19 +74,28 @@ function updateDistance(mouseEvent) {
   moveLine.setPath(movepath);
   moveLine.setMap(map);
 
-  // 총거리 계산
-  const distance = Math.round(currentPolyline.getLength() + moveLine.getLength());
-  const content = '<div class="dotOverlay distanceInfo">총거리 <span class="number">'
-                + distance + '</span>m</div>';
+  const totalDistance = currentPolyline.getLength() + moveLine.getLength();
 
-  // 커스텀 오버레이 표시 or 갱신
+  const formatDistance = d => {
+    if (d <= 10) return `${d.toFixed(1)}m`;
+    if (d < 1000) return `${Math.round(d)}m`;
+    return `${(d / 1000).toFixed(2)}km`;
+  };
+
+const content = `
+  <div class="dotOverlay distanceInfo" style="font-size: 0.8em; margin-left:4px; margin-bottom:8px;">
+    총거리 <span class="number">${formatDistance(totalDistance)}</span>
+  </div>
+`;
+
+
   if (distanceOverlay) {
     distanceOverlay.setPosition(mousePosition);
     distanceOverlay.setContent(content);
   } else {
     distanceOverlay = new kakao.maps.CustomOverlay({
       map: map,
-      content: content,
+      content,
       position: mousePosition,
       xAnchor: 0,
       yAnchor: 0,
@@ -90,6 +103,7 @@ function updateDistance(mouseEvent) {
     });
   }
 }
+
 // END: 거리 표시용 전역변수 및 함수
 
 const trimCityProvince = str => str?.split(' ').slice(1).join(' ') || '';
@@ -305,17 +319,73 @@ function copyCoordinates() {
 
 function startDrawing() {
   if (drawingMode) return drawingMode = false;
-  // 이전에 남은 라인/오버레이 삭제
+
   if (moveLine) { moveLine.setMap(null); moveLine = null; }
   if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay = null; }
 
   drawingMode = true;
   currentPath = [];
+
   currentPolyline = new kakao.maps.Polyline({
-    map, path: currentPath, strokeWeight:3, strokeColor:'#FF0000', strokeOpacity:0.8
+    map,
+    path: currentPath,
+    strokeWeight: 3,
+    strokeColor: '#FF0000',
+    strokeOpacity: 0.8
   });
   polylines.push(currentPolyline);
+
+  const formatDistance = d => {
+    if (d <= 10) return `${d.toFixed(1)}m`;
+    if (d < 1000) return `${Math.round(d)}m`;
+    return `${(d / 1000).toFixed(2)}km`;
+  };
+
+  const content = `
+    <div class="dotOverlay distanceInfo" style="font-size: 0.8em; margin-left:10px; margin-bottom:30px;">
+      총거리 <span class="number">${formatDistance(0)}</span>
+    </div>
+  `;
+
+  // 마우스 이벤트로 툴팁 1회만 생성 (drawingMode 체크 포함!)
+  const once = kakao.maps.event.addListener(map, 'mousemove', e => {
+    if (!drawingMode) return;
+
+    if (!distanceOverlay) {
+      distanceOverlay = new kakao.maps.CustomOverlay({
+        map,
+        position: e.latLng,
+        content,
+        xAnchor: 0,
+        yAnchor: 1,
+        zIndex: 3
+      });
+    } else {
+      distanceOverlay.setPosition(e.latLng);
+      distanceOverlay.setMap(map);
+    }
+
+    kakao.maps.event.removeListener(map, 'mousemove', once);
+  });
+
+  // 🧩 drawingMode가 true일 때만 강제 트리거
+  document.addEventListener('mousemove', function handler(evt) {
+    if (!drawingMode) return;
+
+    const proj = map.getProjection();
+    if (!proj) return;
+
+    const x = evt.clientX;
+    const y = evt.clientY;
+
+    const latlng = proj.containerPointToLatLng(new kakao.maps.Point(x, y));
+    kakao.maps.event.trigger(map, 'mousemove', { latLng: latlng });
+
+    document.removeEventListener('mousemove', handler);
+  }, { once: true });
 }
+
+
 
 
 const resetPolylines = () => { polylines.forEach(p => p.setMap(null)); polylines = []; drawingMode = false; };
@@ -353,24 +423,66 @@ document.addEventListener('drop', e => {
       const reader = new FileReader();
       reader.onload = ev => {
         const xml = new DOMParser().parseFromString(ev.target.result, 'application/xml');
-        const trksegs = xml.getElementsByTagName('trkseg');
-        Array.from(trksegs).forEach(seg => {
-          const pts = Array.from(seg.getElementsByTagName('trkpt')).map(pt => {
-            const ll = new kakao.maps.LatLng(
-              parseFloat(pt.getAttribute('lat')),
-              parseFloat(pt.getAttribute('lon'))
-            );
-            bounds.extend(ll);
-            return ll;
-          });
-          if (pts.length) {
-            const poly = new kakao.maps.Polyline({
-              map, path: pts,
-              strokeWeight: 4, strokeColor: '#FF7F00', strokeOpacity: 0.9
-            });
-            polylines.push(poly);
-          }
-        });
+const trks = xml.getElementsByTagName('trk');
+
+Array.from(trks).forEach((trk, index) => {
+  const nameTag = trk.getElementsByTagName('name')[0];
+  const trackName = nameTag ? nameTag.textContent : `path${index + 1}`;
+  const trksegs = trk.getElementsByTagName('trkseg');
+
+  Array.from(trksegs).forEach(seg => {
+    const pts = Array.from(seg.getElementsByTagName('trkpt')).map(pt => {
+      const ll = new kakao.maps.LatLng(
+        parseFloat(pt.getAttribute('lat')),
+        parseFloat(pt.getAttribute('lon'))
+      );
+      bounds.extend(ll);
+      return ll;
+    });
+
+    if (pts.length) {
+      const poly = new kakao.maps.Polyline({
+        map,
+        path: pts,
+        strokeWeight: 4,
+        strokeColor: getRandomColor(),
+        strokeOpacity: 0.9
+      });
+
+      const distance = poly.getLength();
+
+      const formatDistance = d => {
+        if (d <= 10) return `${d.toFixed(1)}m`;
+        if (d < 1000) return `${Math.round(d)}m`;
+        return `${(d / 1000).toFixed(2)}km`;
+      };
+
+      const overlay = new kakao.maps.CustomOverlay({
+        content: `
+          <div style="padding:5px 8px; background:white; border:1px solid #333; font-size:1.0em; border-radius:3px;">
+            <b>${trackName}</b><br>총거리: ${formatDistance(distance)}
+          </div>
+        `,
+        yAnchor: 1,
+        zIndex: 4
+      });
+
+      kakao.maps.event.addListener(poly, 'mouseover', () => {
+        const path = poly.getPath();
+        const mid = path[Math.floor(path.length / 2)];
+        overlay.setPosition(mid);
+        overlay.setMap(map);
+      });
+
+      kakao.maps.event.addListener(poly, 'mouseout', () => {
+        overlay.setMap(null);
+      });
+
+      polylines.push(poly);
+    }
+  });
+});
+
         Array.from(xml.getElementsByTagName('wpt')).forEach(wpt => {
           const ll = new kakao.maps.LatLng(
             parseFloat(wpt.getAttribute('lat')),
