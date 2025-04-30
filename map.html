@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>GPX & 사진 지도 (v4)</title>
+  <title>GPX & 사진 지도 (v4.1)</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -155,6 +155,11 @@ function initializeMap(center) {
         searchMarker = new kakao.maps.Marker({
           map,
           position: pos
+        });
+        // 우클릭으로 검색 마커 삭제 가능
+        kakao.maps.event.addListener(searchMarker, 'rightclick', () => {
+          searchMarker.setMap(null);
+          searchMarker = null;
         });
       } else {
         alert('주소를 찾을 수 없습니다');
