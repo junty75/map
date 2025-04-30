@@ -2,8 +2,8 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>GPX & 사진 지도 (v3.2)</title>
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services,geometry"></script>
+  <title>GPX & 사진 지도 (v4)</title>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
     html, body { height:100%; margin:0; overflow:hidden; }
@@ -15,6 +15,14 @@
     #address-display { top:10px; left:260px; background:rgba(0,0,0,0.6); color:white; font-size:12px; white-space:nowrap; overflow:hidden; }
     .controls { top:10px; right:10px; display:flex; gap:6px; }
     #myLocationBtn { bottom:20px; right:20px; border-radius:50%; }
+.dotOverlay.distanceInfo {
+  background: white;
+  border: 1px solid #db4040;
+  padding: 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  white-space: nowrap;
+}
   </style>
 </head>
 <body>
@@ -40,9 +48,49 @@ let map, geocoder, drawingMode = false;
 let markers = [], polylines = [], markerInputOverlay = null;
 let currentPolyline, currentPath = [];
 let searchMarker = null;
+// START: 거리 표시용 전역변수
+let moveLine = null;
 let distanceOverlay = null;
-let mouseMoveListener = null;
-let clickListener = null;
+
+function updateDistance(mouseEvent) {
+  if (!drawingMode || currentPath.length === 0) return;
+  const lastPos = currentPath[currentPath.length - 1];
+  const mousePosition = mouseEvent.latLng;
+  const movepath = [lastPos, mousePosition];
+
+  // 마우스 라인
+  if (!moveLine) {
+    moveLine = new kakao.maps.Polyline({
+      strokeWeight: 3,
+      strokeColor: '#db4040',
+      strokeOpacity: 0.5,
+      strokeStyle: 'solid'
+    });
+  }
+  moveLine.setPath(movepath);
+  moveLine.setMap(map);
+
+  // 총거리 계산
+  const distance = Math.round(currentPolyline.getLength() + moveLine.getLength());
+  const content = '<div class="dotOverlay distanceInfo">총거리 <span class="number">'
+                + distance + '</span>m</div>';
+
+  // 커스텀 오버레이 표시 or 갱신
+  if (distanceOverlay) {
+    distanceOverlay.setPosition(mousePosition);
+    distanceOverlay.setContent(content);
+  } else {
+    distanceOverlay = new kakao.maps.CustomOverlay({
+      map: map,
+      content: content,
+      position: mousePosition,
+      xAnchor: 0,
+      yAnchor: 0,
+      zIndex: 3
+    });
+  }
+}
+// END: 거리 표시용 전역변수 및 함수
 
 const trimCityProvince = str => str?.split(' ').slice(1).join(' ') || '';
 
@@ -77,13 +125,18 @@ function initializeMap(center) {
     }
   });
 
+  // 기존 rightclick 리스너 중 drawingMode 분기부만 교체
   kakao.maps.event.addListener(map, 'rightclick', e => {
     if (drawingMode) {
+      // 마우스 라인과 툴팁 제거
+      if (moveLine) { moveLine.setMap(null); moveLine = null; }
+      if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay = null; }
       drawingMode = false;
     } else {
       showMarkerInput(e.latLng);
     }
   });
+
 
   // 주소 검색
   document.getElementById('search-form').addEventListener('submit', e => {
@@ -103,11 +156,18 @@ function initializeMap(center) {
           map,
           position: pos
         });
+        // 우클릭으로 검색 마커 삭제 가능
+        kakao.maps.event.addListener(searchMarker, 'rightclick', () => {
+          searchMarker.setMap(null);
+          searchMarker = null;
+        });
       } else {
         alert('주소를 찾을 수 없습니다');
       }
     });
   });
+  // 지도 위 마우스 무브 시 거리 툴팁 업데이트
+  kakao.maps.event.addListener(map, 'mousemove', updateDistance);
 
   // Ctrl+C, Alt 단축키
   document.addEventListener('keydown', e => {
@@ -244,85 +304,22 @@ function copyCoordinates() {
 }
 
 function startDrawing() {
-  if (drawingMode) {
-    // 그리기 종료
-    drawingMode = false;
-    if (distanceOverlay) {
-      distanceOverlay.setMap(null);
-      distanceOverlay = null;
-    }
-    if (mouseMoveListener) {
-      kakao.maps.event.removeListener(mouseMoveListener);
-      mouseMoveListener = null;
-    }
-    return;
-  }
+  if (drawingMode) return drawingMode = false;
+  // 이전에 남은 라인/오버레이 삭제
+  if (moveLine) { moveLine.setMap(null); moveLine = null; }
+  if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay = null; }
 
-  // 그리기 시작
   drawingMode = true;
   currentPath = [];
   currentPolyline = new kakao.maps.Polyline({
-    map: map,
-    path: currentPath,
-    strokeWeight: 3,
-    strokeColor: '#FF0000',
-    strokeOpacity: 0.8
+    map, path: currentPath, strokeWeight:3, strokeColor:'#FF0000', strokeOpacity:0.8
   });
   polylines.push(currentPolyline);
-
-  // (1) 커스텀 오버레이 생성 → setMap으로 지도에 올리기
-  distanceOverlay = new kakao.maps.CustomOverlay({
-    position: map.getCenter(),          // 초기엔 맵 중앙
-    content: `<div style="
-                 padding:4px;
-                 background:rgba(255,255,255,0.8);
-                 border:1px solid #666;
-                 font-size:12px;
-               ">거리: 0 m</div>`,
-    yAnchor: 1                          // 마우스 바로 위에 표시
-  });
-  distanceOverlay.setMap(map);
-
-  // (2) mousemove 이벤트로 updateDistance 호출
-  mouseMoveListener = kakao.maps.event.addListener(
-    map,
-    'mousemove',
-    updateDistance
-  );
 }
+
 
 const resetPolylines = () => { polylines.forEach(p => p.setMap(null)); polylines = []; drawingMode = false; };
 const resetAll = () => { markers.forEach(m => m.marker.setMap(null)); markers = []; resetPolylines(); };
-
-
-function updateDistance(mouseEvent) {
-  if (!distanceOverlay) return;
-  const mover = mouseEvent.latLng;
-  let dist = 0;
-  if (currentPath.length > 0) {
-    // 누적거리 + 마지막점~마우스거리
-    for (let i = 1; i < currentPath.length; i++) {
-      dist += kakao.maps.geometry.spherical.computeDistanceBetween(
-        currentPath[i - 1],
-        currentPath[i]
-      );
-    }
-    dist += kakao.maps.geometry.spherical.computeDistanceBetween(
-      currentPath[currentPath.length - 1],
-      mover
-    );
-  }
-  // 오버레이 위치·내용 갱신
-  distanceOverlay.setPosition(mover);
-  distanceOverlay.setContent(
-    `<div style="
-       padding:4px;
-       background:rgba(255,255,255,0.8);
-       border:1px solid #666;
-       font-size:12px;
-     ">거리: ${Math.round(dist)} m</div>`
-  );
-}
 
 function exportGPX() {
   const fname = prompt('파일명', 'data'); if (!fname) return;
