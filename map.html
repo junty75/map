@@ -23,6 +23,10 @@
   font-size: 12px;
   white-space: nowrap;
 }
+.drawing-cursor * {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><text x="0" y="20" font-size="20" fill="red">&#x3009;</text></svg>') 0 0, auto !important;
+}
+
   </style>
 </head>
 <body>
@@ -78,16 +82,14 @@ function updateDistance(mouseEvent) {
 
   const formatDistance = d => {
     if (d <= 1000) return `${d.toFixed(1)}m`;
-    if (d < 1000) return `${Math.round(d)}m`;
     return `${(d / 1000).toFixed(2)}km`;
   };
 
-const content = `
-  <div class="dotOverlay distanceInfo" style="font-size: 0.8em; margin-left:4px; margin-bottom:8px;">
-    총거리 <span class="number">${formatDistance(totalDistance)}</span>
-  </div>
-`;
-
+  const content = `
+    <div class="dotOverlay distanceInfo" style="font-size: 0.8em; margin-left:4px; margin-bottom:8px;">
+      총거리 <span class="number">${formatDistance(totalDistance)}</span>
+    </div>
+  `;
 
   if (distanceOverlay) {
     distanceOverlay.setPosition(mousePosition);
@@ -104,6 +106,7 @@ const content = `
   }
 }
 
+
 // END: 거리 표시용 전역변수 및 함수
 
 const trimCityProvince = str => str?.split(' ').slice(1).join(' ') || '';
@@ -112,44 +115,68 @@ function initializeMap(center) {
   map = new kakao.maps.Map(document.getElementById('map'), { center, level: 4, mapTypeId: kakao.maps.MapTypeId.HYBRID });
   geocoder = new kakao.maps.services.Geocoder();
 
-  kakao.maps.event.addListener(map, 'click', e => {
-    if (markerInputOverlay) {
-      markerInputOverlay.setMap(null);
-      markerInputOverlay = null;
-      return;
-    }
-    if (drawingMode) {
-      currentPath.push(e.latLng);
-      currentPolyline.setPath(currentPath);
-    } else {
-      markers.forEach(m => m.iw.close());
-      document.getElementById('latitude').value = e.latLng.getLat();
-      document.getElementById('longitude').value = e.latLng.getLng();
-      geocoder.coord2Address(e.latLng.getLng(), e.latLng.getLat(), (res, status) => {
-        const el = document.getElementById('address-display');
-        if (status === kakao.maps.services.Status.OK) {
-          const legal = res[0].address?.address_name || '주소 없음';
-          const roadFull = res[0].road_address?.address_name;
-          const road = roadFull ? roadFull.split(' ').slice(1).join(' ') : '';
-          el.innerText = road ? `${legal} / ${road}` : legal;
-        } else {
-          el.innerText = '주소 없음';
-        }
+kakao.maps.event.addListener(map, 'click', e => {
+  if (markerInputOverlay) {
+    markerInputOverlay.setMap(null);
+    markerInputOverlay = null;
+    return;
+  }
+
+  if (drawingMode) {
+    currentPath.push(e.latLng);
+    currentPolyline.setPath(currentPath);
+
+    if (currentPath.length === 1 && !distanceOverlay) {
+      const content = `
+        <div class="dotOverlay distanceInfo" style="font-size: 0.8em; margin-left:4px; margin-bottom:8px;">
+          총거리 <span class="number">0m</span>
+        </div>
+      `;
+      distanceOverlay = new kakao.maps.CustomOverlay({
+        map,
+        content,
+        position: e.latLng,
+        xAnchor: 0,
+        yAnchor: 1,
+        zIndex: 3
       });
     }
-  });
 
-  // 기존 rightclick 리스너 중 drawingMode 분기부만 교체
-  kakao.maps.event.addListener(map, 'rightclick', e => {
-    if (drawingMode) {
-      // 마우스 라인과 툴팁 제거
-      if (moveLine) { moveLine.setMap(null); moveLine = null; }
-      if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay = null; }
-      drawingMode = false;
+    return;
+  }
+
+  markers.forEach(m => m.iw.close());
+  document.getElementById('latitude').value = e.latLng.getLat();
+  document.getElementById('longitude').value = e.latLng.getLng();
+
+  geocoder.coord2Address(e.latLng.getLng(), e.latLng.getLat(), (res, status) => {
+    const el = document.getElementById('address-display');
+    if (status === kakao.maps.services.Status.OK) {
+      const legal = res[0].address?.address_name || '주소 없음';
+      const roadFull = res[0].road_address?.address_name;
+      const road = roadFull ? roadFull.split(' ').slice(1).join(' ') : '';
+      el.innerText = road ? `${legal} / ${road}` : legal;
     } else {
-      showMarkerInput(e.latLng);
+      el.innerText = '주소 없음';
     }
   });
+});
+
+
+  // 기존 rightclick 리스너 중 drawingMode 분기부만 교체
+kakao.maps.event.addListener(map, 'rightclick', e => {
+  if (drawingMode) {
+    if (moveLine) { moveLine.setMap(null); moveLine = null; }
+    if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay = null; }
+
+    drawingMode = false;
+    document.getElementById('map').classList.remove('drawing-cursor');
+  } else {
+    showMarkerInput(e.latLng);
+  }
+});
+
+
 
 
   // 주소 검색
@@ -184,16 +211,27 @@ function initializeMap(center) {
   kakao.maps.event.addListener(map, 'mousemove', updateDistance);
 
   // Ctrl+C, Alt 단축키
-  document.addEventListener('keydown', e => {
-    if (e.ctrlKey && e.key.toLowerCase() === 'c') {
-      e.preventDefault();
-      copyCoordinates();
+document.addEventListener('keydown', e => {
+  if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+    e.preventDefault();
+    copyCoordinates();
+  }
+
+  if (e.altKey) {
+    e.preventDefault();
+
+    if (drawingMode) {
+      // 선 그리기 종료
+      if (moveLine) { moveLine.setMap(null); moveLine = null; }
+      if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay = null; }
+      drawingMode = false;
+      document.getElementById('map').classList.remove('drawing-cursor');
+    } else {
+      startDrawing(); // 선 그리기 시작
     }
-    if (e.altKey) {
-      e.preventDefault();
-      startDrawing();
-    }
-  });
+  }
+});
+
 
   // 내 위치 버튼 (📍) 복구
   document.getElementById('myLocationBtn').onclick = () => {
@@ -318,10 +356,7 @@ function copyCoordinates() {
 }
 
 function startDrawing() {
-  if (drawingMode) return drawingMode = false;
-
-  if (moveLine) { moveLine.setMap(null); moveLine = null; }
-  if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay = null; }
+  if (drawingMode) return;
 
   drawingMode = true;
   currentPath = [];
@@ -335,60 +370,17 @@ function startDrawing() {
   });
   polylines.push(currentPolyline);
 
-  const formatDistance = d => {
-    if (d <= 10) return `${d.toFixed(1)}m`;
-    if (d < 1000) return `${Math.round(d)}m`;
-    return `${(d / 1000).toFixed(2)}km`;
-  };
-
-  const content = `
-    <div class="dotOverlay distanceInfo" style="font-size: 0.8em; margin-left:4px; margin-bottom:8px;">
-      총거리 <span class="number">${formatDistance(0)}</span>
-    </div>
-  `;
-
-  // 마우스 이벤트로 툴팁 1회만 생성 (drawingMode 체크 포함!)
-  const once = kakao.maps.event.addListener(map, 'mousemove', e => {
-    if (!drawingMode) return;
-
-    if (!distanceOverlay) {
-      distanceOverlay = new kakao.maps.CustomOverlay({
-        map,
-        position: e.latLng,
-        content,
-        xAnchor: 0,
-        yAnchor: 1,
-        zIndex: 3
-      });
-    } else {
-      distanceOverlay.setPosition(e.latLng);
-      distanceOverlay.setMap(map);
-    }
-
-    kakao.maps.event.removeListener(map, 'mousemove', once);
-  });
-
-  // 🧩 drawingMode가 true일 때만 강제 트리거
-  document.addEventListener('mousemove', function handler(evt) {
-    if (!drawingMode) return;
-
-    const proj = map.getProjection();
-    if (!proj) return;
-
-    const x = evt.clientX;
-    const y = evt.clientY;
-
-    const latlng = proj.containerPointToLatLng(new kakao.maps.Point(x, y));
-    kakao.maps.event.trigger(map, 'mousemove', { latLng: latlng });
-
-    document.removeEventListener('mousemove', handler);
-  }, { once: true });
+  // 거리 오버레이 초기화는 첫 점 클릭 시 생성
+  document.getElementById('map').classList.add('drawing-cursor');
 }
 
+const resetPolylines = () => {
+  polylines.forEach(p => p.setMap(null));
+  polylines = [];
+  drawingMode = false;
+  document.getElementById('map').classList.remove('drawing-cursor');
+};
 
-
-
-const resetPolylines = () => { polylines.forEach(p => p.setMap(null)); polylines = []; drawingMode = false; };
 const resetAll = () => { markers.forEach(m => m.marker.setMap(null)); markers = []; resetPolylines(); };
 
 function exportGPX() {
