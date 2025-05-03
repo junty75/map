@@ -262,7 +262,7 @@ document.addEventListener('keydown', e => {
   // ✅ Ctrl+S → 보이는 마커/선만 내보내기
   if (e.ctrlKey && e.key.toLowerCase() === 's') {
     e.preventDefault();
-    exportVisibleGPX();
+    exportVisibleGPX(); // 🔽 아래 함수 정의 필요
   }
 });
 
