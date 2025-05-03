@@ -707,6 +707,28 @@ window.onload = () => {
   );
 };
 
+function downloadCompressedImage(imgSrc, filename, maxWidth = 1600, quality = 0.98) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => {
+    const scale = maxWidth / img.width;
+    const canvas = document.createElement('canvas');
+    canvas.width = maxWidth;
+    canvas.height = img.height * scale;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }, 'image/jpeg', quality);
+  };
+  img.src = imgSrc;
+}
+
 function downloadAllPhotos() {
   markers.forEach(m => {
     const iwContent = m.iw.getContent();
@@ -717,30 +739,56 @@ function downloadAllPhotos() {
     const lat = latlng.getLat();
     const lng = latlng.getLng();
 
-    const toDMS = val => {
-      const abs = Math.abs(val);
-      const deg = Math.floor(abs);
-      const min = Math.floor((abs - deg) * 60);
-      const sec = ((abs - deg - min / 60) * 3600);
-      return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
+    // 1. 이미지 로드
+    const image = new Image();
+    image.onload = () => {
+      // 2. 크기 줄이기
+      const maxWidth = 1600;
+      const scale = maxWidth / image.width;
+      const canvas = document.createElement('canvas');
+      canvas.width = maxWidth;
+      canvas.height = image.height * scale;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+      // 3. JPEG로 export
+      canvas.toBlob(blob => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const resizedDataUrl = reader.result;
+
+          // 4. EXIF 삽입
+          const toDMS = val => {
+            const abs = Math.abs(val);
+            const deg = Math.floor(abs);
+            const min = Math.floor((abs - deg) * 60);
+            const sec = ((abs - deg - min / 60) * 3600);
+            return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
+          };
+
+          const exifObj = { "GPS": {} };
+          exifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
+          exifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
+          exifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
+          exifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
+          const exifBytes = piexif.dump(exifObj);
+          const finalDataUrl = piexif.insert(exifBytes, resizedDataUrl);
+
+          // 5. 다운로드
+          const a = document.createElement('a');
+          a.href = finalDataUrl;
+          a.download = (m.name || 'image') + '.jpg';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        };
+        reader.readAsDataURL(blob);
+      }, 'image/jpeg', 0.98); // 압축 비율
     };
-
-    const exifObj = piexif.load(img.src);
-    exifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
-    exifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
-    exifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
-    exifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
-    const exifBytes = piexif.dump(exifObj);
-    const newDataUrl = piexif.insert(exifBytes, img.src);
-
-    const a = document.createElement('a');
-    a.href = newDataUrl;
-    a.download = (m.name || 'image') + '.jpg';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    image.src = img.src;
   });
 }
+
 
 </script>
 </body>
