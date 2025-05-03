@@ -39,6 +39,7 @@
   <div class="controls">
     <label>위도:</label><input id="latitude" readonly size="12">
     <label>경도:</label><input id="longitude" readonly size="12">
+    <button type="button" onclick="downloadAllPhotos()">📸 사진 다운로드</button>
     <button type="button" onclick="copyCoordinates()">복사 (Ctrl+C)</button>
     <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
     <button type="button" onclick="resetPolylines()">선 초기화</button>
@@ -47,17 +48,31 @@
   </div>
   <div id="map"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/piexifjs"></script>
 <script>
 let map, geocoder, drawingMode = false;
 let markers = [], polylines = [], markerInputOverlay = null;
 let currentPolyline, currentPath = [];
 let searchMarker = null;
+let movingPhotoMarker = null;
+let isDragging = false;  // 드래그 중 여부
 // START: 거리 표시용 전역변수
 let moveLine = null;
 let distanceOverlay = null;
 
 function getRandomColor() {
   return `#${Math.floor(Math.random() * 0xFFFFFF).toString(16).padStart(6, '0')}`;
+}
+
+function attachMarkerFollower(marker, followers = []) {
+  kakao.maps.event.addListener(marker, 'position_changed', () => {
+    const pos = marker.getPosition();
+    followers.forEach(obj => {
+      if (typeof obj.setPosition === 'function') {
+        obj.setPosition(pos);
+      }
+    });
+  });
 }
 
 function updateDistance(mouseEvent) {
@@ -122,6 +137,15 @@ kakao.maps.event.addListener(map, 'click', e => {
     return;
   }
 
+  // ✅ 마커 위치 이동 중이면 새 위치로 설정
+  if (movingPhotoMarker) {
+    movingPhotoMarker.marker.setPosition(e.latLng);
+    movingPhotoMarker.marker.setDraggable(false); // ✅ 이동 후 잠금
+    movingPhotoMarker = null;
+    return;
+  }
+
+
   if (drawingMode) {
     currentPath.push(e.latLng);
     currentPolyline.setPath(currentPath);
@@ -142,7 +166,13 @@ kakao.maps.event.addListener(map, 'click', e => {
       });
     }
 
-    return;
+if (movingPhotoMarker) {
+  movingPhotoMarker.marker.setPosition(e.latLng);
+  movingPhotoMarker.marker.setDraggable(false); // ✅ 드래그 비활성화
+  movingPhotoMarker = null;
+  return;
+}
+
   }
 
   markers.forEach(m => m.iw.close());
@@ -210,7 +240,7 @@ kakao.maps.event.addListener(map, 'rightclick', e => {
   // 지도 위 마우스 무브 시 거리 툴팁 업데이트
   kakao.maps.event.addListener(map, 'mousemove', updateDistance);
 
-  // Ctrl+C, Alt 단축키
+// Ctrl+C, Alt 단축키
 document.addEventListener('keydown', e => {
   if (e.ctrlKey && e.key.toLowerCase() === 'c') {
     e.preventDefault();
@@ -219,18 +249,23 @@ document.addEventListener('keydown', e => {
 
   if (e.altKey) {
     e.preventDefault();
-
     if (drawingMode) {
-      // 선 그리기 종료
-      if (moveLine) { moveLine.setMap(null); moveLine = null; }
-      if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay = null; }
+      if (moveLine) moveLine.setMap(null);
+      if (distanceOverlay) distanceOverlay.setMap(null);
       drawingMode = false;
       document.getElementById('map').classList.remove('drawing-cursor');
     } else {
-      startDrawing(); // 선 그리기 시작
+      startDrawing();
     }
   }
+
+  // ✅ Ctrl+S → 보이는 마커/선만 내보내기
+  if (e.ctrlKey && e.key.toLowerCase() === 's') {
+    e.preventDefault();
+    exportVisibleGPX();
+  }
 });
+
 
 
   // 내 위치 버튼 (📍) 복구
@@ -249,9 +284,13 @@ function showMarkerInput(latlng) {
   if (markerInputOverlay) markerInputOverlay.setMap(null);
 
   const container = document.createElement('div');
-  container.innerHTML = `<input type="text" placeholder="마커 이름" style="width:120px;padding:3px;">
-                         <button style="margin-top:4px;">추가</button>
-                         <button style="margin-top:4px;">취소</button>`;
+container.innerHTML = `
+  <input type="text" placeholder="마커 이름" style="width:120px;padding:3px;" 
+         lang="ko" autocomplete="off" autocapitalize="off" autocorrect="off" autofocus>
+  <button style="margin-top:4px;">추가</button>
+  <button style="margin-top:4px;">취소</button>`;
+
+
   container.style = 'background:white;padding:6px;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;flex-direction:column;gap:4px;';
   
   markerInputOverlay = new kakao.maps.CustomOverlay({ position: latlng, content: container, yAnchor: 1 });
@@ -277,22 +316,62 @@ function showMarkerInput(latlng) {
 }
 
 function addMarker(latlng, desc) {
-  const marker = new kakao.maps.Marker({ map, position: latlng });
+  const marker = new kakao.maps.Marker({
+    map,
+    position: latlng,
+    draggable: false
+  });
+
   const div = document.createElement('div');
   div.style = 'position:relative; display:flex; align-items:center; justify-content:space-between; padding:5px;';
   div.innerHTML = `<span>${desc}</span><div style="cursor:pointer; font-weight:bold;">✖</div>`;
   const [label, btn] = div.querySelectorAll('span, div');
+
   const iw = new kakao.maps.InfoWindow({ content: div });
 
   kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
-  kakao.maps.event.addListener(marker, 'rightclick', () => showEditInput({ marker, iw, name: desc }, label));
+  kakao.maps.event.addListener(marker, 'rightclick', () => {
+    showEditInput({ marker, iw, name: desc }, label);
+  });
   btn.onclick = () => iw.close();
+
+  let previousPosition = latlng;
+  let holdTimer = null;
+
+  kakao.maps.event.addListener(marker, 'mousedown', () => {
+    map.setDraggable(false);
+    holdTimer = setTimeout(() => {
+      iw.close(); // ✅ 텍스트창 닫기
+      marker.setDraggable(true);
+      movingPhotoMarker = { marker, iw, name: desc };
+    }, 1000);
+  });
+
+  ['mouseup', 'mouseout'].forEach(evt =>
+    kakao.maps.event.addListener(marker, evt, () => {
+      clearTimeout(holdTimer);
+      map.setDraggable(true);
+    })
+  );
+
+  kakao.maps.event.addListener(marker, 'dragend', () => {
+    if (movingPhotoMarker && marker === movingPhotoMarker.marker) {
+      previousPosition = marker.getPosition();
+      marker.setDraggable(false);
+      movingPhotoMarker = null;
+    }
+  });
 
   markers.push({ marker, iw, name: desc });
 }
 
 function addPhotoMarker(latlng, imgSrc, filename) {
-  const marker = new kakao.maps.Marker({ map, position: latlng });
+  const marker = new kakao.maps.Marker({
+    map,
+    position: latlng,
+    draggable: false
+  });
+
   const div = document.createElement('div');
   div.style = 'position:relative; padding:5px;';
   div.innerHTML = `
@@ -305,8 +384,37 @@ function addPhotoMarker(latlng, imgSrc, filename) {
   const iw = new kakao.maps.InfoWindow({ content: div });
 
   kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
-  kakao.maps.event.addListener(marker, 'rightclick', () => showEditInput({ marker, iw, name: filename }, title));
+  kakao.maps.event.addListener(marker, 'rightclick', () => {
+    showEditInput({ marker, iw, name: filename }, title);
+  });
   btn.onclick = () => iw.close();
+
+  let previousPosition = latlng;
+  let holdTimer = null;
+
+  kakao.maps.event.addListener(marker, 'mousedown', () => {
+    map.setDraggable(false);
+    holdTimer = setTimeout(() => {
+      iw.close(); // ✅ 사진창 닫기
+      marker.setDraggable(true);
+      movingPhotoMarker = { marker, iw, name: filename };
+    }, 1000);
+  });
+
+  ['mouseup', 'mouseout'].forEach(evt =>
+    kakao.maps.event.addListener(marker, evt, () => {
+      clearTimeout(holdTimer);
+      map.setDraggable(true);
+    })
+  );
+
+  kakao.maps.event.addListener(marker, 'dragend', () => {
+    if (movingPhotoMarker && marker === movingPhotoMarker.marker) {
+      previousPosition = marker.getPosition();
+      marker.setDraggable(false);
+      movingPhotoMarker = null;
+    }
+  });
 
   markers.push({ marker, iw, name: filename });
 }
@@ -315,21 +423,29 @@ function showEditInput(markerObj, label) {
   if (markerInputOverlay) markerInputOverlay.setMap(null);
 
   const container = document.createElement('div');
-  container.innerHTML = `<input type="text" value="${label.textContent}" style="width:120px;padding:3px;">
-                         <button style="margin-top:4px;">수정</button>
-                         <button style="margin-top:4px;">삭제</button>`;
+  container.innerHTML = `
+    <input type="text" value="${label.textContent}" style="width:120px;padding:3px;"
+           lang="ko" autocomplete="off" autocapitalize="off" autocorrect="off" autofocus>
+    <button style="margin-top:4px;">수정</button>
+    <button style="margin-top:4px;">삭제</button>`;
   container.style = 'background:white;padding:6px;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;flex-direction:column;gap:4px;';
 
-  markerInputOverlay = new kakao.maps.CustomOverlay({ position: markerObj.marker.getPosition(), content: container, yAnchor: 1 });
+  markerInputOverlay = new kakao.maps.CustomOverlay({
+    position: markerObj.marker.getPosition(),
+    content: container,
+    yAnchor: 1
+  });
   markerInputOverlay.setMap(map);
 
   container.addEventListener('mousedown', e => e.stopPropagation());
 
   const [input, editBtn, deleteBtn] = container.querySelectorAll('input, button');
+
   input.focus();
   const val = input.value;
   input.value = '';
   input.value = val;
+
   input.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -338,16 +454,27 @@ function showEditInput(markerObj, label) {
   });
 
   editBtn.onclick = () => {
-    label.textContent = input.value.trim() || '설명 없음';
-    markerObj.name = label.textContent;
+    const newName = input.value.trim() || '설명 없음';
+    label.textContent = newName;
+    markerObj.name = newName;
+
+    // ✅ markers 배열 내부 객체 이름도 함께 수정
+    const found = markers.find(m => m.marker === markerObj.marker);
+    if (found) found.name = newName;
+
+    markerObj.iw.close();
     markerInputOverlay.setMap(null);
   };
+
   deleteBtn.onclick = () => {
     markerObj.marker.setMap(null);
     markerObj.iw.close();
     markerInputOverlay.setMap(null);
   };
+
+
 }
+
 
 function copyCoordinates() {
   const lat = document.getElementById('latitude').value;
@@ -384,14 +511,25 @@ const resetPolylines = () => {
 const resetAll = () => { markers.forEach(m => m.marker.setMap(null)); markers = []; resetPolylines(); };
 
 function exportGPX() {
-  const fname = prompt('파일명', 'data'); if (!fname) return;
+  const lastMarkerName = markers.at(-1)?.name?.trim() || 'data';
+  const fname = prompt('파일명', lastMarkerName);
+  if (!fname) return;
+
   let gpx = '<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
-  polylines.forEach((pl,i)=>{ gpx += `<trk><name>path${i+1}</name><trkseg>\n` + pl.getPath().map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('') + '</trkseg></trk>\n'; });
+
+  polylines.forEach((pl, i) => {
+    gpx += `<trk><name>path${i+1}</name><trkseg>\n` +
+      pl.getPath().map(p => `<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('') +
+      '</trkseg></trk>\n';
+  });
+
   markers.forEach(m => {
     const p = m.marker.getPosition();
     gpx += `<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${m.name || ''}</name></wpt>\n`;
   });
+
   gpx += '</gpx>';
+
   const blob = new Blob([gpx], { type: 'application/gpx+xml' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
@@ -400,6 +538,50 @@ function exportGPX() {
   a.click();
   document.body.removeChild(a);
 }
+
+
+function exportVisibleGPX() {
+  const bounds = map.getBounds();
+
+  const visibleMarkers = markers.filter(m =>
+    bounds.contain(m.marker.getPosition())
+  );
+
+  const visiblePolylines = polylines.filter(pl =>
+    pl.getPath().some(p => bounds.contain(p))
+  );
+
+  const defaultName = visibleMarkers.at(-1)?.name?.trim() || 'visible_data';
+  const fname = prompt('보이는 영역의 GPX 저장 파일명', defaultName);
+  if (!fname) return;
+
+  let gpx = '<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
+
+  visiblePolylines.forEach((pl, i) => {
+    gpx += `<trk><name>path${i+1}</name><trkseg>\n` +
+      pl.getPath()
+        .filter(p => bounds.contain(p))
+        .map(p => `<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`)
+        .join('') +
+      '</trkseg></trk>\n';
+  });
+
+  visibleMarkers.forEach(m => {
+    const p = m.marker.getPosition();
+    gpx += `<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${m.name || ''}</name></wpt>\n`;
+  });
+
+  gpx += '</gpx>';
+
+  const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname + '.gpx';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
 
 // 파일 드래그로 사진/GPX 업로드
 document.addEventListener('dragover', e => e.preventDefault());
@@ -524,6 +706,42 @@ window.onload = () => {
     () => initializeMap(new kakao.maps.LatLng(37.5665, 126.9780))
   );
 };
+
+function downloadAllPhotos() {
+  markers.forEach(m => {
+    const iwContent = m.iw.getContent();
+    const img = iwContent.querySelector('img');
+    if (!img || !img.src.startsWith('data:image')) return;
+
+    const latlng = m.marker.getPosition();
+    const lat = latlng.getLat();
+    const lng = latlng.getLng();
+
+    const toDMS = val => {
+      const abs = Math.abs(val);
+      const deg = Math.floor(abs);
+      const min = Math.floor((abs - deg) * 60);
+      const sec = ((abs - deg - min / 60) * 3600);
+      return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
+    };
+
+    const exifObj = piexif.load(img.src);
+    exifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
+    exifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
+    exifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
+    exifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
+    const exifBytes = piexif.dump(exifObj);
+    const newDataUrl = piexif.insert(exifBytes, img.src);
+
+    const a = document.createElement('a');
+    a.href = newDataUrl;
+    a.download = (m.name || 'image') + '.jpg';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  });
+}
+
 </script>
 </body>
 </html>
