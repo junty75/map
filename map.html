@@ -591,6 +591,8 @@ document.addEventListener('drop', e => {
   if (!files.length) return;
   const bounds = new kakao.maps.LatLngBounds();
 
+let photoWithoutGPSAction = null; // null | true | false
+
   files.forEach(file => {
     // 1) GPX 트랙(seg) 그리기
     if (file.name.toLowerCase().endsWith('.gpx')) {
@@ -691,6 +693,24 @@ Array.from(trks).forEach((trk, index) => {
               addPhotoMarker(ll, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
               if (!bounds.isEmpty()) map.setBounds(bounds);
             }
+else {
+  if (photoWithoutGPSAction === null) {
+    photoWithoutGPSAction = confirm(`"${file.name}" 사진에 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번에 올리는 모든 사진에 적용됩니다)`);
+  }
+
+  if (photoWithoutGPSAction) {
+    const center = map.getCenter();
+    addPhotoMarker(center, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
+    map.panTo(center);
+
+    const addedMarker = markers.at(-1);
+    if (addedMarker) {
+      addedMarker.marker.setDraggable(true);
+      movingPhotoMarker = addedMarker;
+    }
+  }
+}
+
           });
         };
         img.src = ev.target.result;
