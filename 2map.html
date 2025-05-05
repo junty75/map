@@ -584,7 +584,7 @@ function exportVisibleGPX() {
 }
 
 
-// 파일 드래그로 사진/GPX/CSV 업로드
+// 파일 드래그로 사진/GPX 업로드
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', e => {
   e.preventDefault();
@@ -592,69 +592,73 @@ document.addEventListener('drop', e => {
   if (!files.length) return;
   const bounds = new kakao.maps.LatLngBounds();
 
-  let photoWithoutGPSAction = null; // null | true | false
+let photoWithoutGPSAction = null; // null | true | false
 
   files.forEach(file => {
-    const name = file.name.toLowerCase();
-
     // 1) GPX 트랙(seg) 그리기
-    if (name.endsWith('.gpx')) {
+    if (file.name.toLowerCase().endsWith('.gpx')) {
       const reader = new FileReader();
       reader.onload = ev => {
         const xml = new DOMParser().parseFromString(ev.target.result, 'application/xml');
-        const trks = xml.getElementsByTagName('trk');
+const trks = xml.getElementsByTagName('trk');
 
-        Array.from(trks).forEach((trk, index) => {
-          const nameTag = trk.getElementsByTagName('name')[0];
-          const trackName = nameTag ? nameTag.textContent : `path${index + 1}`;
-          const trksegs = trk.getElementsByTagName('trkseg');
+Array.from(trks).forEach((trk, index) => {
+  const nameTag = trk.getElementsByTagName('name')[0];
+  const trackName = nameTag ? nameTag.textContent : `path${index + 1}`;
+  const trksegs = trk.getElementsByTagName('trkseg');
 
-          Array.from(trksegs).forEach(seg => {
-            const pts = Array.from(seg.getElementsByTagName('trkpt')).map(pt => {
-              const ll = new kakao.maps.LatLng(
-                parseFloat(pt.getAttribute('lat')),
-                parseFloat(pt.getAttribute('lon'))
-              );
-              bounds.extend(ll);
-              return ll;
-            });
+  Array.from(trksegs).forEach(seg => {
+    const pts = Array.from(seg.getElementsByTagName('trkpt')).map(pt => {
+      const ll = new kakao.maps.LatLng(
+        parseFloat(pt.getAttribute('lat')),
+        parseFloat(pt.getAttribute('lon'))
+      );
+      bounds.extend(ll);
+      return ll;
+    });
 
-            if (pts.length) {
-              const poly = new kakao.maps.Polyline({
-                map,
-                path: pts,
-                strokeWeight: 4,
-                strokeColor: getRandomColor(),
-                strokeOpacity: 0.9
-              });
+    if (pts.length) {
+      const poly = new kakao.maps.Polyline({
+        map,
+        path: pts,
+        strokeWeight: 4,
+        strokeColor: getRandomColor(),
+        strokeOpacity: 0.9
+      });
 
-              const distance = poly.getLength();
-              const formatDistance = d =>
-                d <= 10 ? `${d.toFixed(1)}m` :
-                d < 1000 ? `${Math.round(d)}m` :
-                `${(d / 1000).toFixed(2)}km`;
+      const distance = poly.getLength();
 
-              const overlay = new kakao.maps.CustomOverlay({
-                content: `
-                  <div style="padding:5px 8px; background:white; border:1px solid #333; font-size:1.0em; border-radius:3px;">
-                    <b>${trackName}</b><br>총거리: ${formatDistance(distance)}
-                  </div>
-                `,
-                yAnchor: 1,
-                zIndex: 4
-              });
+      const formatDistance = d => {
+        if (d <= 10) return `${d.toFixed(1)}m`;
+        if (d < 1000) return `${Math.round(d)}m`;
+        return `${(d / 1000).toFixed(2)}km`;
+      };
 
-              kakao.maps.event.addListener(poly, 'mouseover', () => {
-                const mid = poly.getPath()[Math.floor(pts.length / 2)];
-                overlay.setPosition(mid);
-                overlay.setMap(map);
-              });
-              kakao.maps.event.addListener(poly, 'mouseout', () => overlay.setMap(null));
+      const overlay = new kakao.maps.CustomOverlay({
+        content: `
+          <div style="padding:5px 8px; background:white; border:1px solid #333; font-size:1.0em; border-radius:3px;">
+            <b>${trackName}</b><br>총거리: ${formatDistance(distance)}
+          </div>
+        `,
+        yAnchor: 1,
+        zIndex: 4
+      });
 
-              polylines.push(poly);
-            }
-          });
-        });
+      kakao.maps.event.addListener(poly, 'mouseover', () => {
+        const path = poly.getPath();
+        const mid = path[Math.floor(path.length / 2)];
+        overlay.setPosition(mid);
+        overlay.setMap(map);
+      });
+
+      kakao.maps.event.addListener(poly, 'mouseout', () => {
+        overlay.setMap(null);
+      });
+
+      polylines.push(poly);
+    }
+  });
+});
 
         Array.from(xml.getElementsByTagName('wpt')).forEach(wpt => {
           const ll = new kakao.maps.LatLng(
@@ -664,83 +668,55 @@ document.addEventListener('drop', e => {
           bounds.extend(ll);
           addMarker(ll, wpt.getElementsByTagName('name')[0]?.textContent || '설명 없음');
         });
-
         if (!bounds.isEmpty()) map.setBounds(bounds);
       };
       reader.readAsText(file);
-    }
 
     // 2) 이미지(EXIF) → 마커
-    else if (file.type.startsWith('image/')) {
+    } else if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = ev => {
         const img = new Image();
         img.onload = () => {
-          EXIF.getData(img, function () {
+          EXIF.getData(img, function() {
             const lat = EXIF.getTag(this, 'GPSLatitude');
             const lon = EXIF.getTag(this, 'GPSLongitude');
             const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
             const lonRef = EXIF.getTag(this, 'GPSLongitudeRef');
             if (lat && lon && latRef && lonRef) {
               const conv = (dms, ref) =>
-                (dms[0] + dms[1] / 60 + dms[2] / 3600) * (ref === 'S' || ref === 'W' ? -1 : 1);
-              const ll = new kakao.maps.LatLng(conv(lat, latRef), conv(lon, lonRef));
+                (dms[0] + dms[1]/60 + dms[2]/3600) * (ref === 'S' || ref === 'W' ? -1 : 1);
+              const ll = new kakao.maps.LatLng(
+                conv(lat, latRef),
+                conv(lon, lonRef)
+              );
               bounds.extend(ll);
               addPhotoMarker(ll, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
               if (!bounds.isEmpty()) map.setBounds(bounds);
-            } else {
-              if (photoWithoutGPSAction === null) {
-                photoWithoutGPSAction = confirm(`"${file.name}" 사진에 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번에 올리는 모든 사진에 적용됩니다)`);
-              }
-              if (photoWithoutGPSAction) {
-                const center = map.getCenter();
-                addPhotoMarker(center, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
-                map.panTo(center);
-                const added = markers.at(-1);
-                if (added) {
-                  added.marker.setDraggable(true);
-                  movingPhotoMarker = added;
-                }
-              }
             }
+else {
+  if (photoWithoutGPSAction === null) {
+    photoWithoutGPSAction = confirm(`"${file.name}" 사진에 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번에 올리는 모든 사진에 적용됩니다)`);
+  }
+
+  if (photoWithoutGPSAction) {
+    const center = map.getCenter();
+    addPhotoMarker(center, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
+    map.panTo(center);
+
+    const addedMarker = markers.at(-1);
+    if (addedMarker) {
+      addedMarker.marker.setDraggable(true);
+      movingPhotoMarker = addedMarker;
+    }
+  }
+}
+
           });
         };
         img.src = ev.target.result;
       };
       reader.readAsDataURL(file);
-    }
-
-    // 3) CSV → 마커/사진마커
-    else if (name.endsWith('.csv')) {
-      const reader = new FileReader();
-      reader.onload = evt => {
-        const lines = evt.target.result.trim().split('\n').slice(1); // 헤더 제거
-        lines.forEach(line => {
-          const [latStr, lngStr, desc] = line.split(',');
-          const lat = parseFloat(latStr), lng = parseFloat(lngStr);
-          if (!lat || !lng) return;
-
-          const latlng = new kakao.maps.LatLng(lat, lng);
-          bounds.extend(latlng);
-
-          if (desc && /\.(jpe?g|png)$/i.test(desc.trim())) {
-            const fakeUrl = desc.trim(); // 브라우저에서 로컬 경로는 사용할 수 없음
-            fetch(fakeUrl)
-              .then(res => res.blob())
-              .then(blob => {
-                const fr = new FileReader();
-                fr.onload = e => addPhotoMarker(latlng, e.target.result, fakeUrl.split(/[\\/]/).pop());
-                fr.readAsDataURL(blob);
-              })
-              .catch(() => addMarker(latlng, desc));
-          } else {
-            addMarker(latlng, desc?.trim() || '설명 없음');
-          }
-        });
-
-        if (!bounds.isEmpty()) map.setBounds(bounds);
-      };
-      reader.readAsText(file, 'utf-8');
     }
   });
 });
@@ -834,48 +810,5 @@ function downloadAllPhotos() {
   });
 }
 </script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<input type="file" id="excelInput" accept=".xlsx,.xls,.csv" style="position:absolute; top:50px; left:10px; z-index:1001;">
-
-<script>
-document.getElementById('excelInput').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  const reader = new FileReader();
-  reader.onload = (evt) => {
-    const data = new Uint8Array(evt.target.result);
-    const workbook = XLSX.read(data, { type: 'array' });
-    const sheet = workbook.Sheets[workbook.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-    const bounds = new kakao.maps.LatLngBounds();
-
-    rows.forEach(([lat, lng, desc], i) => {
-      if (!lat || !lng || i === 0) return; // Skip header or invalid
-
-      const latlng = new kakao.maps.LatLng(Number(lat), Number(lng));
-      bounds.extend(latlng);
-
-      if (typeof desc === 'string' && /\.(jpe?g|png)$/i.test(desc)) {
-        const imgPath = desc.replace(/^C:\\fakepath\\/, ''); // 브라우저 보안으로 경로 정리 필요
-        fetch(imgPath) // 실제 경로가 유효해야 함
-          .then(res => res.blob())
-          .then(blob => {
-            const reader = new FileReader();
-            reader.onload = e => addPhotoMarker(latlng, e.target.result, imgPath.split(/[\\/]/).pop());
-            reader.readAsDataURL(blob);
-          })
-          .catch(() => addMarker(latlng, desc)); // fallback
-      } else {
-        addMarker(latlng, String(desc ?? '설명 없음'));
-      }
-    });
-
-    if (!bounds.isEmpty()) map.setBounds(bounds);
-  };
-  reader.readAsArrayBuffer(file);
-});
-</script>
-
 </body>
 </html>
