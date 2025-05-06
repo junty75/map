@@ -716,7 +716,7 @@ document.addEventListener('drop', e => {
       reader.onload = evt => {
         const lines = evt.target.result.trim().split('\n').slice(1); // 헤더 제거
         lines.forEach(line => {
-          const [latStr, lngStr, desc] = line.split(',');
+          const [lngStr, latStr, desc] = line.split(',');
           const lat = parseFloat(latStr), lng = parseFloat(lngStr);
           if (!lat || !lng) return;
 
