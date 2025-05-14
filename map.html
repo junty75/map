@@ -486,6 +486,16 @@ function copyCoordinates() {
 function startDrawing() {
   if (drawingMode) return;
 
+  // ✅ 이전 거리 오버레이 및 가이드 선 제거
+  if (moveLine) {
+    moveLine.setMap(null);
+    moveLine = null;
+  }
+  if (distanceOverlay) {
+    distanceOverlay.setMap(null);
+    distanceOverlay = null;
+  }
+
   drawingMode = true;
   currentPath = [];
 
@@ -496,11 +506,11 @@ function startDrawing() {
     strokeColor: '#FF0000',
     strokeOpacity: 0.8
   });
-  polylines.push(currentPolyline);
 
-  // 거리 오버레이 초기화는 첫 점 클릭 시 생성
+  polylines.push(currentPolyline);
   document.getElementById('map').classList.add('drawing-cursor');
 }
+
 
 const resetPolylines = () => {
   polylines.forEach(p => p.setMap(null));
