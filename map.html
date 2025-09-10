@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>GPX & 사진 지도 (v5)</title>
+  <title>GPX & 사진 지도 (v5.1)</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -522,19 +522,23 @@ const resetPolylines = () => {
 const resetAll = () => { markers.forEach(m => m.marker.setMap(null)); markers = []; resetPolylines(); };
 
 function exportGPX() {
-  const lastMarkerName = markers.at(-1)?.name?.trim() || 'data';
+  const activeMarkers = markers.filter(m => m.marker && m.marker.getMap()); // 지도에 남아있는 마커만
+  const lastMarkerName = activeMarkers.at(-1)?.name?.trim() || 'data';
   const fname = prompt('파일명', lastMarkerName);
   if (!fname) return;
 
   let gpx = '<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
 
+  // 트랙(선) 내보내기: (선은 기존 동작 유지하되, 화면에 보이는 선만 포함하려면 아래에 필터 추가 가능)
   polylines.forEach((pl, i) => {
-    gpx += `<trk><name>path${i+1}</name><trkseg>\n` +
-      pl.getPath().map(p => `<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('') +
-      '</trkseg></trk>\n';
+    if (pl && pl.getMap()) { // 화면에 보이는 선만 포함 (getMap 존재 시)
+      const pts = pl.getPath().map(p => `<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('');
+      gpx += `<trk><name>path${i+1}</name><trkseg>\n${pts}</trkseg></trk>\n`;
+    }
   });
 
-  markers.forEach(m => {
+  // 활성 마커만 내보내기
+  activeMarkers.forEach(m => {
     const p = m.marker.getPosition();
     gpx += `<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${m.name || ''}</name></wpt>\n`;
   });
@@ -554,12 +558,17 @@ function exportGPX() {
 function exportVisibleGPX() {
   const bounds = map.getBounds();
 
-  const visibleMarkers = markers.filter(m =>
+  // 먼저 지도에 붙어있는 활성 마커만 고려
+  const activeMarkers = markers.filter(m => m.marker && m.marker.getMap());
+
+  // 보이는 영역 안에 있는 활성 마커만
+  const visibleMarkers = activeMarkers.filter(m =>
     bounds.contain(m.marker.getPosition())
   );
 
+  // 보이는 영역에 포함되는 선(폴리라인)만 선택
   const visiblePolylines = polylines.filter(pl =>
-    pl.getPath().some(p => bounds.contain(p))
+    pl && pl.getMap() && pl.getPath().some(p => bounds.contain(p))
   );
 
   const defaultName = visibleMarkers.at(-1)?.name?.trim() || 'visible_data';
@@ -592,6 +601,7 @@ function exportVisibleGPX() {
   a.click();
   document.body.removeChild(a);
 }
+
 
 
 // 파일 드래그로 사진/GPX/CSV 업로드
