@@ -40,15 +40,20 @@
     <label>위도:</label><input id="latitude" readonly size="12">
     <label>경도:</label><input id="longitude" readonly size="12">
     <button type="button" onclick="downloadAllPhotos()">📸 사진 다운로드</button>
-    <button type="button" onclick="copyCoordinates()">복사 (Ctrl+C)</button>
+    <button type="button" onclick="copyCoordinates()">복사 (Shift+C)</button>
     <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
     <button type="button" onclick="resetPolylines()">선 초기화</button>
     <button type="button" onclick="resetAll()">화면 초기화</button>
-    <button type="button" onclick="exportGPX()">GPX 내보내기</button>
+    <select id="exportFormat" style="padding:5px;">
+      <option value="kmz">KMZ 내보내기</option>
+      <option value="gpx">GPX 내보내기</option>
+    </select>
+    <button type="button" onclick="exportByFormat()">💾 저장</button>
   </div>
   <div id="map"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/piexifjs"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script>
 let map, geocoder, drawingMode = false;
 let markers = [], polylines = [], markerInputOverlay = null;
@@ -243,7 +248,7 @@ kakao.maps.event.addListener(map, 'rightclick', e => {
 
 // Ctrl+C, Alt 단축키
 document.addEventListener('keydown', e => {
-  if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+  if (e.shiftKey && e.key.toLowerCase() === 'c') {
     e.preventDefault();
     copyCoordinates();
   }
@@ -519,7 +524,7 @@ const resetPolylines = () => {
   document.getElementById('map').classList.remove('drawing-cursor');
 };
 
-const resetAll = () => { markers.forEach(m => m.marker.setMap(null)); markers = []; resetPolylines(); };
+const resetAll = () => { markers.forEach(m => { m.iw.close(); m.marker.setMap(null); }); markers = []; resetPolylines(); };
 
 function exportGPX() {
   const activeMarkers = markers.filter(m => m.marker && m.marker.getMap()); // 지도에 남아있는 마커만
@@ -549,6 +554,88 @@ function exportGPX() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = fname + '.gpx';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+
+function exportByFormat() {
+  const format = document.getElementById('exportFormat').value;
+  if (format === 'kmz') exportKMZ();
+  else exportGPX();
+}
+
+async function exportKMZ() {
+  const activeMarkers = markers.filter(m => m.marker && m.marker.getMap());
+  const lastMarkerName = activeMarkers.at(-1)?.name?.trim() || 'data';
+  const fname = prompt('파일명', lastMarkerName);
+  if (!fname) return;
+
+  const zip = new JSZip();
+  const photoFiles = []; // { filename, dataUrl }
+
+  // 사진 마커에서 이미지 추출 (파일명 중복 방지용 인덱스 추가)
+  let photoCount = 0;
+  for (const m of activeMarkers) {
+    const img = m.iw.getContent().querySelector('img');
+    if (img && img.src.startsWith('data:image')) {
+      photoCount++;
+      const safeName = (m.name || 'photo').replace(/[^\w가-힣\-_.]/g, '_');
+      const safeFilename = `${photoCount}_${safeName}.jpg`;
+      photoFiles.push({ filename: safeFilename, markerName: m.name });
+      const base64 = img.src.split(',')[1];
+      zip.file(`files/${safeFilename}`, base64, { base64: true });
+    }
+  }
+
+  // KML 생성
+  let kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>
+  <name>${fname}</name>\n`;
+
+  // 선(트랙) → KML LineString
+  polylines.forEach((pl, i) => {
+    if (!pl || !pl.getMap()) return;
+    const coords = pl.getPath().map(p => `${p.getLng()},${p.getLat()},0`).join('\n          ');
+    kml += `  <Placemark>
+    <name>path${i + 1}</name>
+    <LineString><coordinates>
+          ${coords}
+    </coordinates></LineString>
+  </Placemark>\n`;
+  });
+
+  // 마커 → KML Placemark
+  let photoIdx = 0;
+  for (const m of activeMarkers) {
+    const p = m.marker.getPosition();
+    const img = m.iw.getContent().querySelector('img');
+    if (img && img.src.startsWith('data:image')) {
+      const safeFilename = photoFiles[photoIdx]?.filename || 'photo.jpg';
+      photoIdx++;
+      kml += `  <Placemark>
+    <name>${m.name || ''}</name>
+    <description><![CDATA[<img src="files/${safeFilename}" style="max-width:400px">]]></description>
+    <ExtendedData><Data name="photoFile"><value>${safeFilename}</value></Data></ExtendedData>
+    <Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point>
+  </Placemark>\n`;
+    } else {
+      kml += `  <Placemark>
+    <name>${m.name || ''}</name>
+    <Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point>
+  </Placemark>\n`;
+    }
+  }
+
+  kml += `</Document>\n</kml>`;
+  zip.file('doc.kml', kml);
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname + '.kmz';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -604,94 +691,60 @@ function exportVisibleGPX() {
 
 
 
-// 파일 드래그로 사진/GPX/CSV 업로드
+// 파일 드래그로 사진/GPX/CSV/KMZ 업로드
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', e => {
   e.preventDefault();
   const files = Array.from(e.dataTransfer.files);
   if (!files.length) return;
   const bounds = new kakao.maps.LatLngBounds();
-
-  let photoWithoutGPSAction = null; // null | true | false
+  let photoWithoutGPSAction = null;
 
   files.forEach(file => {
     const name = file.name.toLowerCase();
 
-    // 1) GPX 트랙(seg) 그리기
-    if (name.endsWith('.gpx')) {
+    // 0) KMZ 불러오기
+    if (name.endsWith('.kmz')) {
+      loadKMZ(file, bounds);
+
+    // 1) GPX
+    } else if (name.endsWith('.gpx')) {
       const reader = new FileReader();
       reader.onload = ev => {
         const xml = new DOMParser().parseFromString(ev.target.result, 'application/xml');
-        const trks = xml.getElementsByTagName('trk');
-
-        Array.from(trks).forEach((trk, index) => {
-          const nameTag = trk.getElementsByTagName('name')[0];
-          const trackName = nameTag ? nameTag.textContent : `path${index + 1}`;
-          const trksegs = trk.getElementsByTagName('trkseg');
-
-          Array.from(trksegs).forEach(seg => {
+        Array.from(xml.getElementsByTagName('trk')).forEach((trk, index) => {
+          const trackName = trk.getElementsByTagName('name')[0]?.textContent || `path${index + 1}`;
+          Array.from(trk.getElementsByTagName('trkseg')).forEach(seg => {
             const pts = Array.from(seg.getElementsByTagName('trkpt')).map(pt => {
-              const ll = new kakao.maps.LatLng(
-                parseFloat(pt.getAttribute('lat')),
-                parseFloat(pt.getAttribute('lon'))
-              );
+              const ll = new kakao.maps.LatLng(parseFloat(pt.getAttribute('lat')), parseFloat(pt.getAttribute('lon')));
               bounds.extend(ll);
               return ll;
             });
-
             if (pts.length) {
-              const poly = new kakao.maps.Polyline({
-                map,
-                path: pts,
-                strokeWeight: 4,
-                strokeColor: getRandomColor(),
-                strokeOpacity: 0.9
-              });
-
+              const poly = new kakao.maps.Polyline({ map, path: pts, strokeWeight: 4, strokeColor: getRandomColor(), strokeOpacity: 0.9 });
               const distance = poly.getLength();
-              const formatDistance = d =>
-                d <= 10 ? `${d.toFixed(1)}m` :
-                d < 1000 ? `${Math.round(d)}m` :
-                `${(d / 1000).toFixed(2)}km`;
-
+              const formatDistance = d => d <= 10 ? `${d.toFixed(1)}m` : d < 1000 ? `${Math.round(d)}m` : `${(d/1000).toFixed(2)}km`;
               const overlay = new kakao.maps.CustomOverlay({
-                content: `
-                  <div style="padding:5px 8px; background:white; border:1px solid #333; font-size:1.0em; border-radius:3px;">
-                    <b>${trackName}</b><br>총거리: ${formatDistance(distance)}
-                  </div>
-                `,
-                yAnchor: 1,
-                zIndex: 4
+                content: `<div style="padding:5px 8px;background:white;border:1px solid #333;font-size:1.0em;border-radius:3px;"><b>${trackName}</b><br>총거리: ${formatDistance(distance)}</div>`,
+                yAnchor: 1, zIndex: 4
               });
-
-              kakao.maps.event.addListener(poly, 'mouseover', () => {
-                const mid = poly.getPath()[Math.floor(pts.length / 2)];
-                overlay.setPosition(mid);
-                overlay.setMap(map);
-              });
+              kakao.maps.event.addListener(poly, 'mouseover', () => { overlay.setPosition(poly.getPath()[Math.floor(pts.length/2)]); overlay.setMap(map); });
               kakao.maps.event.addListener(poly, 'mouseout', () => overlay.setMap(null));
-
               polylines.push(poly);
             }
           });
         });
-
         Array.from(xml.getElementsByTagName('wpt')).forEach(wpt => {
-          const ll = new kakao.maps.LatLng(
-            parseFloat(wpt.getAttribute('lat')),
-            parseFloat(wpt.getAttribute('lon'))
-          );
+          const ll = new kakao.maps.LatLng(parseFloat(wpt.getAttribute('lat')), parseFloat(wpt.getAttribute('lon')));
           bounds.extend(ll);
           addMarker(ll, wpt.getElementsByTagName('name')[0]?.textContent || '설명 없음');
         });
-
         if (!bounds.isEmpty()) map.setBounds(bounds);
       };
       reader.readAsText(file);
-    }
 
-    // 2) 이미지(EXIF) → 마커
-    else if (file.type.startsWith('image/')) {
+    // 2) 이미지
+    } else if (file.type.startsWith('image/')) {
       const reader = new FileReader();
       reader.onload = ev => {
         const img = new Image();
@@ -702,8 +755,7 @@ document.addEventListener('drop', e => {
             const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
             const lonRef = EXIF.getTag(this, 'GPSLongitudeRef');
             if (lat && lon && latRef && lonRef) {
-              const conv = (dms, ref) =>
-                (dms[0] + dms[1] / 60 + dms[2] / 3600) * (ref === 'S' || ref === 'W' ? -1 : 1);
+              const conv = (dms, ref) => (dms[0] + dms[1]/60 + dms[2]/3600) * (ref === 'S' || ref === 'W' ? -1 : 1);
               const ll = new kakao.maps.LatLng(conv(lat, latRef), conv(lon, lonRef));
               bounds.extend(ll);
               addPhotoMarker(ll, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
@@ -717,10 +769,7 @@ document.addEventListener('drop', e => {
                 addPhotoMarker(center, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
                 map.panTo(center);
                 const added = markers.at(-1);
-                if (added) {
-                  added.marker.setDraggable(true);
-                  movingPhotoMarker = added;
-                }
+                if (added) { added.marker.setDraggable(true); movingPhotoMarker = added; }
               }
             }
           });
@@ -728,42 +777,89 @@ document.addEventListener('drop', e => {
         img.src = ev.target.result;
       };
       reader.readAsDataURL(file);
-    }
 
-    // 3) CSV → 마커/사진마커
-    else if (name.endsWith('.csv')) {
+    // 3) CSV
+    } else if (name.endsWith('.csv')) {
       const reader = new FileReader();
       reader.onload = evt => {
-        const lines = evt.target.result.trim().split('\n').slice(1); // 헤더 제거
+        const lines = evt.target.result.trim().split('\n').slice(1);
         lines.forEach(line => {
           const [lngStr, latStr, desc] = line.split(',');
           const lat = parseFloat(latStr), lng = parseFloat(lngStr);
           if (!lat || !lng) return;
-
           const latlng = new kakao.maps.LatLng(lat, lng);
           bounds.extend(latlng);
-
           if (desc && /\.(jpe?g|png)$/i.test(desc.trim())) {
-            const fakeUrl = desc.trim(); // 브라우저에서 로컬 경로는 사용할 수 없음
-            fetch(fakeUrl)
-              .then(res => res.blob())
-              .then(blob => {
-                const fr = new FileReader();
-                fr.onload = e => addPhotoMarker(latlng, e.target.result, fakeUrl.split(/[\\/]/).pop());
-                fr.readAsDataURL(blob);
-              })
-              .catch(() => addMarker(latlng, desc));
+            fetch(desc.trim()).then(res => res.blob()).then(blob => {
+              const fr = new FileReader();
+              fr.onload = e2 => addPhotoMarker(latlng, e2.target.result, desc.trim().split(/[\\/]/).pop());
+              fr.readAsDataURL(blob);
+            }).catch(() => addMarker(latlng, desc));
           } else {
             addMarker(latlng, desc?.trim() || '설명 없음');
           }
         });
-
         if (!bounds.isEmpty()) map.setBounds(bounds);
       };
       reader.readAsText(file, 'utf-8');
     }
   });
 });
+
+async function loadKMZ(file, bounds) {
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const kmlFile = zip.file('doc.kml');
+    if (!kmlFile) { alert('KMZ 안에 doc.kml 파일이 없습니다.'); return; }
+    const kmlText = await kmlFile.async('string');
+    const xml = new DOMParser().parseFromString(kmlText, 'application/xml');
+    const placemarks = Array.from(xml.getElementsByTagName('Placemark'));
+
+    for (const pm of placemarks) {
+      const pmName = pm.getElementsByTagName('name')[0]?.textContent || '설명 없음';
+      const lineString = pm.getElementsByTagName('LineString')[0];
+      const point = pm.getElementsByTagName('Point')[0];
+      const photoFileEl = pm.querySelector('ExtendedData Data[name="photoFile"] value');
+
+      if (lineString) {
+        const coordsText = lineString.getElementsByTagName('coordinates')[0]?.textContent || '';
+        const pts = coordsText.trim().split(/\s+/).map(c => {
+          const [lng, lat] = c.split(',').map(Number);
+          return new kakao.maps.LatLng(lat, lng);
+        }).filter(ll => !isNaN(ll.getLat()) && !isNaN(ll.getLng()));
+        if (pts.length) {
+          const poly = new kakao.maps.Polyline({ map, path: pts, strokeWeight: 4, strokeColor: getRandomColor(), strokeOpacity: 0.9 });
+          pts.forEach(p => bounds.extend(p));
+          polylines.push(poly);
+        }
+      } else if (point) {
+        const coordsText = point.getElementsByTagName('coordinates')[0]?.textContent || '';
+        const [lng, lat] = coordsText.trim().split(',').map(Number);
+        if (isNaN(lat) || isNaN(lng)) continue;
+        const ll = new kakao.maps.LatLng(lat, lng);
+        bounds.extend(ll);
+
+        if (photoFileEl) {
+          const photoFilename = photoFileEl.textContent;
+          const photoZipFile = zip.file(`files/${photoFilename}`);
+          if (photoZipFile) {
+            const base64 = await photoZipFile.async('base64');
+            const ext = photoFilename.split('.').pop().toLowerCase();
+            const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+            addPhotoMarker(ll, `data:${mime};base64,${base64}`, pmName);
+          } else {
+            addMarker(ll, pmName);
+          }
+        } else {
+          addMarker(ll, pmName);
+        }
+      }
+    }
+    if (!bounds.isEmpty()) map.setBounds(bounds);
+  } catch (err) {
+    alert('KMZ 파일을 읽는 중 오류가 발생했습니다.');
+  }
+}
 
 window.onload = () => {
   navigator.geolocation.getCurrentPosition(
@@ -795,7 +891,7 @@ function downloadCompressedImage(imgSrc, filename, maxWidth = 1600, quality = 0.
 }
 
 function downloadAllPhotos() {
-  markers.forEach(m => {
+  markers.filter(m => m.marker && m.marker.getMap()).forEach(m => {
     const iwContent = m.iw.getContent();
     const img = iwContent.querySelector('img');
     if (!img || !img.src.startsWith('data:image')) return;
@@ -804,25 +900,34 @@ function downloadAllPhotos() {
     const lat = latlng.getLat();
     const lng = latlng.getLng();
 
-    // 1. 이미지 로드
+    // 1. 원본 EXIF 읽기 (촬영날짜 등 보존)
+    let originalExifObj = {};
+    try {
+      const existingExifStr = piexif.load(img.src);
+      originalExifObj = existingExifStr;
+    } catch (e) {
+      originalExifObj = {};
+    }
+
+    // 2. 이미지 로드
     const image = new Image();
     image.onload = () => {
-      // 2. 크기 줄이기
+      // 3. 크기 줄이기
       const maxWidth = 1600;
-      const scale = maxWidth / image.width;
+      const scale = image.width > maxWidth ? maxWidth / image.width : 1;
       const canvas = document.createElement('canvas');
-      canvas.width = maxWidth;
-      canvas.height = image.height * scale;
+      canvas.width = Math.round(image.width * scale);
+      canvas.height = Math.round(image.height * scale);
       const ctx = canvas.getContext('2d');
       ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
 
-      // 3. JPEG로 export
+      // 4. JPEG로 export
       canvas.toBlob(blob => {
         const reader = new FileReader();
         reader.onloadend = () => {
           const resizedDataUrl = reader.result;
 
-          // 4. EXIF 삽입
+          // 5. 원본 EXIF 유지하면서 GPS만 업데이트
           const toDMS = val => {
             const abs = Math.abs(val);
             const deg = Math.floor(abs);
@@ -831,15 +936,25 @@ function downloadAllPhotos() {
             return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
           };
 
-          const exifObj = { "GPS": {} };
-          exifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
-          exifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
-          exifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
-          exifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
-          const exifBytes = piexif.dump(exifObj);
+          // 원본 EXIF를 기반으로 시작 (촬영날짜 등 모든 필드 보존)
+          // 불필요한 코멘트 필드 제거
+          if (originalExifObj["0th"]) {
+            delete originalExifObj["0th"][piexif.ImageIFD.UserComment];
+            delete originalExifObj["0th"][piexif.ImageIFD.ImageDescription];
+          }
+          if (originalExifObj["Exif"]) {
+            delete originalExifObj["Exif"][piexif.ExifIFD.UserComment];
+          }
+          if (!originalExifObj["GPS"]) originalExifObj["GPS"] = {};
+          originalExifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
+          originalExifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
+          originalExifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
+          originalExifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
+
+          const exifBytes = piexif.dump(originalExifObj);
           const finalDataUrl = piexif.insert(exifBytes, resizedDataUrl);
 
-          // 5. 다운로드
+          // 6. 다운로드
           const a = document.createElement('a');
           a.href = finalDataUrl;
           a.download = (m.name || 'image') + '.jpg';
@@ -848,7 +963,7 @@ function downloadAllPhotos() {
           document.body.removeChild(a);
         };
         reader.readAsDataURL(blob);
-      }, 'image/jpeg', 0.95); // 압축 비율
+      }, 'image/jpeg', 0.95);
     };
     image.src = img.src;
   });
