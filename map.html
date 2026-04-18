@@ -890,83 +890,82 @@ function downloadCompressedImage(imgSrc, filename, maxWidth = 1600, quality = 0.
   img.src = imgSrc;
 }
 
-function downloadAllPhotos() {
-  markers.filter(m => m.marker && m.marker.getMap()).forEach(m => {
-    const iwContent = m.iw.getContent();
-    const img = iwContent.querySelector('img');
-    if (!img || !img.src.startsWith('data:image')) return;
-
-    const latlng = m.marker.getPosition();
-    const lat = latlng.getLat();
-    const lng = latlng.getLng();
-
-    // 1. 원본 EXIF 읽기 (촬영날짜 등 보존)
-    let originalExifObj = {};
-    try {
-      const existingExifStr = piexif.load(img.src);
-      originalExifObj = existingExifStr;
-    } catch (e) {
-      originalExifObj = {};
-    }
-
-    // 2. 이미지 로드
-    const image = new Image();
-    image.onload = () => {
-      // 3. 크기 줄이기
-      const maxWidth = 1600;
-      const scale = image.width > maxWidth ? maxWidth / image.width : 1;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(image.width * scale);
-      canvas.height = Math.round(image.height * scale);
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-      // 4. JPEG로 export
-      canvas.toBlob(blob => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const resizedDataUrl = reader.result;
-
-          // 5. 원본 EXIF 유지하면서 GPS만 업데이트
-          const toDMS = val => {
-            const abs = Math.abs(val);
-            const deg = Math.floor(abs);
-            const min = Math.floor((abs - deg) * 60);
-            const sec = ((abs - deg - min / 60) * 3600);
-            return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
-          };
-
-          // 원본 EXIF를 기반으로 시작 (촬영날짜 등 모든 필드 보존)
-          // 불필요한 코멘트 필드 제거
-          if (originalExifObj["0th"]) {
-            delete originalExifObj["0th"][piexif.ImageIFD.UserComment];
-            delete originalExifObj["0th"][piexif.ImageIFD.ImageDescription];
-          }
-          if (originalExifObj["Exif"]) {
-            delete originalExifObj["Exif"][piexif.ExifIFD.UserComment];
-          }
-          if (!originalExifObj["GPS"]) originalExifObj["GPS"] = {};
-          originalExifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
-          originalExifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
-          originalExifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
-          originalExifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
-
-          const exifBytes = piexif.dump(originalExifObj);
-          const finalDataUrl = piexif.insert(exifBytes, resizedDataUrl);
-
-          // 6. 다운로드
-          const a = document.createElement('a');
-          a.href = finalDataUrl;
-          a.download = (m.name || 'image') + '.jpg';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-        };
-        reader.readAsDataURL(blob);
-      }, 'image/jpeg', 0.95);
-    };
-    image.src = img.src;
+async function downloadAllPhotos() {
+  const photoMarkers = markers.filter(m => {
+    if (!m.marker || !m.marker.getMap()) return false;
+    const img = m.iw.getContent().querySelector('img');
+    return img && img.src.startsWith('data:image');
   });
+
+  for (const m of photoMarkers) {
+    await new Promise(resolve => {
+      const iwContent = m.iw.getContent();
+      const img = iwContent.querySelector('img');
+
+      const latlng = m.marker.getPosition();
+      const lat = latlng.getLat();
+      const lng = latlng.getLng();
+
+      // 1. 원본 EXIF 읽기
+      let originalExifObj = {};
+      try { originalExifObj = piexif.load(img.src); } catch (e) { originalExifObj = {}; }
+
+      // 2. 이미지 로드
+      const image = new Image();
+      image.onload = () => {
+        const maxWidth = 1600;
+        const scale = image.width > maxWidth ? maxWidth / image.width : 1;
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(image.width * scale);
+        canvas.height = Math.round(image.height * scale);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+        canvas.toBlob(blob => {
+          const reader = new FileReader();
+          reader.onloadend = () => {
+            const resizedDataUrl = reader.result;
+
+            const toDMS = val => {
+              const abs = Math.abs(val);
+              const deg = Math.floor(abs);
+              const min = Math.floor((abs - deg) * 60);
+              const sec = (abs - deg - min / 60) * 3600;
+              return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
+            };
+
+            if (originalExifObj["0th"]) {
+              delete originalExifObj["0th"][piexif.ImageIFD.UserComment];
+              delete originalExifObj["0th"][piexif.ImageIFD.ImageDescription];
+            }
+            if (originalExifObj["Exif"]) {
+              delete originalExifObj["Exif"][piexif.ExifIFD.UserComment];
+            }
+            if (!originalExifObj["GPS"]) originalExifObj["GPS"] = {};
+            originalExifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
+            originalExifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
+            originalExifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
+            originalExifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
+
+            const exifBytes = piexif.dump(originalExifObj);
+            const finalDataUrl = piexif.insert(exifBytes, resizedDataUrl);
+
+            const a = document.createElement('a');
+            a.href = finalDataUrl;
+            a.download = (m.name || 'image') + '.jpg';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            // 다음 사진으로 넘어가기 전 잠깐 대기
+            setTimeout(resolve, 300);
+          };
+          reader.readAsDataURL(blob);
+        }, 'image/jpeg', 0.95);
+      };
+      image.src = img.src;
+    });
+  }
 }
 </script>
 </body>
