@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>KMZ & 사진 지도 (v1.1)</title>
+  <title>KMZ & 사진 지도 (v1.5)</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -871,11 +871,23 @@ async function loadKMZ(file, bounds) {
     const xml = new DOMParser().parseFromString(kmlText, 'application/xml');
     const placemarks = Array.from(xml.getElementsByTagName('Placemark'));
 
+    // ZIP 안에 있는 files/ 경로 목록 미리 추출
+    const zipFiles = Object.keys(zip.files);
+
     for (const pm of placemarks) {
       const pmName = pm.getElementsByTagName('name')[0]?.textContent || '설명 없음';
       const lineString = pm.getElementsByTagName('LineString')[0];
       const point = pm.getElementsByTagName('Point')[0];
-      const photoFileEl = pm.querySelector('ExtendedData Data[name="photoFile"] value');
+
+      // photoFile 읽기 - querySelector 실패 대비해서 직접 탐색
+      let photoFilename = '';
+      const dataEls = pm.getElementsByTagName('Data');
+      for (const d of Array.from(dataEls)) {
+        if (d.getAttribute('name') === 'photoFile') {
+          photoFilename = d.getElementsByTagName('value')[0]?.textContent || '';
+          break;
+        }
+      }
 
       if (lineString) {
         const coordsText = lineString.getElementsByTagName('coordinates')[0]?.textContent || '';
@@ -895,9 +907,19 @@ async function loadKMZ(file, bounds) {
         const ll = new kakao.maps.LatLng(lat, lng);
         bounds.extend(ll);
 
-        if (photoFileEl) {
-          const photoFilename = photoFileEl.textContent;
-          const photoZipFile = zip.file(`files/${photoFilename}`);
+        if (photoFilename) {
+          // files/ 경로 포함 또는 미포함 모두 탐색
+          const candidates = [
+            `files/${photoFilename}`,
+            photoFilename,
+            ...zipFiles.filter(p => p.endsWith(photoFilename))
+          ];
+          let photoZipFile = null;
+          for (const c of candidates) {
+            photoZipFile = zip.file(c);
+            if (photoZipFile) break;
+          }
+
           if (photoZipFile) {
             const base64 = await photoZipFile.async('base64');
             const ext = photoFilename.split('.').pop().toLowerCase();
@@ -913,7 +935,8 @@ async function loadKMZ(file, bounds) {
     }
     if (!bounds.isEmpty()) map.setBounds(bounds);
   } catch (err) {
-    alert('KMZ 파일을 읽는 중 오류가 발생했습니다.');
+    console.error(err);
+    alert('KMZ 파일을 읽는 중 오류가 발생했습니다: ' + err.message);
   }
 }
 
