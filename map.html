@@ -2,7 +2,7 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>KMZ & 사진 지도 (v1.0)</title>
+  <title>KMZ & 사진 지도 (v1.1)</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -382,10 +382,66 @@ function addPhotoMarker(latlng, imgSrc, filename) {
   div.style = 'position:relative; padding:5px;';
   div.innerHTML = `
     <div style="font-weight:bold; margin-bottom:5px;">${filename}</div>
-    <div style="position:absolute; top:2px; right:2px; cursor:pointer;">✖</div>
+    <div style="position:absolute; top:2px; right:2px; display:flex; gap:4px;">
+      <span class="dl-btn" style="cursor:pointer; font-size:14px;" title="다운로드">💾</span>
+      <span class="cl-btn" style="cursor:pointer; font-weight:bold;">✖</span>
+    </div>
     <img src="${imgSrc}" style="max-height:400px; display:block;">
   `;
-  const [title, btn] = div.querySelectorAll('div');
+  const title = div.querySelector('div');
+  const dlBtn = div.querySelector('.dl-btn');
+  const btn = div.querySelector('.cl-btn');
+
+  dlBtn.onclick = async () => {
+    const img = div.querySelector('img');
+    const latlng = marker.getPosition();
+    const lat = latlng.getLat();
+    const lng = latlng.getLng();
+
+    let originalExifObj = {};
+    try { originalExifObj = piexif.load(img.src); } catch (e) { originalExifObj = {}; }
+
+    const image = new Image();
+    image.onload = () => {
+      const maxWidth = 1600;
+      const scale = image.width > maxWidth ? maxWidth / image.width : 1;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(image.width * scale);
+      canvas.height = Math.round(image.height * scale);
+      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+      canvas.toBlob(blob => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const toDMS = val => {
+            const abs = Math.abs(val);
+            const deg = Math.floor(abs);
+            const min = Math.floor((abs - deg) * 60);
+            const sec = (abs - deg - min / 60) * 3600;
+            return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
+          };
+          if (originalExifObj["0th"]) {
+            delete originalExifObj["0th"][piexif.ImageIFD.UserComment];
+            delete originalExifObj["0th"][piexif.ImageIFD.ImageDescription];
+          }
+          if (originalExifObj["Exif"]) delete originalExifObj["Exif"][piexif.ExifIFD.UserComment];
+          if (!originalExifObj["GPS"]) originalExifObj["GPS"] = {};
+          originalExifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
+          originalExifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
+          originalExifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
+          originalExifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
+          const finalDataUrl = piexif.insert(piexif.dump(originalExifObj), reader.result);
+          const a = document.createElement('a');
+          a.href = finalDataUrl;
+          a.download = (filename || 'image') + '.jpg';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+        };
+        reader.readAsDataURL(blob);
+      }, 'image/jpeg', 0.95);
+    };
+    image.src = img.src;
+  };
 
   const iw = new kakao.maps.InfoWindow({ content: div });
 
