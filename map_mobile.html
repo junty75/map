@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>KMZ 뷰어1.0</title>
+  <title>KMZ 뷰어</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782"></script>
   <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
@@ -534,9 +534,17 @@ function addPhotoMarker(latlng, imgSrc, name) {
 
   div.querySelector('.iw-close').onclick = () => iw.close();
   div.querySelector('.iw-map-btn').onclick = () => {
-    // 카카오맵 앱 딥링크 시도 → 300ms 후 앱이 안 열리면 웹으로 폴백
+    // 앱이 열리면 브라우저가 hidden 상태가 됨 → 웹 탭 열기 취소
+    let appOpened = false;
+    const onHide = () => { appOpened = true; };
+    document.addEventListener('visibilitychange', onHide, { once: true });
+
     window.location.href = kakaoAppUrl;
-    setTimeout(() => { window.open(kakaoWebUrl, '_blank'); }, 300);
+
+    setTimeout(() => {
+      document.removeEventListener('visibilitychange', onHide);
+      if (!appOpened) window.open(kakaoWebUrl, '_blank');
+    }, 800);
   };
   // 사진 탭 → 전체화면 뷰어 (배경 탭으로 닫기)
   div.querySelector('img').onclick = () => openViewer(imgSrc, name);
