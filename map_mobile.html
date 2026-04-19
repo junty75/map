@@ -101,26 +101,6 @@
     }
     #deleteHint.show { display: block; }
 
-    /* 길게누르기 진행 원 */
-    .long-press-ring {
-      position: fixed;
-      width: 52px;
-      height: 52px;
-      margin-left: -26px;
-      margin-top: -26px;
-      border-radius: 50%;
-      border: 3px solid #e74c3c;
-      z-index: 4000;
-      pointer-events: none;
-      transform: scale(0);
-      transition: transform 0.6s ease-out, opacity 0.2s;
-      opacity: 0;
-    }
-    .long-press-ring.active {
-      transform: scale(1);
-      opacity: 1;
-    }
-
     /* 사진 InfoWindow */
     .photo-iw {
       background: white;
@@ -219,9 +199,6 @@
 
 <!-- 삭제 힌트 토스트 -->
 <div id="deleteHint">꾹 눌러서 마커 / 선을 삭제할 수 있어요</div>
-
-<!-- 길게누르기 시각 효과 -->
-<div class="long-press-ring" id="longPressRing"></div>
 
 <!-- 사진 전체화면 뷰어 (배경 탭으로 닫기) -->
 <div id="photoViewer">
@@ -449,15 +426,10 @@ const LONG_PRESS_MS = 600;
 function attachLongPress(target, onLongPress) {
   let timer = null;
   let startX, startY;
-  const ring = document.getElementById('longPressRing');
 
   function start(x, y) {
     startX = x; startY = y;
-    ring.style.left = x + 'px';
-    ring.style.top = y + 'px';
-    ring.classList.add('active');
     timer = setTimeout(() => {
-      ring.classList.remove('active');
       onLongPress();
     }, LONG_PRESS_MS);
   }
@@ -465,7 +437,6 @@ function attachLongPress(target, onLongPress) {
   function cancel() {
     clearTimeout(timer);
     timer = null;
-    ring.classList.remove('active');
   }
 
   // Touch
