@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>KMZ 뷰어</title>
+  <title>KMZ 뷰어1.0</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782"></script>
   <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
@@ -513,7 +513,9 @@ function addPhotoMarker(latlng, imgSrc, name) {
 
   const lat = latlng.getLat();
   const lng = latlng.getLng();
-  const kakaoMapUrl = `https://map.kakao.com/link/map/${encodeURIComponent(name)},${lat},${lng}`;
+  // 카카오맵 앱 딥링크 (앱 설치 시 앱으로, 미설치 시 웹으로 폴백)
+  const kakaoAppUrl = `kakaomap://look?p=${lat},${lng}`;
+  const kakaoWebUrl = `https://map.kakao.com/link/map/${encodeURIComponent(name)},${lat},${lng}`;
 
   const div = document.createElement('div');
   div.className = 'photo-iw';
@@ -521,7 +523,7 @@ function addPhotoMarker(latlng, imgSrc, name) {
     <div class="photo-iw-header">
       <span style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${name}</span>
       <div class="iw-actions">
-        <a class="iw-map-btn" href="${kakaoMapUrl}" target="_blank" rel="noopener" title="카카오지도에서 열기">🗺️</a>
+        <span class="iw-map-btn" title="카카오맵에서 열기">🗺️</span>
         <span class="iw-close" title="닫기">✕</span>
       </div>
     </div>
@@ -531,6 +533,11 @@ function addPhotoMarker(latlng, imgSrc, name) {
   const iw = new kakao.maps.InfoWindow({ content: div, removable: false });
 
   div.querySelector('.iw-close').onclick = () => iw.close();
+  div.querySelector('.iw-map-btn').onclick = () => {
+    // 카카오맵 앱 딥링크 시도 → 300ms 후 앱이 안 열리면 웹으로 폴백
+    window.location.href = kakaoAppUrl;
+    setTimeout(() => { window.open(kakaoWebUrl, '_blank'); }, 300);
+  };
   // 사진 탭 → 전체화면 뷰어 (배경 탭으로 닫기)
   div.querySelector('img').onclick = () => openViewer(imgSrc, name);
 
