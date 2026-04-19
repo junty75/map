@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>KMZ 뷰어1.0</title>
+  <title>KMZ 뷰어</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
@@ -80,28 +80,38 @@
       inset: 0;
       background: rgba(0,0,0,0.85);
       z-index: 8000;
+      padding: 16px;
+      touch-action: manipulation;
+    }
+    #photoModal.show { display: block; }
+    #photoModal .modal-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
       align-items: center;
       justify-content: center;
       flex-direction: column;
-      padding: 16px;
+      pointer-events: none; /* 배경 클릭 통과 */
     }
-    #photoModal.show { display: flex; }
     #photoModal img {
       max-width: 100%;
       max-height: 80vh;
       border-radius: 8px;
       object-fit: contain;
+      pointer-events: auto; /* 이미지는 클릭 받음 */
     }
     #photoModal .photo-name {
       color: white;
       font-size: 14px;
       margin-top: 10px;
       text-align: center;
+      pointer-events: auto;
     }
     #photoModal .close-btn {
       position: absolute;
-      top: 16px;
-      right: 16px;
+      top: 0;
+      right: 0;
       background: rgba(255,255,255,0.2);
       border: none;
       color: white;
@@ -113,6 +123,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      pointer-events: auto;
     }
   </style>
 </head>
@@ -141,9 +152,11 @@
 
 <!-- 사진 전체화면 모달 -->
 <div id="photoModal">
-  <button class="close-btn" id="modalClose">✕</button>
-  <img id="modalImg" src="" alt="">
-  <div class="photo-name" id="modalName"></div>
+  <div class="modal-inner">
+    <button class="close-btn" id="modalClose">✕</button>
+    <img id="modalImg" src="" alt="">
+    <div class="photo-name" id="modalName"></div>
+  </div>
 </div>
 
 <script>
@@ -213,17 +226,17 @@ document.getElementById('fileInput').onchange = e => {
   loadKMZ(file);
 };
 
-// 사진 모달 닫기 - 배경(모달 자체) 또는 닫기 버튼 클릭
+// 사진 모달 - 배경(모달) 탭하면 닫기, 이미지 탭은 닫기 안 함
 function closeModal() {
   document.getElementById('photoModal').classList.remove('show');
 }
 document.getElementById('modalClose').onclick = closeModal;
+// 모달 배경 직접 탭 시 닫기
+document.getElementById('photoModal').addEventListener('touchstart', e => {
+  if (e.target === document.getElementById('photoModal')) closeModal();
+});
 document.getElementById('photoModal').addEventListener('click', e => {
-  // 이미지나 이름 텍스트가 아닌 배경 클릭 시 닫기
-  if (e.target === document.getElementById('photoModal') ||
-      e.target === document.getElementById('modalName')) {
-    closeModal();
-  }
+  if (e.target === document.getElementById('photoModal')) closeModal();
 });
 
 function showPhoto(src, name) {
@@ -240,6 +253,35 @@ function hideLoading() {
   document.getElementById('loading').classList.remove('show');
 }
 
+// 마커 길게 누르기 삭제 등록
+function attachLongPress(marker, markerObj) {
+  let holdTimer = null;
+
+  kakao.maps.event.addListener(marker, 'mousedown', () => {
+    holdTimer = setTimeout(() => {
+      markerObj.iw.close();
+      if (confirm('이 마커를 삭제하시겠습니까?')) {
+        marker.setMap(null);
+        markers = markers.filter(m => m !== markerObj);
+      }
+    }, 700);
+  });
+
+  ['mouseup', 'mouseout'].forEach(evt =>
+    kakao.maps.event.addListener(marker, evt, () => clearTimeout(holdTimer))
+  );
+
+  // 모바일 터치 이벤트
+  const el = marker.getNode ? marker.getNode() : null;
+  marker.__longpressHandler = () => {
+    markerObj.iw.close();
+    if (confirm('이 마커를 삭제하시겠습니까?')) {
+      marker.setMap(null);
+      markers = markers.filter(m => m !== markerObj);
+    }
+  };
+}
+
 // 마커 추가 (텍스트 전용)
 function addMarker(latlng, name) {
   const marker = new kakao.maps.Marker({ map, position: latlng });
@@ -249,7 +291,10 @@ function addMarker(latlng, name) {
   const iw = new kakao.maps.InfoWindow({ content: div, removable: false });
   div.querySelector('span:last-child').onclick = () => iw.close();
   kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
-  markers.push({ marker, iw });
+
+  const markerObj = { marker, iw };
+  attachLongPress(marker, markerObj);
+  markers.push(markerObj);
 }
 
 // 사진 마커 추가
@@ -271,7 +316,10 @@ function addPhotoMarker(latlng, imgSrc, name) {
   div.querySelector('img').onclick = () => showPhoto(imgSrc, name);
 
   kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
-  markers.push({ marker, iw });
+
+  const markerObj = { marker, iw };
+  attachLongPress(marker, markerObj);
+  markers.push(markerObj);
 }
 
 // KMZ 불러오기
