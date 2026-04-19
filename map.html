@@ -1002,8 +1002,16 @@ document.addEventListener('drop', e => {
 async function loadKMZ(file, bounds) {
   try {
     const zip = await JSZip.loadAsync(file);
-    const kmlFile = zip.file('doc.kml');
-    if (!kmlFile) { alert('KMZ 안에 doc.kml 파일이 없습니다.'); return; }
+    // .kml 파일을 이름에 관계없이 자동 탐색 (루트 우선, 없으면 하위 폴더도 검색)
+    const kmlEntry = Object.keys(zip.files).find(name => {
+      const f = zip.files[name];
+      return !f.dir && name.toLowerCase().endsWith('.kml') && !name.includes('/');
+    }) || Object.keys(zip.files).find(name => {
+      const f = zip.files[name];
+      return !f.dir && name.toLowerCase().endsWith('.kml');
+    });
+    const kmlFile = kmlEntry ? zip.file(kmlEntry) : null;
+    if (!kmlFile) { alert('KMZ 안에 .kml 파일이 없습니다.'); return; }
     const kmlText = await kmlFile.async('string');
     const xml = new DOMParser().parseFromString(kmlText, 'application/xml');
     const placemarks = Array.from(xml.getElementsByTagName('Placemark'));
@@ -1081,7 +1089,7 @@ async function loadKMZ(file, bounds) {
 window.onload = () => {
   navigator.geolocation.getCurrentPosition(
     pos => initializeMap(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude)),
-    () => initializeMap(new kakao.maps.LatLng(37.5665, 126.9780))
+    () => initializeMap(new kakao.maps.LatLng(35.6478, 127.5213))
   );
 };
 
