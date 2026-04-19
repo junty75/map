@@ -539,9 +539,10 @@ div.querySelector('.iw-map-btn').onclick = () => {
   // 앱 실행 시도
   window.location.href = kakaoAppUrl;
 
-  // 1.5초 후에도 브라우저가 보이면(앱이 안 열렸으면) 웹으로 연결
+  // 1.5초 후 앱이 실행되지 않았다고 판단되면 웹으로 이동
   setTimeout(() => {
     if (!document.hidden) {
+      // 기존처럼 새 탭을 열거나, 혹은 현재 탭에서 이동하려면 window.location.href 사용
       window.open(kakaoWebUrl, '_blank');
     }
   }, 1500);
