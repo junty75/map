@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>KMZ 뷰어1.0</title>
+  <title>KMZ 뷰어1.1</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
@@ -315,18 +315,84 @@ document.getElementById('fileInput').onchange = e => {
   loadKMZ(file);
 };
 
-// ─── 저장 버튼 ─────────────────────────────────────────────
-// 현재 페이지의 HTML을 그대로 저장 (마커/선 정보는 KMZ 원본에 의존하므로
-// 저장본은 "뷰어 HTML" 자체를 다운로드합니다. 사용자가 KMZ를 다시 열면 됩니다.)
-document.getElementById('saveBtn').onclick = () => {
-  const html = document.documentElement.outerHTML;
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'kmz_viewer.html';
-  a.click();
-  URL.revokeObjectURL(a.href);
-};
+// ─── 저장 버튼 → KMZ 내보내기 ────────────────────────────
+document.getElementById('saveBtn').onclick = () => exportKMZ();
+
+async function exportKMZ() {
+  showLoading('KMZ 저장 중...');
+  try {
+    const zip = new JSZip();
+    const filesFolder = zip.folder('files');
+    let placemarkXml = '';
+    let photoIndex = 0;
+
+    // 마커 (텍스트 / 사진)
+    for (const m of markers) {
+      if (!m.marker.getMap()) continue; // 삭제된 마커 제외
+      const pos = m.marker.getPosition();
+      const lat = pos.getLat();
+      const lng = pos.getLng();
+      const safeName = (m.name || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+      if (m.imgSrc) {
+        // 사진 마커: base64 → 파일로 저장
+        const base64Data = m.imgSrc.split(',')[1];
+        const ext = m.imgSrc.startsWith('data:image/png') ? 'png' : 'jpg';
+        const filename = `photo_${String(photoIndex++).padStart(4,'0')}.${ext}`;
+        filesFolder.file(filename, base64Data, { base64: true });
+
+        placemarkXml += `
+  <Placemark>
+    <name>${safeName}</name>
+    <ExtendedData>
+      <Data name="photoFile"><value>${filename}</value></Data>
+    </ExtendedData>
+    <Point><coordinates>${lng},${lat},0</coordinates></Point>
+  </Placemark>`;
+      } else {
+        // 텍스트 마커
+        placemarkXml += `
+  <Placemark>
+    <name>${safeName}</name>
+    <Point><coordinates>${lng},${lat},0</coordinates></Point>
+  </Placemark>`;
+      }
+    }
+
+    // 폴리라인
+    for (const pl of polylines) {
+      if (!pl.poly.getMap()) continue; // 삭제된 선 제외
+      const safeName = (pl.name || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const coords = pl.path.map(p => `${p.getLng()},${p.getLat()},0`).join('\n      ');
+      placemarkXml += `
+  <Placemark>
+    <name>${safeName}</name>
+    <LineString>
+      <coordinates>${coords}</coordinates>
+    </LineString>
+  </Placemark>`;
+    }
+
+    const kml = `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document>${placemarkXml}
+</Document>
+</kml>`;
+
+    zip.file('doc.kml', kml);
+
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'map_export.kmz';
+    a.click();
+    URL.revokeObjectURL(a.href);
+    hideLoading();
+  } catch (err) {
+    hideLoading();
+    alert('KMZ 저장 중 오류가 발생했습니다.\n' + err.message);
+  }
+}
 
 // ─── 로딩 ──────────────────────────────────────────────────
 function showLoading(msg) {
@@ -420,7 +486,7 @@ function addMarker(latlng, name) {
     markers = markers.filter(m => m.marker !== marker);
   });
 
-  markers.push({ marker, iw });
+  markers.push({ marker, iw, name, imgSrc: null });
   showDeleteHint();
 }
 
@@ -464,7 +530,7 @@ function addPhotoMarker(latlng, imgSrc, name) {
     markers = markers.filter(m => m.marker !== marker);
   });
 
-  markers.push({ marker, iw });
+  markers.push({ marker, iw, name, imgSrc });
   showDeleteHint();
 }
 
@@ -475,7 +541,7 @@ async function loadKMZ(file) {
   // 기존 마커/선 초기화
   markers.forEach(m => { m.iw.close(); m.marker.setMap(null); });
   markers = [];
-  polylines.forEach(p => p.setMap(null));
+  polylines.forEach(p => p.poly.setMap(null));
   polylines = [];
   hasData = false;
   document.getElementById('saveBtn').disabled = true;
@@ -533,10 +599,10 @@ async function loadKMZ(file) {
           attachLongPress(poly, () => {
             if (!confirm(`"${polyName}" 선을 삭제할까요?`)) return;
             poly.setMap(null);
-            polylines = polylines.filter(p => p !== poly);
+            polylines = polylines.filter(p => p.poly !== poly);
           });
 
-          polylines.push(poly);
+          polylines.push({ poly, name: pmName, path: pts });
         }
       } else if (point) {
         const coordsText = point.getElementsByTagName('coordinates')[0]?.textContent || '';
