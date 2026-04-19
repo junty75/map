@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>KMZ 뷰어1.1</title>
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
+  <title>KMZ 뷰어</title>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782"></script>
   <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -382,11 +382,28 @@ async function exportKMZ() {
     zip.file('doc.kml', kml);
 
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'map_export.kmz';
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const url = URL.createObjectURL(blob);
+
+    // iOS Safari는 a.click() blob 다운로드 미지원 → window.open으로 우회
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    if (isIOS) {
+      // iOS: 새 탭에서 열기 (사용자가 길게 눌러 저장)
+      const newTab = window.open(url, '_blank');
+      if (!newTab) {
+        // 팝업 차단된 경우 링크로 안내
+        alert('파일이 준비됐습니다.\n아래 링크를 길게 눌러 저장하세요.');
+        window.location.href = url;
+      }
+      setTimeout(() => URL.revokeObjectURL(url), 10000);
+    } else {
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'map_export.kmz';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
     hideLoading();
   } catch (err) {
     hideLoading();
