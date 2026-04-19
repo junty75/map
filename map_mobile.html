@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>KMZ 뷰어</title>
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782"></script>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&autoload=false"></script>  
   <script src="https://unpkg.com/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -253,12 +253,12 @@ function initMap(center) {
   });
 }
 
-window.onload = () => {
+kakao.maps.load(() => {
   navigator.geolocation.getCurrentPosition(
     pos => initMap(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude)),
     () => initMap(new kakao.maps.LatLng(37.5665, 126.9780))
   );
-};
+});
 
 // ─── 전체화면 사진 뷰어 (배경 탭/클릭으로 닫기) ───────────
 const photoViewer = document.getElementById('photoViewer');
@@ -533,19 +533,20 @@ function addPhotoMarker(latlng, imgSrc, name) {
   const iw = new kakao.maps.InfoWindow({ content: div, removable: false });
 
   div.querySelector('.iw-close').onclick = () => iw.close();
-  div.querySelector('.iw-map-btn').onclick = () => {
-    // 앱이 열리면 브라우저가 hidden 상태가 됨 → 웹 탭 열기 취소
-    let appOpened = false;
-    const onHide = () => { appOpened = true; };
-    document.addEventListener('visibilitychange', onHide, { once: true });
+div.querySelector('.iw-map-btn').onclick = () => {
+  const kakaoAppUrl = `kakaomap://look?p=${lat},${lng}`;
+  
+  // 앱 실행 시도
+  window.location.href = kakaoAppUrl;
 
-    window.location.href = kakaoAppUrl;
+  // 1.5초 후에도 브라우저가 보이면(앱이 안 열렸으면) 웹으로 연결
+  setTimeout(() => {
+    if (!document.hidden) {
+      window.open(kakaoWebUrl, '_blank');
+    }
+  }, 1500);
+};
 
-    setTimeout(() => {
-      document.removeEventListener('visibilitychange', onHide);
-      if (!appOpened) window.open(kakaoWebUrl, '_blank');
-    }, 800);
-  };
   // 사진 탭 → 전체화면 뷰어 (배경 탭으로 닫기)
   div.querySelector('img').onclick = () => openViewer(imgSrc, name);
 
