@@ -1,245 +1,333 @@
 <!DOCTYPE html>
-<html>
+<html lang="ko">
 <head>
-  <meta charset="utf-8"/>
-  <title>GPX 마커 및 경로 지도 (Mobile)</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>KMZ 뷰어</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <style>
-    html, body { height:100%; margin:0; padding:0; overflow:hidden; }
-    #map { width:100%; height:100%; position:absolute; top:0; left:0; }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    #map { width: 100%; height: 100%; }
 
-    /* 검색 폼 */
-    #search-form {
-      position:absolute; top:10px; left:10px; z-index:1000;
-      background:white; padding:10px; border-radius:5px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.3);
-      display:flex; gap:10px; align-items:center;
-    }
-    #address-input {
-      width:360px;
-      padding:10px;
-      font-size:16px;
-    }
-    #search-form button {
-      padding:10px 15px;
-      font-size:16px;
-    }
-
-    /* 주소 표시 박스 */
-    #address-display {
-      position:absolute;
-      top:70px;
-      left:10px;
-      z-index:1000;
-      background:rgba(0,0,0,0.6);
-      color:#fff;
-      padding:6px 12px;
-      border-radius:4px;
-      font-size:14px;
-      white-space:nowrap;
-      max-width:calc(100% - 20px);
-      overflow:hidden;
-      text-overflow:ellipsis;
+    .btn {
+      position: absolute;
+      z-index: 1000;
+      background: white;
+      border: none;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      width: 48px;
+      height: 48px;
     }
 
-    /* 좌측 하단 컨트롤 */
-    .controls {
-      position:absolute; bottom:20px; left:20px; z-index:1000;
-      background:white; padding:5px; border-radius:5px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.3);
-      display:flex; gap:10px; align-items:center;
-    }
-    .controls button {
-      transform: scale(2);
-      transform-origin: center center;
-      padding:10px 12px;
+    #loadBtn {
+      top: 16px;
+      right: 16px;
     }
 
-    /* 우측 상단 GPX 버튼 */
-    .top-controls {
-      position:absolute; top:10px; right:10px; z-index:1000;
-      background:white; padding:5px; border-radius:5px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.3);
-      display:flex; gap:8px; align-items:center;
-    }
-    .top-controls button {
-      padding:6px 10px;
-      font-size:14px;
-    }
-
-    /* 내 위치 버튼 크기 2.5배 */
     #myLocationBtn {
-      position:absolute; bottom:20px; right:20px; z-index:10000;
-      background:white; padding:8px; border-radius:50%; cursor:pointer;
-      box-shadow:0 2px 6px rgba(0,0,0,0.3);
-      transform: scale(2.5);
-      transform-origin: center center;
+      top: 72px;
+      right: 16px;
+    }
+
+    #fileInput { display: none; }
+
+    /* 로딩 오버레이 */
+    #loading {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      z-index: 9999;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 12px;
+      color: white;
+      font-size: 15px;
+    }
+    #loading.show { display: flex; }
+    .spinner {
+      width: 40px; height: 40px;
+      border: 4px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* 사진 팝업 */
+    #photoModal {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.85);
+      z-index: 8000;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      padding: 16px;
+    }
+    #photoModal.show { display: flex; }
+    #photoModal img {
+      max-width: 100%;
+      max-height: 80vh;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+    #photoModal .photo-name {
+      color: white;
+      font-size: 14px;
+      margin-top: 10px;
+      text-align: center;
+    }
+    #photoModal .close-btn {
+      position: absolute;
+      top: 16px;
+      right: 16px;
+      background: rgba(255,255,255,0.2);
+      border: none;
+      color: white;
+      font-size: 24px;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
   </style>
 </head>
 <body>
-  <form id="search-form">
-    <input id="address-input" type="text" placeholder="주소 검색" />
-    <button type="submit">검색</button>
-  </form>
 
-  <div id="address-display">주소 없음</div>
+<div id="map"></div>
 
-  <div class="top-controls">
-    <button id="importBtn">GPX 가져오기</button>
-    <button onclick="exportGPX()">GPX 내보내기</button>
-    <input id="gpx-input" type="file" accept=".gpx" style="display:none" />
-  </div>
+<button class="btn" id="loadBtn" title="KMZ 불러오기">📂</button>
+<button class="btn" id="myLocationBtn" title="현재 위치">📍</button>
+<input type="file" id="fileInput" accept=".kmz">
 
-  <div id="myLocationBtn" title="내 위치로 이동">📍</div>
+<!-- 로딩 -->
+<div id="loading">
+  <div class="spinner"></div>
+  <div id="loadingMsg">불러오는 중...</div>
+</div>
 
-  <div class="controls">
-    <button onclick="startDrawing()">선 그리기</button>
-    <button onclick="resetPolylines()">선 초기화</button>
-  </div>
+<!-- 사진 전체화면 모달 -->
+<div id="photoModal">
+  <button class="close-btn" id="modalClose">✕</button>
+  <img id="modalImg" src="" alt="">
+  <div class="photo-name" id="modalName"></div>
+</div>
 
-  <div id="map"></div>
+<script>
+let map, markers = [], polylines = [];
 
-  <script>
-    let map;
-    let geocoder;
-    let markers = [];
-    let polylines = [];
-    let currentPolyline, currentPath = [];
-    let userOverlay; // 내 위치 오버레이
+// 지도 초기화
+function initMap(center) {
+  map = new kakao.maps.Map(document.getElementById('map'), {
+    center,
+    level: 5,
+    mapTypeId: kakao.maps.MapTypeId.HYBRID
+  });
+}
 
-    // GPX 읽기 함수
-    function loadGPX(file) {
-      const reader = new FileReader();
-      reader.onload = ev => {
-        const xml = new DOMParser().parseFromString(ev.target.result, 'application/xml');
-        const bounds = new kakao.maps.LatLngBounds();
-        // 트랙
-        const trkpts = xml.getElementsByTagName('trkpt');
-        if (trkpts.length) {
-          let arr = [];
-          for (let i = 0; i < trkpts.length; i++) {
-            const lat = parseFloat(trkpts[i].getAttribute('lat'));
-            const lon = parseFloat(trkpts[i].getAttribute('lon'));
-            const ll = new kakao.maps.LatLng(lat, lon);
-            arr.push(ll);
-            bounds.extend(ll);
-          }
-          const poly = new kakao.maps.Polyline({ map, path: arr, strokeWeight: 4, strokeColor: '#FF7F00', strokeOpacity: 0.9 });
+window.onload = () => {
+  navigator.geolocation.getCurrentPosition(
+    pos => initMap(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude)),
+    () => initMap(new kakao.maps.LatLng(37.5665, 126.9780))
+  );
+};
+
+// 현재 위치 이동
+document.getElementById('myLocationBtn').onclick = () => {
+  navigator.geolocation.getCurrentPosition(pos => {
+    const ll = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+    map.setCenter(ll);
+  }, () => alert('위치 정보를 가져올 수 없습니다.'));
+};
+
+// 불러오기 버튼
+document.getElementById('loadBtn').onclick = () => {
+  document.getElementById('fileInput').click();
+};
+
+document.getElementById('fileInput').onchange = e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  e.target.value = ''; // 같은 파일 재선택 허용
+  loadKMZ(file);
+};
+
+// 사진 모달
+document.getElementById('modalClose').onclick = () => {
+  document.getElementById('photoModal').classList.remove('show');
+};
+document.getElementById('photoModal').onclick = e => {
+  if (e.target === document.getElementById('photoModal')) {
+    document.getElementById('photoModal').classList.remove('show');
+  }
+};
+
+function showPhoto(src, name) {
+  document.getElementById('modalImg').src = src;
+  document.getElementById('modalName').textContent = name;
+  document.getElementById('photoModal').classList.add('show');
+}
+
+function showLoading(msg) {
+  document.getElementById('loadingMsg').textContent = msg || '불러오는 중...';
+  document.getElementById('loading').classList.add('show');
+}
+function hideLoading() {
+  document.getElementById('loading').classList.remove('show');
+}
+
+// 마커 추가 (텍스트 전용)
+function addMarker(latlng, name) {
+  const marker = new kakao.maps.Marker({ map, position: latlng });
+  const div = document.createElement('div');
+  div.style = 'background:white; padding:6px 10px; border-radius:6px; font-size:13px; box-shadow:0 1px 4px rgba(0,0,0,0.3); display:flex; align-items:center; gap:6px;';
+  div.innerHTML = `<span>${name}</span><span style="cursor:pointer; color:#999;">✕</span>`;
+  const iw = new kakao.maps.InfoWindow({ content: div, removable: false });
+  div.querySelector('span:last-child').onclick = () => iw.close();
+  kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
+  markers.push({ marker, iw });
+}
+
+// 사진 마커 추가
+function addPhotoMarker(latlng, imgSrc, name) {
+  const marker = new kakao.maps.Marker({ map, position: latlng });
+
+  const div = document.createElement('div');
+  div.style = 'background:white; border-radius:8px; overflow:hidden; box-shadow:0 2px 8px rgba(0,0,0,0.3); max-width:260px;';
+  div.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; font-size:13px; font-weight:bold; border-bottom:1px solid #eee;">
+      <span>${name}</span>
+      <span class="cl" style="cursor:pointer; color:#999; margin-left:8px;">✕</span>
+    </div>
+    <img src="${imgSrc}" style="width:100%; max-height:200px; object-fit:cover; display:block; cursor:pointer;">
+  `;
+
+  const iw = new kakao.maps.InfoWindow({ content: div, removable: false });
+  div.querySelector('.cl').onclick = () => iw.close();
+  div.querySelector('img').onclick = () => showPhoto(imgSrc, name);
+
+  kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
+  markers.push({ marker, iw });
+}
+
+// KMZ 불러오기
+async function loadKMZ(file) {
+  showLoading('KMZ 압축 해제 중...');
+
+  // 기존 마커/선 초기화
+  markers.forEach(m => { m.iw.close(); m.marker.setMap(null); });
+  markers = [];
+  polylines.forEach(p => p.setMap(null));
+  polylines = [];
+
+  try {
+    const zip = await JSZip.loadAsync(file);
+    const kmlFile = zip.file('doc.kml');
+    if (!kmlFile) { alert('KMZ 안에 doc.kml 파일이 없습니다.'); hideLoading(); return; }
+
+    showLoading('지도 데이터 읽는 중...');
+    const kmlText = await kmlFile.async('string');
+    const xml = new DOMParser().parseFromString(kmlText, 'application/xml');
+    const placemarks = Array.from(xml.getElementsByTagName('Placemark'));
+    const bounds = new kakao.maps.LatLngBounds();
+    const zipFiles = Object.keys(zip.files);
+
+    showLoading(`마커 생성 중... (0 / ${placemarks.length})`);
+
+    for (let i = 0; i < placemarks.length; i++) {
+      const pm = placemarks[i];
+      const pmName = pm.getElementsByTagName('name')[0]?.textContent
+                  || pm.getElementsByTagName('n')[0]?.textContent
+                  || '설명 없음';
+
+      // photoFile 탐색
+      let photoFilename = '';
+      for (const d of Array.from(pm.getElementsByTagName('Data'))) {
+        if (d.getAttribute('name') === 'photoFile') {
+          photoFilename = d.getElementsByTagName('value')[0]?.textContent || '';
+          break;
+        }
+      }
+
+      const lineString = pm.getElementsByTagName('LineString')[0];
+      const point = pm.getElementsByTagName('Point')[0];
+
+      if (lineString) {
+        const coordsText = lineString.getElementsByTagName('coordinates')[0]?.textContent || '';
+        const pts = coordsText.trim().split(/\s+/).map(c => {
+          const [lng, lat] = c.split(',').map(Number);
+          return new kakao.maps.LatLng(lat, lng);
+        }).filter(ll => !isNaN(ll.getLat()) && !isNaN(ll.getLng()));
+        if (pts.length) {
+          const poly = new kakao.maps.Polyline({
+            map, path: pts,
+            strokeWeight: 4,
+            strokeColor: '#FF5733',
+            strokeOpacity: 0.9
+          });
+          pts.forEach(p => bounds.extend(p));
           polylines.push(poly);
         }
-        // 웨이포인트
-        const wpts = xml.getElementsByTagName('wpt');
-        for (let i = 0; i < wpts.length; i++) {
-          const lat = parseFloat(wpts[i].getAttribute('lat'));
-          const lon = parseFloat(wpts[i].getAttribute('lon'));
-          const name = wpts[i].getElementsByTagName('name')[0]?.textContent || '설명 없음';
-          const ll = new kakao.maps.LatLng(lat, lon);
-          bounds.extend(ll);
-          addMarker(ll, name);
+      } else if (point) {
+        const coordsText = point.getElementsByTagName('coordinates')[0]?.textContent || '';
+        const [lng, lat] = coordsText.trim().split(',').map(Number);
+        if (isNaN(lat) || isNaN(lng)) continue;
+        const ll = new kakao.maps.LatLng(lat, lng);
+        bounds.extend(ll);
+
+        if (photoFilename) {
+          const candidates = [
+            `files/${photoFilename}`,
+            photoFilename,
+            ...zipFiles.filter(p => p.endsWith(photoFilename))
+          ];
+          let photoZipFile = null;
+          for (const c of candidates) {
+            photoZipFile = zip.file(c);
+            if (photoZipFile) break;
+          }
+
+          if (photoZipFile) {
+            const base64 = await photoZipFile.async('base64');
+            const ext = photoFilename.split('.').pop().toLowerCase();
+            const mime = ext === 'png' ? 'image/png' : 'image/jpeg';
+            addPhotoMarker(ll, `data:${mime};base64,${base64}`, pmName);
+          } else {
+            addMarker(ll, pmName);
+          }
+        } else {
+          addMarker(ll, pmName);
         }
-        if (!bounds.isEmpty()) map.setBounds(bounds);
-      };
-      reader.readAsText(file);
+      }
+
+      if (i % 10 === 0) {
+        showLoading(`마커 생성 중... (${i + 1} / ${placemarks.length})`);
+        await new Promise(r => setTimeout(r, 0)); // UI 업데이트
+      }
     }
 
-    function initializeMap(center) {
-      map = new kakao.maps.Map(document.getElementById('map'), { center, level: 4, mapTypeId: kakao.maps.MapTypeId.HYBRID });
-      geocoder = new kakao.maps.services.Geocoder();
-      map.addControl(new kakao.maps.MapTypeControl(), kakao.maps.ControlPosition.TOPRIGHT);
-      map.addControl(new kakao.maps.ZoomControl(), kakao.maps.ControlPosition.RIGHT);
+    if (!bounds.isEmpty()) map.setBounds(bounds);
+    hideLoading();
 
-      // 드래그 & 드롭
-      document.addEventListener('dragover', e => e.preventDefault());
-      document.addEventListener('drop', e => { e.preventDefault(); loadGPX(e.dataTransfer.files[0]); });
-      // 파일 선택 버튼
-      document.getElementById('importBtn').addEventListener('click', () => document.getElementById('gpx-input').click());
-      document.getElementById('gpx-input').addEventListener('change', e => loadGPX(e.target.files[0]));
-
-      // 지도 클릭: 주소 표시 및 선 그리기
-      kakao.maps.event.addListener(map, 'click', e => {
-        const ll = e.latLng;
-        geocoder.coord2Address(ll.getLng(), ll.getLat(), (res, status) => {
-          const addrEl = document.getElementById('address-display');
-          if (status === kakao.maps.services.Status.OK) {
-            const legal = res[0].address.address_name;
-            const road = res[0].road_address?.address_name;
-            addrEl.innerText = road ? `${legal} / ${road}` : legal;
-          } else addrEl.innerText = '주소 없음';
-        });
-        if (currentPolyline) {
-          currentPath.push(ll);
-          currentPolyline.setPath(currentPath);
-        }
-      });
-    }
-
-    function moveToMyLocation() {
-      if (!navigator.geolocation) return alert('브라우저가 위치 정보를 지원하지 않습니다.');
-      navigator.geolocation.getCurrentPosition(pos => {
-        const ll = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-        map.setCenter(ll);
-        // 기존 오버레이 제거
-        if (userOverlay) userOverlay.setMap(null);
-        // 방향 결정 (heading이 없으면 0)
-        const heading = pos.coords.heading || 0;
-        // 오버레이 콘텐츠 (빨간 점 + 삼각형)
-        const content = `
-          <div style="position:relative; width:16px; height:16px;">
-            <div style="width:6px; height:6px; background:red; border-radius:50%; position:absolute; left:5px; top:5px;"></div>
-            <div style="width:0; height:0; border-left:6px solid transparent; border-right:6px solid transparent; border-bottom:12px solid red; position:absolute; left:2px; top:-4px; transform:rotate(${heading}deg); transform-origin:center bottom;"></div>
-          </div>
-        `;
-        userOverlay = new kakao.maps.CustomOverlay({ position: ll, content: content, clickable: false });
-        userOverlay.setMap(map);
-      }, err => alert('위치 정보를 가져올 수 없습니다: ' + err.message));
-    }
-
-    function addMarker(latlng, desc) {
-      const content = `<div style='padding:5px'>${desc}<span style='float:right; cursor:pointer' onclick='this.parentNode.parentNode.close()'>✖</span></div>`;
-      const iw = new kakao.maps.InfoWindow({ content });
-      const marker = new kakao.maps.Marker({ map, position: latlng });
-      kakao.maps.event.addListener(marker, 'click', () => iw.open(map, marker));
-      markers.push(marker);
-    }
-
-    function startDrawing() {
-      if (currentPolyline) { currentPolyline.setMap(null); }
-      currentPath = [];
-      currentPolyline = new kakao.maps.Polyline({ map, path: currentPath, strokeWeight: 3, strokeColor: '#FF0000', strokeOpacity: 0.8 });
-      polylines.push(currentPolyline);
-    }
-
-    function resetPolylines() {
-      polylines.forEach(pl => pl.setMap(null)); polylines = [];
-      currentPolyline = null;
-    }
-
-    function exportGPX() {
-      let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="KakaoMap">\n';
-      polylines.forEach((pl, i) => {
-        const path = pl.getPath();
-        if (path.length) {
-          gpx += `<trk><name>path${i+1}</name><trkseg>` +
-            path.map(pt => `<trkpt lat="${pt.getLat()}" lon="${pt.getLng()}"/>`).join('') +
-            '</trkseg></trk>\n';
-        }
-      });
-      gpx += '</gpx>';
-      const blob = new Blob([gpx], { type: 'application/gpx+xml' });
-      const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-      a.download = 'export.gpx'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    }
-
-    window.onload = () => {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-          pos => initializeMap(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude)),
-          () => initializeMap(new kakao.maps.LatLng(37.5665, 126.9780))
-        );
-      } else initializeMap(new kakao.maps.LatLng(37.5665, 126.9780));
-      document.getElementById('myLocationBtn').addEventListener('click', moveToMyLocation);
-    };
-  </script>
+  } catch (err) {
+    hideLoading();
+    alert('KMZ 파일을 읽는 중 오류가 발생했습니다.\n' + err.message);
+  }
+}
+</script>
 </body>
 </html>
