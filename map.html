@@ -1021,32 +1021,32 @@ document.addEventListener('drop', e => {
 async function loadKMZ(file, bounds) {
   try {
     const zip = await JSZip.loadAsync(file);
-    // .kml 파일을 이름에 관계없이 자동 탐색 (루트 우선, 없으면 하위 폴더도 검색)
-    const kmlEntry = Object.keys(zip.files).find(name => {
-      const f = zip.files[name];
-      return !f.dir && name.toLowerCase().endsWith('.kml') && !name.includes('/');
-    }) || Object.keys(zip.files).find(name => {
-      const f = zip.files[name];
-      return !f.dir && name.toLowerCase().endsWith('.kml');
-    });
-    const kmlFile = kmlEntry ? zip.file(kmlEntry) : null;
-    if (!kmlFile) { alert('KMZ 안에 .kml 파일이 없습니다.'); return; }
-    const kmlText = await kmlFile.async('string');
+    const zipFiles = Object.keys(zip.files);
+
+    // 파일명의 널문자(\u0000) 제거 후 .kml 탐색
+    let kmlText = null;
+    for (const name of zipFiles) {
+      const cleanName = name.replace(/\0/g, '');
+      if (/\.kml$/i.test(cleanName)) {
+        try {
+          const text = await zip.files[name].async('string');
+          if (text && text.length > 0) { kmlText = text; break; }
+        } catch(e) {}
+      }
+    }
+    if (!kmlText) { alert('KMZ 안에 .kml 파일이 없습니다.'); return; }
+
     const xml = new DOMParser().parseFromString(kmlText, 'application/xml');
     const placemarks = Array.from(xml.getElementsByTagName('Placemark'));
 
-    // ZIP 안에 있는 files/ 경로 목록 미리 추출
-    const zipFiles = Object.keys(zip.files);
-
     for (const pm of placemarks) {
-      // <name> 또는 Picasa의 <n> 태그 모두 지원
-      const pmName = pm.getElementsByTagName('name')[0]?.textContent
-                  || pm.getElementsByTagName('n')[0]?.textContent
+      const pmName = pm.getElementsByTagName('name')[0]?.textContent?.trim()
+                  || pm.getElementsByTagName('n')[0]?.textContent?.trim()
                   || '설명 없음';
       const lineString = pm.getElementsByTagName('LineString')[0];
       const point = pm.getElementsByTagName('Point')[0];
 
-      // photoFile 읽기 방법 1: Data 태그 (기존 방식)
+      // photoFile 읽기 방법 1: Data 태그
       let photoFilename = '';
       const dataEls = pm.getElementsByTagName('Data');
       for (const d of Array.from(dataEls)) {
@@ -1056,19 +1056,20 @@ async function loadKMZ(file, bounds) {
         }
       }
 
-      // photoFile 읽기 방법 2: Picasa 방식 - description 안의 <img src="..."> 에서 추출
+      // photoFile 읽기 방법 2: description 안의 <img src="..."> 추출 (CDATA 포함)
       if (!photoFilename) {
         const descEl = pm.getElementsByTagName('description')[0];
         if (descEl) {
-          const descText = descEl.textContent || descEl.innerHTML || '';
-          // img src 속성에서 경로 추출 (images/imageN_thumb.jpg 형태)
-          const imgMatch = descText.match(/src=["']?([^"'\s>]+\.(jpe?g|png))["']?/i)
-                        || descText.match(/<img[^>]+src=["']?([^"'\s>]+)["']?/i);
+          const descText = descEl.textContent || '';
+          const imgMatch = descText.match(/src=["']([^"']+\.(jpe?g|png))["']/i)
+                        || descText.match(/src=([^\s>]+\.(jpe?g|png))/i);
           if (imgMatch) {
-            // thumb 대신 원본(roll) 이미지로 교체 시도, 없으면 thumb 사용
-            const thumbPath = imgMatch[1];
+            const thumbPath = imgMatch[1].trim();
             const rollPath = thumbPath.replace('_thumb.', '_roll.');
-            const rollEntry = zipFiles.find(z => z === rollPath || z.endsWith('/' + rollPath.split('/').pop()));
+            const rollEntry = zipFiles.find(z => {
+              const c = z.replace(/\0/g, '');
+              return c === rollPath || c.endsWith('/' + rollPath.split('/').pop());
+            });
             photoFilename = rollEntry ? rollPath : thumbPath;
           }
         }
@@ -1094,21 +1095,20 @@ async function loadKMZ(file, bounds) {
         bounds.extend(ll);
 
         if (photoFilename) {
-          // files/, images/ 등 다양한 경로 후보 탐색 (중복 제거)
           const baseName = photoFilename.split('/').pop();
-          const candidateSet = new Set([
-            photoFilename,
-            `files/${photoFilename}`,
-            `images/${baseName}`,
-            ...zipFiles.filter(p => p.endsWith(baseName))
-          ]);
-          const candidates = [...candidateSet];
           let photoZipFile = null;
-          for (const c of candidates) {
-            photoZipFile = zip.file(c);
-            if (photoZipFile) break;
+          for (const name of zipFiles) {
+            const cleanName = name.replace(/\0/g, '');
+            if (cleanName === photoFilename ||
+                cleanName === `files/${photoFilename}` ||
+                cleanName === `images/${baseName}` ||
+                cleanName === `photo/${baseName}` ||
+                cleanName.endsWith('/' + baseName) ||
+                cleanName === baseName) {
+              photoZipFile = zip.files[name];
+              break;
+            }
           }
-
           if (photoZipFile) {
             const base64 = await photoZipFile.async('base64');
             const ext = baseName.split('.').pop().toLowerCase();
