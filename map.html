@@ -1094,14 +1094,15 @@ async function loadKMZ(file, bounds) {
         bounds.extend(ll);
 
         if (photoFilename) {
-          // files/, images/ 등 다양한 경로 후보 탐색
+          // files/, images/ 등 다양한 경로 후보 탐색 (중복 제거)
           const baseName = photoFilename.split('/').pop();
-          const candidates = [
+          const candidateSet = new Set([
             photoFilename,
             `files/${photoFilename}`,
             `images/${baseName}`,
             ...zipFiles.filter(p => p.endsWith(baseName))
-          ];
+          ]);
+          const candidates = [...candidateSet];
           let photoZipFile = null;
           for (const c of candidates) {
             photoZipFile = zip.file(c);
@@ -1158,12 +1159,14 @@ function downloadCompressedImage(imgSrc, filename, maxWidth = 1600, quality = 0.
 }
 
 async function downloadAllPhotos() {
-  // marker 객체 기준으로 중복 제거 후 필터링
-  const seen = new Set();
+  // marker, iw 객체 모두 기준으로 중복 제거
+  const seenMarkers = new Set();
+  const seenIw = new Set();
   const photoMarkers = markers.filter(m => {
     if (!m.marker || !m.marker.getMap()) return false;
-    if (seen.has(m.marker)) return false;
-    seen.add(m.marker);
+    if (seenMarkers.has(m.marker) || seenIw.has(m.iw)) return false;
+    seenMarkers.add(m.marker);
+    seenIw.add(m.iw);
     const img = m.iw.getContent().querySelector('img');
     return img && img.src.startsWith('data:image');
   });
@@ -1183,7 +1186,10 @@ async function downloadAllPhotos() {
 
       // 2. 이미지 로드
       const image = new Image();
-      image.onload = () => {
+      let downloaded = false;
+      image.addEventListener('load', () => {
+        if (downloaded) { resolve(); return; }
+        downloaded = true;
         const maxWidth = 1600;
         const scale = image.width > maxWidth ? maxWidth / image.width : 1;
         const canvas = document.createElement('canvas');
@@ -1233,7 +1239,7 @@ async function downloadAllPhotos() {
           };
           reader.readAsDataURL(blob);
         }, 'image/jpeg', 0.95);
-      };
+      });
       image.src = img.src;
     });
   }
