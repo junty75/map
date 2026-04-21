@@ -315,6 +315,57 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ✅ Ctrl+V → 클립보드 이미지를 지도에 마커로 추가
+document.addEventListener('paste', async e => {
+  const items = Array.from(e.clipboardData?.items || []);
+  const imageItem = items.find(item => item.type.startsWith('image/'));
+  if (!imageItem) return;
+  e.preventDefault();
+
+  const file = imageItem.getAsFile();
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const imgSrc = ev.target.result;
+    const img = new Image();
+    img.onload = () => {
+      // EXIF GPS 확인
+      let lat = null, lng = null;
+      try {
+        const exif = piexif.load(imgSrc);
+        const gps = exif['GPS'];
+        if (gps && gps[piexif.GPSIFD.GPSLatitude]) {
+          const toDecimal = dms => dms[0][0]/dms[0][1] + dms[1][0]/dms[1][1]/60 + dms[2][0]/dms[2][1]/3600;
+          lat = toDecimal(gps[piexif.GPSIFD.GPSLatitude]) * (gps[piexif.GPSIFD.GPSLatitudeRef] === 'S' ? -1 : 1);
+          lng = toDecimal(gps[piexif.GPSIFD.GPSLongitude]) * (gps[piexif.GPSIFD.GPSLongitudeRef] === 'W' ? -1 : 1);
+        }
+      } catch(ex) {}
+
+      const center = (lat && lng)
+        ? new kakao.maps.LatLng(lat, lng)
+        : map.getCenter();
+
+      const now = new Date();
+      const name = `붙여넣기_${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}${String(now.getMinutes()).padStart(2,'0')}${String(now.getSeconds()).padStart(2,'0')}`;
+
+      addPhotoMarker(center, imgSrc, name);
+      map.panTo(center);
+
+      // GPS 없으면 이동 모드 활성화 → 클릭으로 위치 지정
+      if (!lat) {
+        const added = markers.at(-1);
+        if (added) {
+          added.marker.setDraggable(true);
+          movingPhotoMarker = added;
+        }
+      }
+    };
+    img.src = imgSrc;
+  };
+  reader.readAsDataURL(file);
+});
+
 
 
   // 내 위치 버튼 (📍) 복구
