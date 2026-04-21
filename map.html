@@ -335,10 +335,18 @@ document.addEventListener('paste', async e => {
       try {
         const exif = piexif.load(imgSrc);
         const gps = exif['GPS'];
-        if (gps && gps[piexif.GPSIFD.GPSLatitude]) {
-          const toDecimal = dms => dms[0][0]/dms[0][1] + dms[1][0]/dms[1][1]/60 + dms[2][0]/dms[2][1]/3600;
-          lat = toDecimal(gps[piexif.GPSIFD.GPSLatitude]) * (gps[piexif.GPSIFD.GPSLatitudeRef] === 'S' ? -1 : 1);
-          lng = toDecimal(gps[piexif.GPSIFD.GPSLongitude]) * (gps[piexif.GPSIFD.GPSLongitudeRef] === 'W' ? -1 : 1);
+        if (gps && gps[piexif.GPSIFD.GPSLatitude] && gps[piexif.GPSIFD.GPSLongitude]) {
+          const toDec = (dms, ref) => {
+            const d = dms[0][0]/dms[0][1];
+            const m = dms[1][0]/dms[1][1];
+            const s = dms[2][0]/dms[2][1];
+            return (d + m/60 + s/3600) * ((ref === 'S' || ref === 'W') ? -1 : 1);
+          };
+          const _lat = toDec(gps[piexif.GPSIFD.GPSLatitude],  gps[piexif.GPSIFD.GPSLatitudeRef]  || 'N');
+          const _lng = toDec(gps[piexif.GPSIFD.GPSLongitude], gps[piexif.GPSIFD.GPSLongitudeRef] || 'E');
+          if (!isNaN(_lat) && !isNaN(_lng) && (_lat !== 0 || _lng !== 0)) {
+            lat = _lat; lng = _lng;
+          }
         }
       } catch(ex) {}
 
@@ -1007,37 +1015,48 @@ document.addEventListener('drop', e => {
       reader.readAsText(file);
 
     // 2) 이미지
-    } else if (file.type.startsWith('image/')) {
+    } else if (file.type.startsWith('image/') || /\.(jpe?g|png)$/i.test(name)) {
       const reader = new FileReader();
       reader.onload = ev => {
-        const img = new Image();
-        img.onload = () => {
-          EXIF.getData(img, function () {
-            const lat = EXIF.getTag(this, 'GPSLatitude');
-            const lon = EXIF.getTag(this, 'GPSLongitude');
-            const latRef = EXIF.getTag(this, 'GPSLatitudeRef');
-            const lonRef = EXIF.getTag(this, 'GPSLongitudeRef');
-            if (lat && lon && latRef && lonRef) {
-              const conv = (dms, ref) => (dms[0] + dms[1]/60 + dms[2]/3600) * (ref === 'S' || ref === 'W' ? -1 : 1);
-              const ll = new kakao.maps.LatLng(conv(lat, latRef), conv(lon, lonRef));
-              bounds.extend(ll);
-              addPhotoMarker(ll, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
-              if (!bounds.isEmpty()) map.setBounds(bounds);
-            } else {
-              if (photoWithoutGPSAction === null) {
-                photoWithoutGPSAction = confirm(`"${file.name}" 사진에 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번에 올리는 모든 사진에 적용됩니다)`);
-              }
-              if (photoWithoutGPSAction) {
-                const center = map.getCenter();
-                addPhotoMarker(center, ev.target.result, file.name.replace(/\.[^/.]+$/, ''));
-                map.panTo(center);
-                const added = markers.at(-1);
-                if (added) { added.marker.setDraggable(true); movingPhotoMarker = added; }
-              }
+        const imgSrc = ev.target.result;
+        const imgName = file.name.replace(/\.[^/.]+$/, '');
+
+        // piexif로 EXIF GPS 읽기
+        let latlng = null;
+        try {
+          const exif = piexif.load(imgSrc);
+          const gps = exif['GPS'];
+          if (gps && gps[piexif.GPSIFD.GPSLatitude] && gps[piexif.GPSIFD.GPSLongitude]) {
+            const toDec = (dms, ref) => {
+              const d = dms[0][0]/dms[0][1];
+              const m = dms[1][0]/dms[1][1];
+              const s = dms[2][0]/dms[2][1];
+              return (d + m/60 + s/3600) * ((ref === 'S' || ref === 'W') ? -1 : 1);
+            };
+            const lat = toDec(gps[piexif.GPSIFD.GPSLatitude],  gps[piexif.GPSIFD.GPSLatitudeRef]  || 'N');
+            const lng = toDec(gps[piexif.GPSIFD.GPSLongitude], gps[piexif.GPSIFD.GPSLongitudeRef] || 'E');
+            if (!isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
+              latlng = new kakao.maps.LatLng(lat, lng);
             }
-          });
-        };
-        img.src = ev.target.result;
+          }
+        } catch(ex) {}
+
+        if (latlng) {
+          bounds.extend(latlng);
+          addPhotoMarker(latlng, imgSrc, imgName);
+          if (!bounds.isEmpty()) map.setBounds(bounds);
+        } else {
+          if (photoWithoutGPSAction === null) {
+            photoWithoutGPSAction = confirm(`"${file.name}" 사진에 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번에 올리는 모든 사진에 적용됩니다)`);
+          }
+          if (photoWithoutGPSAction) {
+            const center = map.getCenter();
+            addPhotoMarker(center, imgSrc, imgName);
+            map.panTo(center);
+            const added = markers.at(-1);
+            if (added) { added.marker.setDraggable(true); movingPhotoMarker = added; }
+          }
+        }
       };
       reader.readAsDataURL(file);
 
