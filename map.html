@@ -757,8 +757,39 @@ function exportByFormat() {
 
 async function exportKMZ() {
   const activeMarkers = markers.filter(m => m.marker && m.marker.getMap());
-  const lastMarkerName = activeMarkers.at(-1)?.name?.trim() || 'data';
-  const fname = prompt('파일명', lastMarkerName);
+
+  // 주소+날짜+마커 기본 파일명 생성
+  const now = new Date();
+  const dateStr = now.getFullYear().toString() +
+                  (now.getMonth()+1).toString().padStart(2,'0') +
+                  now.getDate().toString().padStart(2,'0');
+
+  const getAddrPrefix = () => new Promise(resolve => {
+    const center = map.getCenter();
+    geocoder.coord2Address(center.getLng(), center.getLat(), (result, status) => {
+      if (status !== kakao.maps.services.Status.OK || !result[0]) { resolve(''); return; }
+      const parts = (result[0].address?.address_name || '').split(' ');
+      const eup = parts.find(p => /[읍면동]$/.test(p)) || '';
+      const ri  = parts.find(p => /리$/.test(p)) || '';
+      const eupName = eup.replace(/[읍면동]$/, '');
+      const riName  = ri.replace(/리$/, '');
+      const prefix = eupName && riName ? `${eupName}${riName}_`
+                   : eupName           ? `${eupName}_`
+                   : riName            ? `${riName}_`
+                   : '';
+      resolve(prefix);
+    });
+  });
+
+  const prefix = await getAddrPrefix();
+  const firstMarkerName = [...activeMarkers].reverse().find(m => !m.iw.getContent().querySelector('img'))?.name
+                        || activeMarkers.at(-1)?.name || '';
+  const safeMarkerName = firstMarkerName.replace(/[\\/:*?"<>|]/g, '').trim();
+  const defaultName = safeMarkerName
+    ? `${prefix}${dateStr}_${safeMarkerName}`
+    : `${prefix}${dateStr}`;
+
+  const fname = prompt('파일명', defaultName);
   if (!fname) return;
 
   const zip = new JSZip();
@@ -881,14 +912,43 @@ function exportVisibleGPX() {
 
 async function exportVisibleKMZ() {
   const bounds = map.getBounds();
-
   const activeMarkers = markers.filter(m => m.marker && m.marker.getMap());
   const visibleMarkers = activeMarkers.filter(m => bounds.contain(m.marker.getPosition()));
   const visiblePolylines = polylines.filter(pl =>
     pl && pl.getMap() && pl.getPath().some(p => bounds.contain(p))
   );
 
-  const defaultName = visibleMarkers.at(-1)?.name?.trim() || 'visible_data';
+  // 주소+날짜+마커 기본 파일명 생성
+  const now = new Date();
+  const dateStr = now.getFullYear().toString() +
+                  (now.getMonth()+1).toString().padStart(2,'0') +
+                  now.getDate().toString().padStart(2,'0');
+
+  const getAddrPrefix = () => new Promise(resolve => {
+    const center = map.getCenter();
+    geocoder.coord2Address(center.getLng(), center.getLat(), (result, status) => {
+      if (status !== kakao.maps.services.Status.OK || !result[0]) { resolve(''); return; }
+      const parts = (result[0].address?.address_name || '').split(' ');
+      const eup = parts.find(p => /[읍면동]$/.test(p)) || '';
+      const ri  = parts.find(p => /리$/.test(p)) || '';
+      const eupName = eup.replace(/[읍면동]$/, '');
+      const riName  = ri.replace(/리$/, '');
+      const prefix = eupName && riName ? `${eupName}${riName}_`
+                   : eupName           ? `${eupName}_`
+                   : riName            ? `${riName}_`
+                   : '';
+      resolve(prefix);
+    });
+  });
+
+  const prefix = await getAddrPrefix();
+  const firstMarkerName = [...visibleMarkers].reverse().find(m => !m.iw.getContent().querySelector('img'))?.name
+                        || visibleMarkers.at(-1)?.name || '';
+  const safeMarkerName = firstMarkerName.replace(/[\\/:*?"<>|]/g, '').trim();
+  const defaultName = safeMarkerName
+    ? `${prefix}${dateStr}_${safeMarkerName}`
+    : `${prefix}${dateStr}`;
+
   const fname = prompt('보이는 영역의 KMZ 저장 파일명', defaultName);
   if (!fname) return;
 
