@@ -768,26 +768,28 @@ async function exportKMZ() {
     const center = map.getCenter();
     geocoder.coord2Address(center.getLng(), center.getLat(), (result, status) => {
       if (status !== kakao.maps.services.Status.OK || !result[0]) { resolve(''); return; }
-      const parts = (result[0].address?.address_name || '').split(' ');
-      const eup = parts.find(p => /[읍면동]$/.test(p)) || '';
-      const ri  = parts.find(p => /리$/.test(p)) || '';
-      const eupName = eup.replace(/[읍면동]$/, '');
-      const riName  = ri.replace(/리$/, '');
-      const prefix = eupName && riName ? `${eupName}${riName}_`
-                   : eupName           ? `${eupName}_`
-                   : riName            ? `${riName}_`
-                   : '';
+      const parts = (result[0].address?.address_name || '').split(' ').filter(p => !/^\d/.test(p));
+      const eupMyeon = parts.find(p => /[읍면]$/.test(p)) || '';
+      const ri       = parts.find(p => /리$/.test(p)) || '';
+      const gu   = parts.find(p => /구$/.test(p)) || '';
+      const dong = [...parts].reverse().find(p => /동(\d+가)?$/.test(p)) || '';
+      let prefix = '';
+      if (eupMyeon && ri)      prefix = `${eupMyeon.replace(/[읍면]$/, '')}${ri}_`;
+      else if (eupMyeon)       prefix = `${eupMyeon}_`;
+      else if (gu && dong)     prefix = `${gu.replace(/구$/, '')}${dong}_`;
+      else if (gu)             prefix = `${gu.replace(/구$/, '')}_`;
+      else if (dong)           prefix = `${dong}_`;
       resolve(prefix);
     });
   });
 
   const prefix = await getAddrPrefix();
-  const firstMarkerName = [...activeMarkers].reverse().find(m => !m.iw.getContent().querySelector('img'))?.name
-                        || activeMarkers.at(-1)?.name || '';
-  const safeMarkerName = firstMarkerName.replace(/[\\/:*?"<>|]/g, '').trim();
-  const defaultName = safeMarkerName
-    ? `${prefix}${dateStr}_${safeMarkerName}`
-    : `${prefix}${dateStr}`;
+  const lastMarkerRaw = ([...activeMarkers].reverse().find(m => !m.iw.getContent().querySelector('img'))?.name
+                        || activeMarkers.at(-1)?.name || '');
+  const lastMarkerName = lastMarkerRaw.replace(/_\d{8}.*$/, '').replace(/[\\/:*?"<>|]/g, '').trim();
+  const defaultName = lastMarkerName
+    ? `${prefix}${dateStr}_${lastMarkerName}`
+    : `${prefix}${dateStr}_`;
 
   const fname = prompt('파일명', defaultName);
   if (!fname) return;
@@ -928,26 +930,28 @@ async function exportVisibleKMZ() {
     const center = map.getCenter();
     geocoder.coord2Address(center.getLng(), center.getLat(), (result, status) => {
       if (status !== kakao.maps.services.Status.OK || !result[0]) { resolve(''); return; }
-      const parts = (result[0].address?.address_name || '').split(' ');
-      const eup = parts.find(p => /[읍면동]$/.test(p)) || '';
-      const ri  = parts.find(p => /리$/.test(p)) || '';
-      const eupName = eup.replace(/[읍면동]$/, '');
-      const riName  = ri.replace(/리$/, '');
-      const prefix = eupName && riName ? `${eupName}${riName}_`
-                   : eupName           ? `${eupName}_`
-                   : riName            ? `${riName}_`
-                   : '';
+      const parts = (result[0].address?.address_name || '').split(' ').filter(p => !/^\d/.test(p));
+      const eupMyeon = parts.find(p => /[읍면]$/.test(p)) || '';
+      const ri       = parts.find(p => /리$/.test(p)) || '';
+      const gu   = parts.find(p => /구$/.test(p)) || '';
+      const dong = [...parts].reverse().find(p => /동(\d+가)?$/.test(p)) || '';
+      let prefix = '';
+      if (eupMyeon && ri)      prefix = `${eupMyeon.replace(/[읍면]$/, '')}${ri}_`;
+      else if (eupMyeon)       prefix = `${eupMyeon}_`;
+      else if (gu && dong)     prefix = `${gu.replace(/구$/, '')}${dong}_`;
+      else if (gu)             prefix = `${gu.replace(/구$/, '')}_`;
+      else if (dong)           prefix = `${dong}_`;
       resolve(prefix);
     });
   });
 
   const prefix = await getAddrPrefix();
-  const firstMarkerName = [...visibleMarkers].reverse().find(m => !m.iw.getContent().querySelector('img'))?.name
-                        || visibleMarkers.at(-1)?.name || '';
-  const safeMarkerName = firstMarkerName.replace(/[\\/:*?"<>|]/g, '').trim();
-  const defaultName = safeMarkerName
-    ? `${prefix}${dateStr}_${safeMarkerName}`
-    : `${prefix}${dateStr}`;
+  const lastMarkerRaw = ([...visibleMarkers].reverse().find(m => !m.iw.getContent().querySelector('img'))?.name
+                        || visibleMarkers.at(-1)?.name || '');
+  const lastMarkerName = lastMarkerRaw.replace(/_\d{8}.*$/, '').replace(/[\\/:*?"<>|]/g, '').trim();
+  const defaultName = lastMarkerName
+    ? `${prefix}${dateStr}_${lastMarkerName}`
+    : `${prefix}${dateStr}_`;
 
   const fname = prompt('보이는 영역의 KMZ 저장 파일명', defaultName);
   if (!fname) return;
