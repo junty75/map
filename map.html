@@ -8,13 +8,12 @@
   <style>
     html, body { height:100%; margin:0; overflow:hidden; }
     #map { width:100%; height:100%; }
-    #search-form, #address-display, .controls, #myLocationBtn {
+    #search-form, #address-display, .controls {
       position:absolute; background:white; padding:5px; border-radius:5px; box-shadow:0 2px 6px rgba(0,0,0,0.3); z-index:1000;
     }
     #search-form { top:10px; left:10px; display:flex; gap:5px; }
     #address-display { top:10px; left:260px; background:rgba(0,0,0,0.6); color:white; font-size:12px; white-space:nowrap; overflow:hidden; }
     .controls { top:10px; right:10px; display:flex; gap:6px; }
-    #myLocationBtn { bottom:20px; right:20px; border-radius:50%; }
 .dotOverlay.distanceInfo {
   background: white;
   border: 1px solid #db4040;
@@ -35,7 +34,6 @@
     <button type="submit" style="padding:5px;">검색</button>
   </form>
   <div id="address-display">주소 없음</div>
-  <div id="myLocationBtn" title="내 위치로 이동">📍</div>
   <div class="controls">
     <label>위도:</label><input id="latitude" readonly size="12">
     <label>경도:</label><input id="longitude" readonly size="12">
@@ -376,17 +374,6 @@ document.addEventListener('paste', async e => {
 
 
 
-  // 내 위치 버튼 (📍) 복구
-  document.getElementById('myLocationBtn').onclick = () => {
-    navigator.geolocation.getCurrentPosition(pos => {
-      const ll = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-      map.setCenter(ll);
-      document.getElementById('latitude').value = pos.coords.latitude;
-      document.getElementById('longitude').value = pos.coords.longitude;
-    }, err => {
-      alert('위치 정보를 가져올 수 없습니다: ' + err.message);
-    });
-  };
 }
 function showMarkerInput(latlng) {
   if (markerInputOverlay) markerInputOverlay.setMap(null);
@@ -806,8 +793,8 @@ async function exportKMZ() {
       const safeName = (m.name || 'photo').replace(/[^\w가-힣\-_.]/g, '_');
       const safeFilename = `${photoCount}_${safeName}.jpg`;
       photoFiles.push({ filename: safeFilename, markerName: m.name });
-      const base64 = img.src.split(',')[1];
-      zip.file(`files/${safeFilename}`, base64, { base64: true });
+      const compressed = await compressImage(img.src);
+      zip.file(`files/${safeFilename}`, compressed.split(',')[1], { base64: true });
     }
   }
 
@@ -968,7 +955,8 @@ async function exportVisibleKMZ() {
       const safeName = (m.name || 'photo').replace(/[^\w가-힣\-_.]/g, '_');
       const safeFilename = `${photoCount}_${safeName}.jpg`;
       photoFiles.push({ filename: safeFilename, markerName: m.name });
-      zip.file(`files/${safeFilename}`, img.src.split(',')[1], { base64: true });
+      const compressed = await compressImage(img.src);
+      zip.file(`files/${safeFilename}`, compressed.split(',')[1], { base64: true });
     } else {
       photoFiles.push(null);
     }
@@ -1275,6 +1263,33 @@ window.onload = () => {
     () => initializeMap(new kakao.maps.LatLng(35.6478, 127.5213))
   );
 };
+
+// ─── 이미지 압축 (저장 시 500KB 이하) ────────────────
+function compressImage(imgSrc) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const TARGET = 300 * 1024;
+      const canvas = document.createElement('canvas');
+      const MAX = 1920;
+      let w = img.width, h = img.height;
+      if (w > MAX || h > MAX) {
+        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else       { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      let quality = 0.85;
+      let result = canvas.toDataURL('image/jpeg', quality);
+      while (result.length * 0.75 > TARGET && quality > 0.1) {
+        quality = Math.round((quality - 0.05) * 100) / 100;
+        result = canvas.toDataURL('image/jpeg', quality);
+      }
+      resolve(result);
+    };
+    img.src = imgSrc;
+  });
+}
 
 function downloadCompressedImage(imgSrc, filename, maxWidth = 1600, quality = 0.98) {
   const img = new Image();
