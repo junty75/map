@@ -8,6 +8,11 @@
   <style>
     html, body { height:100%; margin:0; overflow:hidden; }
     #map { width:100%; height:100%; }
+    /* 카카오맵 기본 줌/내위치 컨트롤 숨기기 */
+    .kakao_map_marker, .daumRoughmapContainer .roughmap_maker_btn { display:none !important; }
+    .wrap_map_cont .map_zoom_close, .map_info_close { display:none !important; }
+    a[href*="location"], a[title*="현재위치"], a[title*="내위치"] { display:none !important; }
+    .zoom_reset, [class*="zoom_reset"] { display:none !important; }
     #search-form, #address-display, .controls {
       position:absolute; background:white; padding:5px; border-radius:5px; box-shadow:0 2px 6px rgba(0,0,0,0.3); z-index:1000;
     }
@@ -131,6 +136,10 @@ const trimCityProvince = str => str?.split(' ').slice(1).join(' ') || '';
 
 function initializeMap(center) {
   map = new kakao.maps.Map(document.getElementById('map'), { center, level: 4, mapTypeId: kakao.maps.MapTypeId.HYBRID });
+  // 카카오맵 기본 줌/내위치 버튼 DOM에서 제거
+  setTimeout(() => {
+    document.querySelectorAll('.zoom_in, .zoom_out, .zoom_reset, .map_zoom_close').forEach(el => el.remove());
+  }, 500);
   window.map = map;
   geocoder = new kakao.maps.services.Geocoder();
 
@@ -1258,10 +1267,7 @@ async function loadKMZ(file, bounds) {
 }
 
 window.onload = () => {
-  navigator.geolocation.getCurrentPosition(
-    pos => initializeMap(new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude)),
-    () => initializeMap(new kakao.maps.LatLng(35.6478, 127.5213))
-  );
+  initializeMap(new kakao.maps.LatLng(35.6478, 127.5213));
 };
 
 // ─── 이미지 압축 (저장 시 500KB 이하) ────────────────
