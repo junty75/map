@@ -963,12 +963,13 @@ async function exportKMZ() {
   zip.file('doc.kml', kml);
 
   const blob = await zip.generateAsync({ type: 'blob' });
+  const kmzFile = new File([blob], fname + '.kmz', { type: 'application/vnd.google-earth.kmz' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = URL.createObjectURL(kmzFile);
   a.download = fname + '.kmz';
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
 }
 
 
@@ -1128,12 +1129,13 @@ async function exportVisibleKMZ() {
   zip.file('doc.kml', kml);
 
   const blob = await zip.generateAsync({ type: 'blob' });
+  const kmzFile = new File([blob], fname + '.kmz', { type: 'application/vnd.google-earth.kmz' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = URL.createObjectURL(kmzFile);
   a.download = fname + '.kmz';
   document.body.appendChild(a);
   a.click();
-  document.body.removeChild(a);
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
 }
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', e => {
