@@ -898,7 +898,7 @@ async function exportCSV() {
   });
 
   // 헤더 (BOM 포함으로 엑셀 한글 깨짐 방지)
-  let csv = '\uFEFF이름,위도,경도,주소,사진경로\n';
+  let csv = '\uFEFF이름,위도,경도,주소\n';
 
   for (let idx = 0; idx < activeMarkers.length; idx++) {
     const m = activeMarkers[idx];
@@ -909,11 +909,7 @@ async function exportCSV() {
     const name = (m.name || '').replace(/"/g, '""');
     const addr = (await getAddr(m)).replace(/"/g, '""');
 
-    // 사진 마커 여부
-    const imgEl = m.iw.getContent ? m.iw.getContent().querySelector('img') : null;
-    const photoPath = imgEl ? '사진포함' : '';
-
-    csv += `"${name}",${lat},${lng},"${addr}","${photoPath}"\n`;
+    csv += `"${name}",${lat},${lng},"${addr}"\n`;
   }
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
