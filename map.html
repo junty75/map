@@ -65,7 +65,6 @@
     <label>위도:</label><input id="latitude" readonly size="12">
     <label>경도:</label><input id="longitude" readonly size="12">
     <button type="button" onclick="downloadAllPhotos()">📸 사진 다운로드</button>
-    <button type="button" onclick="copyCoordinates()">복사 (Shift+C)</button>
     <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
     <button type="button" onclick="resetPolylines()">선 초기화</button>
     <button type="button" onclick="resetAll()">화면 초기화</button>
@@ -218,23 +217,8 @@ if (movingPhotoMarker) {
     const el = document.getElementById('address-display');
       // 주소 클릭 시 순수 텍스트로 클립보드 복사 (엑셀 붙여넣기 시 검정색)
       el.onclick = () => {
-        const addr = el.innerText;
-        if (!addr || addr === '주소 없음' || addr === '✅ 복사됨') return;
-        const lat = document.getElementById('latitude').value;
-        const lng = document.getElementById('longitude').value;
-        const text = `${lat}\t${lng}\t${addr}`;
-        navigator.clipboard.writeText(text).then(() => {
-          const prev = el.innerText;
-          el.innerText = '✅ 복사됨';
-          setTimeout(() => { el.innerText = prev; }, 1200);
-        }).catch(() => {
-          const ta = document.createElement('textarea');
-          ta.value = text;
-          ta.style.position = 'fixed'; ta.style.opacity = '0';
-          document.body.appendChild(ta);
-          ta.select(); document.execCommand('copy');
-          document.body.removeChild(ta);
-        });
+        if (!el.innerText || el.innerText === '주소 없음' || el.innerText === '✅ 복사됨') return;
+        copyAndMarkLocation();
       };
     if (status === kakao.maps.services.Status.OK) {
       const legal = res[0].address?.address_name || '주소 없음';
@@ -333,9 +317,9 @@ function pointToSegmentDist(p, a, b) {
 
 // Ctrl+C, Alt 단축키
 document.addEventListener('keydown', e => {
-  if (e.shiftKey && e.key.toLowerCase() === 'c') {
+  if (e.ctrlKey && e.key.toLowerCase() === 'c' && !window.getSelection().toString()) {
     e.preventDefault();
-    copyCoordinates();
+    copyAndMarkLocation();
   }
 
   if (e.altKey) {
@@ -692,10 +676,37 @@ function showEditInput(markerObj, label) {
 }
 
 
-function copyCoordinates() {
+let locationMarkerCount = 0; // 위치 마커 번호 카운터
+
+function copyAndMarkLocation() {
   const lat = document.getElementById('latitude').value;
   const lng = document.getElementById('longitude').value;
-  navigator.clipboard.writeText(`${lat}, ${lng}`);
+  const addr = document.getElementById('address-display').innerText;
+  if (!lat || !lng) return;
+  const text = `${lat}\t${lng}\t${addr}`;
+  navigator.clipboard.writeText(text).then(() => {
+    createLocationMarker(parseFloat(lat), parseFloat(lng));
+    const el = document.getElementById('address-display');
+    const prev = el.innerText;
+    el.innerText = '✅ 복사됨';
+    setTimeout(() => { el.innerText = prev; }, 1200);
+  }).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+    createLocationMarker(parseFloat(lat), parseFloat(lng));
+  });
+}
+
+function createLocationMarker(lat, lng) {
+  locationMarkerCount++;
+  const latlng = new kakao.maps.LatLng(lat, lng);
+  addMarker(latlng, String(locationMarkerCount));
+  // 생성된 마커의 InfoWindow 바로 열기
+  const entry = markers[markers.length - 1];
+  if (entry) entry.iw.open(map, entry.marker);
 }
 
 function startDrawing() {
@@ -821,7 +832,7 @@ document.addEventListener('keydown', e => {
   }
 });
 
-const resetAll = () => { markers.forEach(m => { m.iw.close(); m.marker.setMap(null); }); markers = []; resetPolylines(); };
+const resetAll = () => { markers.forEach(m => { m.iw.close(); m.marker.setMap(null); }); markers = []; resetPolylines(); locationMarkerCount = 0; };
 
 function exportGPX() {
   const activeMarkers = markers.filter(m => m.marker && m.marker.getMap()); // 지도에 남아있는 마커만
