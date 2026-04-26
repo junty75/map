@@ -71,6 +71,7 @@
     <select id="exportFormat" style="padding:5px;">
       <option value="kmz">KMZ 내보내기</option>
       <option value="gpx">GPX 내보내기</option>
+      <option value="csv">CSV 내보내기</option>
     </select>
     <button type="button" onclick="exportByFormat()">💾 저장</button>
   </div>
@@ -339,7 +340,8 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     const format = document.getElementById('exportFormat').value;
     if (format === 'kmz') exportVisibleKMZ();
-    else exportVisibleGPX();
+    else if (format === 'gpx') exportVisibleGPX();
+    else if (format === 'csv') exportCSV();
   }
 });
 
@@ -703,10 +705,14 @@ function copyAndMarkLocation() {
 function createLocationMarker(lat, lng) {
   locationMarkerCount++;
   const latlng = new kakao.maps.LatLng(lat, lng);
+  const addr = document.getElementById('address-display').innerText;
   addMarker(latlng, String(locationMarkerCount));
-  // 생성된 마커의 InfoWindow 바로 열기
+  // 주소 저장
   const entry = markers[markers.length - 1];
-  if (entry) entry.iw.open(map, entry.marker);
+  if (entry) {
+    entry.addr = (addr === '✅ 복사됨' || addr === '주소 없음') ? '' : addr;
+    entry.iw.open(map, entry.marker);
+  }
 }
 
 function startDrawing() {
@@ -868,10 +874,63 @@ function exportGPX() {
 }
 
 
+// ─── CSV 내보내기 ─────────────────────────────────────
+async function exportCSV() {
+  const activeMarkers = markers.filter(m => m.marker && m.marker.getMap());
+  if (activeMarkers.length === 0) { alert('내보낼 마커가 없습니다.'); return; }
+
+  const fname = prompt('CSV 파일명', document.getElementById('address-display').innerText.split(' ')[0] || 'markers');
+  if (!fname) return;
+
+  // 주소 없는 마커 역지오코딩
+  const getAddr = (m) => new Promise(resolve => {
+    if (m.addr !== undefined) { resolve(m.addr); return; }
+    const pos = m.marker.getPosition();
+    geocoder.coord2Address(pos.getLng(), pos.getLat(), (res, status) => {
+      if (status === kakao.maps.services.Status.OK) {
+        const addr = res[0].address?.address_name || '';
+        m.addr = addr;
+        resolve(addr);
+      } else {
+        resolve('');
+      }
+    });
+  });
+
+  // 헤더 (BOM 포함으로 엑셀 한글 깨짐 방지)
+  let csv = '\uFEFF이름,위도,경도,주소,사진경로\n';
+
+  for (let idx = 0; idx < activeMarkers.length; idx++) {
+    const m = activeMarkers[idx];
+    const pos = m.marker.getPosition ? m.marker.getPosition() : null;
+    if (!pos) continue;
+    const lat = pos.getLat();
+    const lng = pos.getLng();
+    const name = (m.name || '').replace(/"/g, '""');
+    const addr = (await getAddr(m)).replace(/"/g, '""');
+
+    // 사진 마커 여부
+    const imgEl = m.iw.getContent ? m.iw.getContent().querySelector('img') : null;
+    const photoPath = imgEl ? '사진포함' : '';
+
+    csv += `"${name}",${lat},${lng},"${addr}","${photoPath}"\n`;
+  }
+
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fname + '.csv';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
 function exportByFormat() {
   const format = document.getElementById('exportFormat').value;
   if (format === 'kmz') exportKMZ();
-  else exportGPX();
+  else if (format === 'gpx') exportGPX();
+  else if (format === 'csv') exportCSV();
 }
 
 async function exportKMZ() {
