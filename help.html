@@ -6,88 +6,48 @@
 <title>MAP KMZ 사용 설명서</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&family=JetBrains+Mono:wght@400;600&display=swap');
-
   :root {
-    --bg: #0f1117;
-    --surface: #1a1d27;
-    --surface2: #22263a;
-    --border: #2e3248;
-    --accent: #4f8ef7;
-    --accent2: #6ee7b7;
-    --accent3: #f59e0b;
-    --text: #e2e8f0;
-    --text-muted: #8892aa;
-    --danger: #f87171;
+    --bg:#0f1117;--surface:#1a1d27;--surface2:#22263a;--border:#2e3248;
+    --accent:#4f8ef7;--accent2:#6ee7b7;--accent3:#f59e0b;
+    --text:#e2e8f0;--text-muted:#8892aa;--danger:#f87171;
   }
-
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-
-  body {
-    font-family: 'Noto Sans KR', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.7;
-    min-height: 100vh;
-  }
-
-  header {
-    background: linear-gradient(135deg, #1a1d27 0%, #0f1117 100%);
-    border-bottom: 1px solid var(--border);
-    padding: 40px 24px 32px;
-    text-align: center;
-  }
-  header h1 {
-    font-size: clamp(22px, 5vw, 36px);
-    font-weight: 700;
-    background: linear-gradient(135deg, #4f8ef7, #6ee7b7);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    margin-bottom: 8px;
-  }
-  header p { color: var(--text-muted); font-size: 14px; }
-
-  nav {
-    background: var(--surface);
-    border-bottom: 1px solid var(--border);
-    padding: 16px 24px;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-    justify-content: center;
-  }
-  nav a {
-    color: var(--text-muted);
-    text-decoration: none;
-    font-size: 13px;
-    padding: 5px 12px;
-    border-radius: 20px;
-    border: 1px solid var(--border);
-    transition: all 0.2s;
-  }
-  nav a:hover { color: var(--accent); border-color: var(--accent); background: rgba(79,142,247,0.08); }
-
-  main { max-width: 860px; margin: 0 auto; padding: 40px 20px 80px; }
-  section { margin-bottom: 48px; }
-
-  .section-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
-  .section-icon { font-size: 22px; width: 44px; height: 44px; background: var(--surface2); border-radius: 10px; display: flex; align-items: center; justify-content: center; }
-  h2 { font-size: 18px; font-weight: 700; }
-
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 12px; }
-  .card h3 { font-size: 15px; font-weight: 600; color: var(--accent2); margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
-  .card p, .card li { font-size: 14px; color: var(--text-muted); line-height: 1.75; }
-  .card ul { padding-left: 18px; }
-
-  /* 링크 스타일 수정 */
-  .card a { color: var(--accent2); font-weight: 700; text-decoration: underline; }
-  .card a:hover { color: #fff; }
-
-  .tip { background: rgba(79,142,247,0.07); border: 1px solid rgba(79,142,247,0.2); border-left: 3px solid var(--accent); padding: 12px 16px; margin: 12px 0; font-size: 13px; color: var(--text-muted); }
-  .close-btn { position: fixed; top: 16px; right: 16px; background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted); border-radius: 8px; padding: 8px 14px; cursor: pointer; z-index: 999; }
-  footer { text-align: center; padding: 24px; color: var(--text-muted); font-size: 12px; border-top: 1px solid var(--border); }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{font-family:'Noto Sans KR',sans-serif;background:var(--bg);color:var(--text);line-height:1.7;min-height:100vh;}
+  header{background:linear-gradient(135deg,#1a1d27 0%,#0f1117 100%);border-bottom:1px solid var(--border);padding:40px 24px 32px;text-align:center;position:relative;overflow:hidden;}
+  header::before{content:'';position:absolute;top:-60px;left:50%;transform:translateX(-50%);width:400px;height:400px;background:radial-gradient(circle,rgba(79,142,247,0.12) 0%,transparent 70%);pointer-events:none;}
+  header h1{font-size:clamp(22px,5vw,34px);font-weight:700;letter-spacing:-0.5px;background:linear-gradient(135deg,#4f8ef7,#6ee7b7);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;margin-bottom:8px;}
+  header p{color:var(--text-muted);font-size:14px;}
+  header .author{margin-top:10px;font-size:12px;color:#4a5270;}
+  nav{background:var(--surface);border-bottom:1px solid var(--border);padding:14px 20px;position:sticky;top:0;z-index:100;display:flex;gap:7px;flex-wrap:wrap;justify-content:center;}
+  nav a{color:var(--text-muted);text-decoration:none;font-size:12px;padding:5px 11px;border-radius:20px;border:1px solid var(--border);transition:all 0.2s;white-space:nowrap;}
+  nav a:hover{color:var(--accent);border-color:var(--accent);background:rgba(79,142,247,0.08);}
+  main{max-width:860px;margin:0 auto;padding:36px 20px 80px;}
+  section{margin-bottom:44px;}
+  .section-header{display:flex;align-items:center;gap:12px;margin-bottom:18px;padding-bottom:12px;border-bottom:1px solid var(--border);}
+  .section-icon{font-size:20px;width:42px;height:42px;background:var(--surface2);border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  h2{font-size:17px;font-weight:700;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:10px;transition:border-color 0.2s;}
+  .card:hover{border-color:#3e4460;}
+  .card h3{font-size:14px;font-weight:600;color:var(--accent2);margin-bottom:8px;}
+  .card p,.card li{font-size:14px;color:var(--text-muted);line-height:1.75;}
+  .card ul{padding-left:18px;}
+  .card li{margin-bottom:4px;}
+  .shortcut-grid{display:grid;gap:7px;}
+  .shortcut-row{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:11px 15px;}
+  .keys{display:flex;gap:4px;flex-shrink:0;min-width:130px;flex-wrap:wrap;}
+  kbd{font-family:'JetBrains Mono',monospace;font-size:11px;background:var(--surface2);border:1px solid #3e4460;border-bottom:2px solid #3e4460;border-radius:5px;padding:3px 7px;color:var(--accent);white-space:nowrap;}
+  .shortcut-desc{font-size:13px;color:var(--text-muted);}
+  .tip{background:rgba(79,142,247,0.07);border:1px solid rgba(79,142,247,0.2);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:11px 15px;margin:10px 0;font-size:13px;color:var(--text-muted);}
+  .tip strong{color:var(--accent);}
+  .install-box{background:linear-gradient(135deg,rgba(79,142,247,0.1),rgba(110,231,183,0.08));border:1px solid rgba(79,142,247,0.3);border-radius:12px;padding:20px;margin-bottom:10px;}
+  .install-box h3{color:var(--accent);margin-bottom:10px;font-size:14px;font-weight:700;}
+  .install-box p,.install-box li{font-size:14px;color:var(--text-muted);line-height:1.8;}
+  .install-box ul{padding-left:18px;}
+  .url-badge{display:inline-block;background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:4px 12px;font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--accent2);margin:6px 0;}
+  code{font-family:'JetBrains Mono',monospace;background:var(--surface2);padding:1px 6px;border-radius:4px;font-size:12px;color:var(--accent2);}
+  .close-btn{position:fixed;top:14px;right:14px;background:var(--surface2);border:1px solid var(--border);color:var(--text-muted);border-radius:8px;padding:7px 13px;font-size:13px;cursor:pointer;z-index:999;transition:all 0.2s;font-family:'Noto Sans KR',sans-serif;}
+  .close-btn:hover{background:var(--border);color:var(--text);}
+  footer{text-align:center;padding:24px;color:var(--text-muted);font-size:12px;border-top:1px solid var(--border);}
 </style>
 </head>
 <body>
@@ -96,86 +56,276 @@
 
 <header>
   <h1>🗺️ MAP KMZ 사용 설명서</h1>
-  <p>장수군청 건설교통과 전태영 제작</p>
+  <p>현장 위치 기록 · KMZ / GPX / CSV 뷰어 &amp; 편집 도구</p>
+  <div class="author">Made by 전태영</div>
 </header>
 
 <nav>
   <a href="#overview">개요</a>
   <a href="#file">파일 불러오기</a>
-  <a href="#marker">마커 및 위치복사</a>
-  <a href="#photo">사진</a>
+  <a href="#marker">마커</a>
   <a href="#line">선 그리기</a>
+  <a href="#photo">사진</a>
+  <a href="#location">위치 복사</a>
   <a href="#export">내보내기</a>
-  <a href="#mobile">모바일 이용</a>
+  <a href="#mobile">모바일 앱</a>
+  <a href="#shortcuts">단축키</a>
 </nav>
 
 <main>
 
   <section id="overview">
-    <div class="section-header"><div class="section-icon">📋</div><h2>개요</h2></div>
+    <div class="section-header">
+      <div class="section-icon">📋</div>
+      <h2>개요</h2>
+    </div>
     <div class="card">
-      <p>MAP KMZ는 현장 위치를 기록하고 선, 마커, 사진 등을 활용해 데이터를 시각화하는 도구입니다. 아래 주소를 통해 지도 서비스에 접속할 수 있습니다.</p>
-      <p>주소: <a href="https://junty75.github.io/map/map" target="_blank">https://junty75.github.io/map/map</a></p>
-      <p>위치 정보를 가진 사진을 지도에 드래그하면 즉시 위치가 확인되며, 마커를 클릭하여 기록된 위치 정보를 수정할 수 있습니다. 작업한 내용은 파일로 안전하게 저장할 수 있습니다.</p>
+      <p>MAP KMZ는 현장 위치를 기록하고 파일로 저장할 수 있는 도구입니다. 저장한 파일을 지도에 드래그해서 올려놓으면 언제든지 다시 확인할 수 있습니다. 마커와 선으로 현장 정보를 표시하고, KMZ / GPX / CSV 형식으로 저장하거나 불러올 수 있습니다.</p>
+    </div>
+    <div class="card">
+      <h3>📁 지원 파일 형식</h3>
+      <ul>
+        <li><strong>불러오기</strong>: KMZ, ZIP, GPX, JPG / PNG (사진)</li>
+        <li><strong>내보내기</strong>: KMZ, GPX, CSV</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>✏️ 불러온 파일 수정</h3>
+      <p>불러온 KMZ 파일의 마커나 선을 <strong>우클릭</strong>하면 수정·삭제 메뉴가 나타납니다. 수정 후 다시 저장하면 업데이트된 파일을 만들 수 있습니다.</p>
     </div>
   </section>
 
   <section id="file">
-    <div class="section-header"><div class="section-icon">📂</div><h2>파일 불러오기</h2></div>
-    <div class="card">
-      <p>위치 정보가 담긴 파일(KMZ, GPX, 사진, CSV)을 지도 위로 드래그하면 즉시 내용을 확인할 수 있습니다. 불러온 파일 내의 요소들은 우클릭을 통해 언제든 수정이 가능합니다.</p>
-      <p>특히 사진 파일의 경우, 지도에 올려 위치 정보를 수정한 뒤 다시 다운로드 받으면 수정된 위치 기록이 반영된 파일로 저장됩니다.</p>
+    <div class="section-header">
+      <div class="section-icon">📂</div>
+      <h2>파일 불러오기</h2>
     </div>
+    <div class="card">
+      <h3>🖱️ 드래그 앤 드롭</h3>
+      <p>KMZ, GPX, 사진 파일을 지도 위로 끌어다 놓으면 자동으로 불러옵니다. 여러 파일을 한 번에 드롭할 수 있으며, 기존 데이터에 추가되는 방식으로 불러와집니다.</p>
+    </div>
+    <div class="card">
+      <h3>📋 클립보드 붙여넣기 (Ctrl+V)</h3>
+      <p>클립보드에 복사된 이미지를 Ctrl+V로 붙여넣으면 현재 지도 위치에 사진 마커로 추가됩니다.</p>
+    </div>
+    <div class="tip"><strong>팁:</strong> 휴대폰에서 저장된 KMZ 파일은 .kmz 형식으로 저장됩니다. 파일을 PC로 옮긴 후 지도에 드래그해서 불러올 수 있습니다.</div>
   </section>
 
   <section id="marker">
-    <div class="section-header"><div class="section-icon">📍</div><h2>마커 및 위치복사</h2></div>
-    <div class="card">
-      <h3>➕ 마커 생성</h3>
-      <p>지도의 원하는 지점에서 <strong>우클릭</strong>하면 마커를 생성하고 내용을 직접 입력할 수 있습니다. 또한, 지도를 클릭할 때마다 상단에 표시되는 위경도 값과 주소를 클릭하거나 <strong>Ctrl+C</strong>를 누르면, 해당 위치에 번호 마커가 표시됨과 동시에 좌표 및 주소 정보가 클립보드에 복사됩니다.</p>
-      <p>지도에 표시된 마커 데이터는 <strong>CSV 내보내기</strong>를 통해 엑셀 파일로 추출할 수 있어, 현장 조사 목록을 PC에서 한눈에 관리하기 편리합니다.</p>
+    <div class="section-header">
+      <div class="section-icon">📍</div>
+      <h2>마커</h2>
     </div>
-  </section>
-
-  <section id="photo">
-    <div class="section-header"><div class="section-icon">📸</div><h2>사진</h2></div>
     <div class="card">
-      <p>사진에 위치 정보가 포함되어 있다면 지도에 드래그하는 것만으로 정확한 촬영 위치가 마커로 표시됩니다.</p>
-      <p>캡처한 사진 등 위치 정보가 없는 파일도 지도에 붙여넣기(Ctrl+V)하여 지도 중심에 배치할 수 있으며, 원하는 위치로 마커를 이동한 후 사진 다운로드 버튼을 누르면 위치 기록이 포함된 파일로 저장됩니다.</p>
+      <h3>➕ 마커 추가</h3>
+      <ul>
+        <li>지도를 <strong>우클릭</strong>하면 마커 이름 입력창이 나타납니다</li>
+        <li>이름 입력 후 <strong>추가</strong> 버튼 또는 <strong>Enter</strong>로 생성</li>
+        <li>현장 위치마다 마커를 추가해 기록할 수 있습니다</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>✏️ 마커 수정 / 삭제</h3>
+      <ul>
+        <li>마커를 <strong>클릭</strong>하면 이름이 표시됩니다</li>
+        <li>마커를 <strong>우클릭</strong>하면 수정 / 삭제 메뉴가 나타납니다</li>
+        <li>불러온 파일의 마커도 동일하게 수정·삭제할 수 있습니다</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🔢 위치 복사 마커 (번호 마커)</h3>
+      <ul>
+        <li><strong>주소 클릭</strong> 또는 <strong>Ctrl+C</strong>를 누르면 현재 위치의 위도·경도·주소가 클립보드에 저장되고</li>
+        <li>해당 위치에 <strong>1, 2, 3...</strong> 순서로 번호 마커가 자동 생성됩니다</li>
+        <li>화면 초기화 후에는 번호가 1부터 다시 시작합니다</li>
+      </ul>
     </div>
   </section>
 
   <section id="line">
-    <div class="section-header"><div class="section-icon">✏️</div><h2>선 그리기</h2></div>
+    <div class="section-header">
+      <div class="section-icon">✏️</div>
+      <h2>선 그리기</h2>
+    </div>
     <div class="card">
-      <p><strong>Alt</strong> 키를 눌러 선 그리기를 시작합니다. 지도를 클릭해 경로를 그릴 수 있으며, <strong>우클릭</strong>으로 완료합니다. 완성된 선 위에서 우클릭하면 수정하거나 삭제할 수 있습니다.</p>
+      <h3>🖊️ 선 그리기 시작 / 종료</h3>
+      <ul>
+        <li><strong>선 그리기 버튼</strong> 클릭 또는 <strong>Alt</strong> 키로 시작 / 종료</li>
+        <li>지도를 클릭할 때마다 포인트가 추가되며 거리가 실시간으로 표시됩니다</li>
+        <li><strong>우클릭</strong>으로 선 그리기 종료</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>↩️ 이전 포인트 삭제</h3>
+      <p><strong>Ctrl+Z</strong> / <strong>Backspace</strong> / <strong>Escape</strong>로 마지막 포인트를 삭제합니다.</p>
+    </div>
+    <div class="card">
+      <h3>🔧 완성된 선 수정 / 삭제</h3>
+      <ul>
+        <li>완성된 선을 <strong>우클릭</strong> (PC) 또는 <strong>길게 누르기</strong> (모바일)</li>
+        <li><strong>수정</strong>: 기존 포인트를 유지한 채 그리기 모드로 복원하여 계속 이어 그릴 수 있습니다</li>
+        <li><strong>삭제</strong>: 선 제거</li>
+        <li>불러온 KMZ 파일의 선도 동일하게 수정·삭제할 수 있습니다</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="photo">
+    <div class="section-header">
+      <div class="section-icon">📸</div>
+      <h2>사진</h2>
+    </div>
+    <div class="card">
+      <h3>📷 사진 불러오기</h3>
+      <ul>
+        <li>JPG / PNG 파일을 지도에 <strong>드래그 앤 드롭</strong>으로 추가</li>
+        <li>사진에 GPS 정보가 있으면 <strong>촬영 위치</strong>에 마커가 자동 생성됩니다</li>
+        <li>GPS 정보가 없으면 현재 지도 중심에 추가 여부를 묻습니다</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🔧 사진 위치 수정 후 다운로드</h3>
+      <ul>
+        <li>사진 마커를 원하는 위치로 <strong>드래그</strong>하면 GPS 위치 정보가 수정됩니다</li>
+        <li>사진 마커 클릭 후 <strong>다운로드 버튼</strong>을 누르면 수정된 위치가 반영된 사진을 저장할 수 있습니다</li>
+        <li>GPS가 없는 사진에 위치를 직접 지정하거나 잘못된 위치를 수정할 때 활용할 수 있습니다</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>💾 사진 다운로드</h3>
+      <ul>
+        <li>사진 마커 클릭 후 개별 다운로드 가능</li>
+        <li><strong>사진 다운로드</strong> 버튼으로 모든 사진을 한 번에 다운로드</li>
+      </ul>
+    </div>
+    <div class="tip"><strong>팁:</strong> KMZ 저장 시 사진은 자동으로 300KB 이하로 압축됩니다.</div>
+  </section>
+
+  <section id="location">
+    <div class="section-header">
+      <div class="section-icon">📌</div>
+      <h2>위치 복사</h2>
+    </div>
+    <div class="card">
+      <h3>📋 클립보드 복사</h3>
+      <ul>
+        <li>화면 상단의 <strong>주소를 클릭</strong>하거나 <strong>Ctrl+C</strong>를 누르면</li>
+        <li><code>위도 &nbsp; 경도 &nbsp; 주소</code> 형식으로 클립보드에 저장됩니다</li>
+        <li>엑셀에 붙여넣으면 세 칸에 자동으로 나뉘어 입력됩니다</li>
+        <li>복사와 동시에 해당 위치에 번호 마커가 자동 생성됩니다</li>
+      </ul>
     </div>
   </section>
 
   <section id="export">
-    <div class="section-header"><div class="section-icon">💾</div><h2>내보내기</h2></div>
+    <div class="section-header">
+      <div class="section-icon">💾</div>
+      <h2>내보내기</h2>
+    </div>
     <div class="card">
-      <p>전체 마커와 선을 KMZ, GPX, CSV 형식으로 저장할 수 있습니다. 파일명은 읍면동명과 날짜, 마지막 마커 이름이 조합되어 자동으로 생성됩니다.</p>
+      <h3>📦 KMZ 저장</h3>
+      <ul>
+        <li><strong>저장 버튼</strong>: 전체 마커와 선을 KMZ로 저장</li>
+        <li><strong>Ctrl+S</strong>: 현재 화면에 보이는 데이터만 저장</li>
+        <li>파일명은 <strong>읍면동명 + 날짜 + 마지막 마커이름</strong>으로 자동 생성됩니다</li>
+        <li>예: <code>산서백운리_20260422_현장A</code></li>
+        <li>저장된 KMZ 파일을 나중에 지도에 드래그해서 다시 불러올 수 있습니다</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>🗺️ GPX 저장</h3>
+      <p>형식 선택 후 저장 버튼 또는 Ctrl+S로 내보냅니다. 선(폴리라인) 데이터가 GPX 트랙으로 저장됩니다.</p>
+    </div>
+    <div class="card">
+      <h3>📊 CSV 저장</h3>
+      <ul>
+        <li>마커 데이터를 CSV로 저장합니다</li>
+        <li>컬럼: <code>번호, 이름, 위도, 경도, 주소, 사진경로</code></li>
+        <li>엑셀에서 바로 열 수 있습니다 (한글 깨짐 없음)</li>
+      </ul>
     </div>
   </section>
 
   <section id="mobile">
-    <div class="section-header"><div class="section-icon">📱</div><h2>모바일 이용 안내</h2></div>
-    <div class="card">
-      <p>전용 앱을 통해 휴대폰에서도 편리하게 현장 조사를 수행할 수 있습니다.</p>
+    <div class="section-header">
+      <div class="section-icon">📱</div>
+      <h2>모바일 앱</h2>
+    </div>
+    <div class="install-box">
+      <h3>📲 크롬 브라우저에서 앱 설치</h3>
       <ul>
-        <li>현장에서 조사한 데이터는 KMZ 파일로 저장하여 PC에서 다시 불러와 정밀하게 확인할 수 있습니다.</li>
-        <li>휴대폰 크롬 브라우저에서 <a href="https://junty75.github.io/img" target="_blank">https://junty75.github.io/img</a> 접속</li>
-        <li>우측 상단 메뉴에서 <strong>'앱 설치(홈 화면에 추가)'</strong> 버튼을 눌러 설치</li>
+        <li>휴대폰 크롬 브라우저에서 아래 주소로 접속합니다</li>
+        <li style="list-style:none;margin:8px 0;"><span class="url-badge">https://junty75.github.io/img</span></li>
+        <li>오른쪽 상단의 <strong>설치 버튼</strong>을 눌러 앱을 설치합니다</li>
+        <li>설치 후 홈 화면에서 일반 앱처럼 실행할 수 있습니다</li>
       </ul>
+    </div>
+    <div class="card">
+      <h3>📱 모바일에서 할 수 있는 것</h3>
+      <ul>
+        <li>PC에서 저장한 KMZ 파일을 휴대폰에서 열어 확인할 수 있습니다</li>
+        <li>현장에서 GPS 위치를 확인하며 마커와 선을 기록할 수 있습니다</li>
+        <li>휴대폰에서 저장하면 <strong>.kmz</strong> 형식으로 저장됩니다</li>
+        <li>저장된 파일을 PC 지도에 드래그해서 불러올 수 있습니다</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>📲 모바일 조작 방법</h3>
+      <ul>
+        <li><strong>길게 누르기</strong>: PC의 우클릭과 동일 (마커 추가, 선 수정/삭제)</li>
+        <li><strong>뒤로가기 버튼</strong>: 열려있는 창 닫기 → 선 그리기 포인트 삭제 → 앱 종료 순서</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="shortcuts">
+    <div class="section-header">
+      <div class="section-icon">⌨️</div>
+      <h2>단축키 / 조작 방법</h2>
+    </div>
+    <div class="shortcut-grid">
+      <div class="shortcut-row">
+        <div class="keys"><kbd>F1</kbd></div>
+        <div class="shortcut-desc">이 사용 설명서 열기</div>
+      </div>
+      <div class="shortcut-row">
+        <div class="keys"><kbd>Alt</kbd></div>
+        <div class="shortcut-desc">선 그리기 시작 / 종료</div>
+      </div>
+      <div class="shortcut-row">
+        <div class="keys"><kbd>Ctrl</kbd><kbd>Z</kbd></div>
+        <div class="shortcut-desc">선 그리기 중 — 이전 포인트 삭제</div>
+      </div>
+      <div class="shortcut-row">
+        <div class="keys"><kbd>Backspace</kbd> <kbd>Escape</kbd></div>
+        <div class="shortcut-desc">선 그리기 중 — 이전 포인트 삭제</div>
+      </div>
+      <div class="shortcut-row">
+        <div class="keys"><kbd>Ctrl</kbd><kbd>C</kbd></div>
+        <div class="shortcut-desc">현재 위치 위도·경도·주소 복사 + 번호 마커 생성</div>
+      </div>
+      <div class="shortcut-row">
+        <div class="keys"><kbd>Ctrl</kbd><kbd>S</kbd></div>
+        <div class="shortcut-desc">현재 화면 보이는 영역만 선택한 형식으로 저장</div>
+      </div>
+      <div class="shortcut-row">
+        <div class="keys"><kbd>Ctrl</kbd><kbd>V</kbd></div>
+        <div class="shortcut-desc">클립보드 이미지를 지도에 사진 마커로 추가</div>
+      </div>
+      <div class="shortcut-row">
+        <div class="keys"><kbd>우클릭</kbd></div>
+        <div class="shortcut-desc">지도 빈 곳: 마커 추가 / 선·마커 위: 수정·삭제</div>
+      </div>
+      <div class="shortcut-row">
+        <div class="keys"><kbd>길게 누르기</kbd></div>
+        <div class="shortcut-desc">모바일에서 우클릭과 동일한 동작</div>
+      </div>
     </div>
   </section>
 
 </main>
 
-<footer>
-  MAP KMZ Viewer &nbsp;·&nbsp; 장수군청 건설교통과 전태영
-</footer>
+<footer>MAP KMZ &nbsp;·&nbsp; Made by 전태영 &nbsp;·&nbsp; F1로 언제든 도움말을 확인하세요</footer>
 
 </body>
 </html>
