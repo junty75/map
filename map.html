@@ -1226,6 +1226,52 @@ document.addEventListener('drop', e => {
     if (name.endsWith('.kmz') || name.endsWith('.zip')) {
       loadKMZ(file, bounds);
 
+    // 0-1) HTM / HTML — 카카오맵 좌표 추출
+    } else if (name.endsWith('.htm') || name.endsWith('.html')) {
+      const reader = new FileReader();
+      reader.onload = ev => {
+        const html = ev.target.result;
+
+        // 폴리라인 추출: var linePath\d+ = [ ... ];
+        const lineBlocks = [...html.matchAll(/var\s+linePath\d+\s*=\s*\[([\s\S]*?)\];/g)];
+        lineBlocks.forEach((m, i) => {
+          const pts = [...m[1].matchAll(/new\s+kakao\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)]
+            .map(c => { const ll = new kakao.maps.LatLng(parseFloat(c[1]), parseFloat(c[2])); bounds.extend(ll); return ll; });
+          if (pts.length < 2) return;
+          const poly = new kakao.maps.Polyline({ map, path: pts, strokeWeight: 3, strokeColor: '#FF00FF', strokeOpacity: 0.85 });
+          polylines.push(poly);
+          attachPolylineRightClick(poly);
+        });
+
+        // 마커 추출: positions 배열 또는 개별 Marker 선언
+        // 방식1: positions 배열 { content: '...', latlng: new kakao.maps.LatLng(...) }
+        const posMatches = [...html.matchAll(/content:\s*'([^']*)'[\s\S]*?latlng:\s*new\s+kakao\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)];
+        posMatches.forEach(m => {
+          // 태그 제거 + 지도보기 링크 제거
+          const rawName = m[1]
+            .replace(/<a\b[^>]*>.*?<\/a>/gi, '') // <a>지도보기</a> 제거
+            .replace(/<[^>]+>/g, '')              // 나머지 태그 제거
+            .trim() || '마커';
+          const ll = new kakao.maps.LatLng(parseFloat(m[2]), parseFloat(m[3]));
+          bounds.extend(ll);
+          addMarker(ll, rawName);
+        });
+
+        // 방식2: new kakao.maps.Marker({ position: new kakao.maps.LatLng(...) })
+        if (posMatches.length === 0) {
+          const mkMatches = [...html.matchAll(/new\s+kakao\.maps\.Marker\s*\(\s*\{[^}]*position:\s*new\s+kakao\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)];
+          mkMatches.forEach((m, i) => {
+            const ll = new kakao.maps.LatLng(parseFloat(m[1]), parseFloat(m[2]));
+            bounds.extend(ll);
+            addMarker(ll, `마커_${i+1}`);
+          });
+        }
+
+        if (!bounds.isEmpty()) map.setBounds(bounds);
+        document.getElementById('saveBtn') && (document.getElementById('saveBtn').disabled = false);
+      };
+      reader.readAsText(file, 'utf-8');
+
     // 1) GPX
     } else if (name.endsWith('.gpx')) {
       const reader = new FileReader();
