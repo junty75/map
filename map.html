@@ -1232,10 +1232,10 @@ document.addEventListener('drop', e => {
       reader.onload = ev => {
         const html = ev.target.result;
 
-        // 폴리라인 추출: var linePath\d+ = [ ... ];
-        const lineBlocks = [...html.matchAll(/var\s+linePath\d+\s*=\s*\[([\s\S]*?)\];/g)];
+        // 폴리라인/폴리곤 추출: linePath\d+, polygonPath\d+ 모두 처리
+        const lineBlocks = [...html.matchAll(/var\s+(linePath\d+|polygonPath\d+)\s*=\s*\[([\s\S]*?)\];/g)];
         lineBlocks.forEach((m, i) => {
-          const pts = [...m[1].matchAll(/new\s+kakao\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)]
+          const pts = [...m[2].matchAll(/new\s+kakao\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)]
             .map(c => { const ll = new kakao.maps.LatLng(parseFloat(c[1]), parseFloat(c[2])); bounds.extend(ll); return ll; });
           if (pts.length < 2) return;
           const poly = new kakao.maps.Polyline({ map, path: pts, strokeWeight: 3, strokeColor: '#FF00FF', strokeOpacity: 0.85 });
