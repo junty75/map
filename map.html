@@ -62,9 +62,15 @@
     <button id="polyMenuCancelBtn">✕ 취소</button>
   </div>
   <div class="controls">
-    <label>위도:</label><input id="latitude" readonly size="12">
-    <label>경도:</label><input id="longitude" readonly size="12">
+    <input id="latlng-display" readonly style="width:220px;font-size:12px;cursor:pointer;" title="클릭하여 복사" onclick="copyCoordFromInput(this)">
     <button type="button" onclick="window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes')" title="도움말 (F1)">❓ 도움말</button>
+    <select id="photoQuality" style="padding:5px;" title="사진 저장 용량">
+      <option value="300">사진 300KB↓</option>
+      <option value="500" selected>사진 500KB↓</option>
+      <option value="800">사진 800KB↓</option>
+      <option value="1024">사진 1MB↓</option>
+      <option value="0">사진 원본</option>
+    </select>
     <button type="button" onclick="downloadAllPhotos()">📸 사진 다운로드</button>
     <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
     <button type="button" onclick="resetPolylines()">선 초기화</button>
@@ -73,6 +79,10 @@
       <option value="kmz">KMZ 내보내기</option>
       <option value="gpx">GPX 내보내기</option>
       <option value="csv">CSV 내보내기</option>
+    </select>
+    <select id="exportArea" style="padding:5px;">
+      <option value="all">전체 영역</option>
+      <option value="visible">현재 영역</option>
     </select>
     <button type="button" onclick="exportByFormat()">💾 저장</button>
   </div>
@@ -212,8 +222,9 @@ if (movingPhotoMarker) {
   }
 
   markers.forEach(m => m.iw.close());
-  document.getElementById('latitude').value = e.latLng.getLat();
-  document.getElementById('longitude').value = e.latLng.getLng();
+  const lat = e.latLng.getLat();
+  const lng = e.latLng.getLng();
+  document.getElementById('latlng-display').value = `${lat}, ${lng}`;
 
   geocoder.coord2Address(e.latLng.getLng(), e.latLng.getLat(), (res, status) => {
     const el = document.getElementById('address-display');
@@ -346,10 +357,7 @@ document.addEventListener('keydown', e => {
   // ✅ Ctrl+S → 보이는 마커/선만 내보내기 (선택된 포맷으로)
   if (e.ctrlKey && e.key.toLowerCase() === 's') {
     e.preventDefault();
-    const format = document.getElementById('exportFormat').value;
-    if (format === 'kmz') exportVisibleKMZ();
-    else if (format === 'gpx') exportVisibleGPX();
-    else if (format === 'csv') exportCSV();
+    exportByFormat();
   }
 });
 
@@ -529,54 +537,10 @@ function addPhotoMarker(latlng, imgSrc, filename) {
     const latlng = marker.getPosition();
     const lat = latlng.getLat();
     const lng = latlng.getLng();
-
-    let originalExifObj = {};
-    try { originalExifObj = piexif.load(img.src); } catch (e) { originalExifObj = {}; }
-
-    const image = new Image();
-    image.onload = () => {
-      const maxWidth = 1600;
-      const scale = image.width > maxWidth ? maxWidth / image.width : 1;
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(image.width * scale);
-      canvas.height = Math.round(image.height * scale);
-      canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(blob => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          const toDMS = val => {
-            const abs = Math.abs(val);
-            const deg = Math.floor(abs);
-            const min = Math.floor((abs - deg) * 60);
-            const sec = (abs - deg - min / 60) * 3600;
-            return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
-          };
-          if (originalExifObj["0th"]) {
-            delete originalExifObj["0th"][piexif.ImageIFD.UserComment];
-            delete originalExifObj["0th"][piexif.ImageIFD.ImageDescription];
-          }
-          if (originalExifObj["Exif"]) delete originalExifObj["Exif"][piexif.ExifIFD.UserComment];
-          if (!originalExifObj["GPS"]) originalExifObj["GPS"] = {};
-          originalExifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
-          originalExifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
-          originalExifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
-          originalExifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
-          const finalDataUrl = piexif.insert(piexif.dump(originalExifObj), reader.result);
-          const a = document.createElement('a');
-          a.href = finalDataUrl;
-          // markers 배열에서 현재 name을 가져와 다운로드 파일명으로 사용 (이름 수정 반영)
-          const currentEntry = markers.find(m => m.marker === marker);
-          const currentName = currentEntry ? currentEntry.name : filename;
-          a.download = (currentName || 'image') + '.jpg';
-          document.body.appendChild(a);
-          a.click();
-          document.body.removeChild(a);
-          isDownloading = false;
-        };
-        reader.readAsDataURL(blob);
-      }, 'image/jpeg', 0.95);
-    };
-    image.src = img.src;
+    const currentEntry = markers.find(m => m.marker === marker);
+    const currentName = currentEntry ? currentEntry.name : filename;
+    await downloadPhotoWithGPS(img.src, currentName, lat, lng);
+    isDownloading = false;
   };
 
   const iw = new kakao.maps.InfoWindow({ content: div });
@@ -688,9 +652,23 @@ function showEditInput(markerObj, label) {
 
 let locationMarkerCount = 0; // 위치 마커 번호 카운터
 
+function copyCoordFromInput(el) {
+  const text = el.value;
+  if (!text) return;
+  navigator.clipboard.writeText(text).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    document.body.removeChild(ta);
+  });
+}
+
 function copyAndMarkLocation() {
-  const lat = document.getElementById('latitude').value;
-  const lng = document.getElementById('longitude').value;
+  const val = document.getElementById('latlng-display').value;
+  if (!val) return;
+  const parts = val.split(',');
+  const lat = parts[0]?.trim();
+  const lng = parts[1]?.trim();
   const addr = document.getElementById('address-display').innerText;
   if (!lat || !lng) return;
   const text = `${lat}\t${lng}\t${addr}`;
@@ -932,8 +910,9 @@ async function exportCSV() {
 
 function exportByFormat() {
   const format = document.getElementById('exportFormat').value;
-  if (format === 'kmz') exportKMZ();
-  else if (format === 'gpx') exportGPX();
+  const area   = document.getElementById('exportArea').value;
+  if (format === 'kmz') { area === 'visible' ? exportVisibleKMZ() : exportKMZ(); }
+  else if (format === 'gpx') { area === 'visible' ? exportVisibleGPX() : exportGPX(); }
   else if (format === 'csv') exportCSV();
 }
 
@@ -1247,10 +1226,10 @@ document.addEventListener('drop', e => {
         // 방식1: positions 배열 { content: '...', latlng: new kakao.maps.LatLng(...) }
         const posMatches = [...html.matchAll(/content:\s*'([^']*)'[\s\S]*?latlng:\s*new\s+kakao\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)];
         posMatches.forEach(m => {
-          // 태그 제거 + 지도보기 링크 제거
-          const rawName = m[1]
-            .replace(/<a\b[^>]*>.*?<\/a>/gi, '') // <a>지도보기</a> 제거
-            .replace(/<[^>]+>/g, '')              // 나머지 태그 제거
+          const rawHtml = m[1];
+          const rawName = rawHtml
+            .replace(/<a\b[^>]*>.*?<\/a>/gi, '')
+            .replace(/<[^>]+>/g, '')
             .trim() || '마커';
           const ll = new kakao.maps.LatLng(parseFloat(m[2]), parseFloat(m[3]));
           bounds.extend(ll);
@@ -1540,9 +1519,11 @@ window.onload = () => {
 // ─── 이미지 압축 (저장 시 500KB 이하) ────────────────
 function compressImage(imgSrc) {
   return new Promise(resolve => {
+    const qVal = parseInt(document.getElementById('photoQuality')?.value ?? '300');
+    if (qVal === 0) { resolve(imgSrc); return; } // 원본 그대로
     const img = new Image();
     img.onload = () => {
-      const TARGET = 300 * 1024;
+      const TARGET = qVal * 1024;
       const canvas = document.createElement('canvas');
       const MAX = 1920;
       let w = img.width, h = img.height;
@@ -1586,8 +1567,80 @@ function downloadCompressedImage(imgSrc, filename, maxWidth = 1600, quality = 0.
   img.src = imgSrc;
 }
 
+// ─── 사진 다운로드 공통 함수 (photoQuality 선택값 적용) ─
+function downloadPhotoWithGPS(imgSrc, name, lat, lng) {
+  return new Promise(resolve => {
+    const qVal = parseInt(document.getElementById('photoQuality')?.value ?? '500');
+
+    const toDMS = val => {
+      const abs = Math.abs(val);
+      const deg = Math.floor(abs);
+      const min = Math.floor((abs - deg) * 60);
+      const sec = (abs - deg - min / 60) * 3600;
+      return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
+    };
+
+    const insertGPS = (dataUrl) => {
+      try {
+        let exif = {};
+        try { exif = piexif.load(dataUrl); } catch(e) {}
+        if (exif["0th"]) {
+          delete exif["0th"][piexif.ImageIFD.UserComment];
+          delete exif["0th"][piexif.ImageIFD.ImageDescription];
+        }
+        if (exif["Exif"]) delete exif["Exif"][piexif.ExifIFD.UserComment];
+        if (!exif["GPS"]) exif["GPS"] = {};
+        exif["GPS"][piexif.GPSIFD.GPSLatitudeRef]  = lat >= 0 ? "N" : "S";
+        exif["GPS"][piexif.GPSIFD.GPSLatitude]     = toDMS(lat);
+        exif["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
+        exif["GPS"][piexif.GPSIFD.GPSLongitude]    = toDMS(lng);
+        return piexif.insert(piexif.dump(exif), dataUrl);
+      } catch(e) { return dataUrl; }
+    };
+
+    const doDownload = (dataUrl) => {
+      const result = insertGPS(dataUrl);
+      const a = document.createElement('a');
+      a.href = result;
+      a.download = (name || 'image') + '.jpg';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(resolve, 300);
+    };
+
+    // 원본: Canvas 없이 EXIF GPS만 삽입해서 저장
+    if (qVal === 0) {
+      doDownload(imgSrc);
+      return;
+    }
+
+    // 용량 압축: Canvas로 리사이즈 + quality 조절
+    const TARGET = qVal * 1024;
+    const image = new Image();
+    image.onload = () => {
+      const MAX = 1920;
+      let w = image.width, h = image.height;
+      if (w > MAX || h > MAX) {
+        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else       { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(image, 0, 0, w, h);
+      let quality = 0.92;
+      let result = canvas.toDataURL('image/jpeg', quality);
+      while (result.length * 0.75 > TARGET && quality > 0.1) {
+        quality = Math.round((quality - 0.05) * 100) / 100;
+        result = canvas.toDataURL('image/jpeg', quality);
+      }
+      doDownload(result);
+    };
+    image.src = imgSrc;
+  });
+}
+
 async function downloadAllPhotos() {
-  // marker, iw 객체 모두 기준으로 중복 제거
   const seenMarkers = new Set();
   const seenIw = new Set();
   const photoMarkers = markers.filter(m => {
@@ -1600,76 +1653,9 @@ async function downloadAllPhotos() {
   });
 
   for (const m of photoMarkers) {
-    await new Promise(resolve => {
-      const iwContent = m.iw.getContent();
-      const img = iwContent.querySelector('img');
-
-      const latlng = m.marker.getPosition();
-      const lat = latlng.getLat();
-      const lng = latlng.getLng();
-
-      // 1. 원본 EXIF 읽기
-      let originalExifObj = {};
-      try { originalExifObj = piexif.load(img.src); } catch (e) { originalExifObj = {}; }
-
-      // 2. 이미지 로드
-      const image = new Image();
-      let downloaded = false;
-      image.addEventListener('load', () => {
-        if (downloaded) { resolve(); return; }
-        downloaded = true;
-        const maxWidth = 1600;
-        const scale = image.width > maxWidth ? maxWidth / image.width : 1;
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(image.width * scale);
-        canvas.height = Math.round(image.height * scale);
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-        canvas.toBlob(blob => {
-          const reader = new FileReader();
-          reader.onloadend = () => {
-            const resizedDataUrl = reader.result;
-
-            const toDMS = val => {
-              const abs = Math.abs(val);
-              const deg = Math.floor(abs);
-              const min = Math.floor((abs - deg) * 60);
-              const sec = (abs - deg - min / 60) * 3600;
-              return [[deg, 1], [min, 1], [Math.round(sec * 100), 100]];
-            };
-
-            if (originalExifObj["0th"]) {
-              delete originalExifObj["0th"][piexif.ImageIFD.UserComment];
-              delete originalExifObj["0th"][piexif.ImageIFD.ImageDescription];
-            }
-            if (originalExifObj["Exif"]) {
-              delete originalExifObj["Exif"][piexif.ExifIFD.UserComment];
-            }
-            if (!originalExifObj["GPS"]) originalExifObj["GPS"] = {};
-            originalExifObj["GPS"][piexif.GPSIFD.GPSLatitudeRef] = lat >= 0 ? "N" : "S";
-            originalExifObj["GPS"][piexif.GPSIFD.GPSLatitude] = toDMS(lat);
-            originalExifObj["GPS"][piexif.GPSIFD.GPSLongitudeRef] = lng >= 0 ? "E" : "W";
-            originalExifObj["GPS"][piexif.GPSIFD.GPSLongitude] = toDMS(lng);
-
-            const exifBytes = piexif.dump(originalExifObj);
-            const finalDataUrl = piexif.insert(exifBytes, resizedDataUrl);
-
-            const a = document.createElement('a');
-            a.href = finalDataUrl;
-            a.download = (m.name || 'image') + '.jpg';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-
-            // 다음 사진으로 넘어가기 전 잠깐 대기
-            setTimeout(resolve, 300);
-          };
-          reader.readAsDataURL(blob);
-        }, 'image/jpeg', 0.95);
-      });
-      image.src = img.src;
-    });
+    const img = m.iw.getContent().querySelector('img');
+    const latlng = m.marker.getPosition();
+    await downloadPhotoWithGPS(img.src, m.name, latlng.getLat(), latlng.getLng());
   }
 }
 </script>
