@@ -64,17 +64,16 @@
   <div class="controls">
     <input id="latlng-display" readonly style="width:220px;font-size:12px;cursor:pointer;" title="클릭하여 복사" onclick="copyCoordFromInput(this)">
     <button type="button" onclick="window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes')" title="도움말 (F1)">❓ 도움말</button>
-    <select id="photoQuality" style="padding:5px;" title="사진 저장 용량">
-      <option value="300">사진 300KB↓</option>
-      <option value="500" selected>사진 500KB↓</option>
+    <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
+    <button type="button" onclick="resetPolylines()">선 초기화</button>
+    <button type="button" onclick="resetAll()">화면 초기화</button>
+    <select id="photoQuality" style="padding:5px;" title="사진 저장 용량" onchange="savePhotoQuality(this.value)">
+      <option value="300" selected>사진 300KB↓</option>
+      <option value="500">사진 500KB↓</option>
       <option value="800">사진 800KB↓</option>
       <option value="1024">사진 1MB↓</option>
       <option value="0">사진 원본</option>
     </select>
-    <button type="button" onclick="downloadAllPhotos()">📸 사진 다운로드</button>
-    <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
-    <button type="button" onclick="resetPolylines()">선 초기화</button>
-    <button type="button" onclick="resetAll()">화면 초기화</button>
     <select id="exportFormat" style="padding:5px;">
       <option value="kmz">KMZ 내보내기</option>
       <option value="gpx">GPX 내보내기</option>
@@ -85,6 +84,7 @@
       <option value="visible">현재 영역</option>
     </select>
     <button type="button" onclick="exportByFormat()">💾 저장</button>
+    <button type="button" onclick="downloadAllPhotos()">📸 사진 다운로드</button>
   </div>
   <div id="map"></div>
 
@@ -175,6 +175,7 @@ function initializeMap(center) {
   }, 500);
   window.map = map;
   geocoder = new kakao.maps.services.Geocoder();
+  restorePhotoQuality(); // 저장된 사진 용량 설정 복원
 
 kakao.maps.event.addListener(map, 'click', e => {
   if (markerInputOverlay) {
@@ -651,6 +652,20 @@ function showEditInput(markerObj, label) {
 
 
 let locationMarkerCount = 0; // 위치 마커 번호 카운터
+
+function savePhotoQuality(val) {
+  try { localStorage.setItem('photoQuality', val); } catch(e) {}
+}
+
+function restorePhotoQuality() {
+  try {
+    const saved = localStorage.getItem('photoQuality');
+    if (saved !== null) {
+      const sel = document.getElementById('photoQuality');
+      if (sel) sel.value = saved;
+    }
+  } catch(e) {}
+}
 
 function copyCoordFromInput(el) {
   const text = el.value;
