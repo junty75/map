@@ -5,369 +5,453 @@
   <title>KMZ & 사진 지도 (v1.0)</title>
   <script src="https://cdn.jsdelivr.net/npm/ol@9.2.4/dist/ol.js"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/ol@9.2.4/dist/ol.css">
+  <style>
+    .ol-map { width:100%; height:100%; }
+    .ol-zoom { display:none !important; }
+    .ol-attribution { bottom:4px !important; right:4px !important; font-size:10px; }
+    .vw-type-ctrl { position:absolute; top:10px; right:10px; z-index:1000; padding:5px 8px; border-radius:6px; border:1px solid #ccc; background:white; font-size:13px; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.2); }
+    .kakao-iw { background:white; border-radius:8px; padding:8px 28px 8px 10px; box-shadow:0 2px 8px rgba(0,0,0,0.3); min-width:80px; position:relative; white-space:nowrap; }
+    .kakao-iw-close { position:absolute; top:4px; right:6px; cursor:pointer; color:#999; font-size:13px; line-height:1; }
+    .kakao-overlay { pointer-events:auto; }
+  </style>
   <script>
-  // ── v월드 + OpenLayers 카카오맵 호환 레이어 ──────────────────
+  // ════════════════════════════════════════════════════════════
+  //  v월드 + OpenLayers  ↔  카카오맵 호환 레이어 v2
+  //  API Key: 58F6D8A1-7DF7-3DF7-95C7-75A441DC576C
+  // ════════════════════════════════════════════════════════════
   const VWORLD_KEY = '58F6D8A1-7DF7-3DF7-95C7-75A441DC576C';
+  let _olMap = null; // 전역 ol.Map 인스턴스
 
-  // 좌표 변환 유틸
-  function toLonLat(lat, lng) { return ol.proj.fromLonLat([lng, lat]); }
-  function fromLonLat(coord) { const ll = ol.proj.toLonLat(coord); return { lat: ll[1], lng: ll[0] }; }
+  // ── 좌표 변환 ─────────────────────────────────────────────
+  function _toOl(lat, lng)  { return ol.proj.fromLonLat([lng, lat]); }
+  function _fromOl(coord)   { const ll = ol.proj.toLonLat(coord); return [ll[1], ll[0]]; }
 
-  // ── kakao 네임스페이스 호환 ──────────────────────────────────
-  const kakao = {
-    maps: {
-      // LatLng
-      LatLng: function(lat, lng) {
-        this._lat = lat; this._lng = lng;
-        this.getLat = () => this._lat;
-        this.getLng = () => this._lng;
-        this.toCoord = () => toLonLat(lat, lng);
+  // ── LatLng ────────────────────────────────────────────────
+  function VLatLng(lat, lng) {
+    if (!(this instanceof VLatLng)) return new VLatLng(lat, lng);
+    this._lat = +lat; this._lng = +lng;
+  }
+  VLatLng.prototype.getLat = function() { return this._lat; };
+  VLatLng.prototype.getLng = function() { return this._lng; };
+  VLatLng.prototype._toOl  = function() { return _toOl(this._lat, this._lng); };
+
+  // ── LatLngBounds ──────────────────────────────────────────
+  function VLatLngBounds() {
+    if (!(this instanceof VLatLngBounds)) return new VLatLngBounds();
+    this._pts = [];
+  }
+  VLatLngBounds.prototype.extend   = function(ll) { this._pts.push([ll._lng, ll._lat]); };
+  VLatLngBounds.prototype.isEmpty  = function()   { return this._pts.length === 0; };
+  VLatLngBounds.prototype.contain  = function(ll) {
+    if (this._pts.length < 2) return false;
+    const lngs = this._pts.map(p=>p[0]), lats = this._pts.map(p=>p[1]);
+    return ll._lng >= Math.min(...lngs) && ll._lng <= Math.max(...lngs) &&
+           ll._lat >= Math.min(...lats) && ll._lat <= Math.max(...lats);
+  };
+  VLatLngBounds.prototype._extent  = function() {
+    const lngs = this._pts.map(p=>p[0]), lats = this._pts.map(p=>p[1]);
+    return ol.proj.transformExtent(
+      [Math.min(...lngs), Math.min(...lats), Math.max(...lngs), Math.max(...lats)],
+      'EPSG:4326', 'EPSG:3857'
+    );
+  };
+
+  // ── Map ───────────────────────────────────────────────────
+  function VMap(el, opts) {
+    if (!(this instanceof VMap)) return new VMap(el, opts);
+    const center = opts.center ? opts.center._toOl() : _toOl(35.9, 127.5);
+    const zoom   = opts.level  ? 19 - opts.level : 14;
+
+    const WMTS = (layer, ext) => new ol.layer.Tile({
+      source: new ol.source.XYZ({
+        url: `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/${layer}/{z}/{x}/{y}.${ext}`,
+        maxZoom: 19, crossOrigin: 'anonymous'
+      }), visible: false
+    });
+
+    this._layers = {
+      Base:      WMTS('Base',      'png'),
+      Satellite: WMTS('Satellite', 'jpeg'),
+      Hybrid:    WMTS('Hybrid',    'png'),
+      Gray:      WMTS('gray',      'png'),
+    };
+
+    this._vectorSrc = new ol.source.Vector();
+    this._vectorLayer = new ol.layer.Vector({
+      source: this._vectorSrc, zIndex: 10,
+      style: f => f._style || null
+    });
+
+    this._ol = new ol.Map({
+      target: el,
+      layers: [...Object.values(this._layers), this._vectorLayer],
+      view: new ol.View({ center, zoom, projection: 'EPSG:3857', minZoom: 2, maxZoom: 19 }),
+      controls: ol.control.defaults({ zoom: true, rotate: false }),
+    });
+    _olMap = this._ol;
+
+    // 기본 지도 타입 = Hybrid (Satellite + Hybrid 레이어)
+    this._setType('Hybrid');
+
+    // 지도 타입 선택기
+    const sel = document.createElement('select');
+    sel.className = 'vw-type-ctrl';
+    sel.innerHTML = '<option value="Base">일반지도</option><option value="Satellite">위성영상</option><option value="Hybrid" selected>하이브리드</option><option value="Gray">백지도</option>';
+    sel.onchange = (e) => this._setType(e.target.value);
+    el.style.position = 'relative';
+    el.appendChild(sel);
+
+    // map 크기 갱신
+    setTimeout(() => this._ol.updateSize(), 100);
+  }
+
+  VMap.prototype._setType = function(type) {
+    Object.keys(this._layers).forEach(k => {
+      if (type === 'Hybrid') {
+        this._layers[k].setVisible(k === 'Satellite' || k === 'Hybrid');
+      } else {
+        this._layers[k].setVisible(k === type);
+      }
+    });
+  };
+  VMap.prototype.getCenter   = function() {
+    const ll = _fromOl(this._ol.getView().getCenter());
+    return new VLatLng(ll[0], ll[1]);
+  };
+  VMap.prototype.setCenter   = function(ll) { this._ol.getView().setCenter(ll._toOl()); };
+  VMap.prototype.panTo       = function(ll) { this._ol.getView().animate({ center: ll._toOl(), duration: 300 }); };
+  VMap.prototype.getLevel    = function()   { return Math.max(1, 19 - Math.round(this._ol.getView().getZoom())); };
+  VMap.prototype.setLevel    = function(lv) { this._ol.getView().setZoom(19 - lv); };
+  VMap.prototype.getBounds   = function()   {
+    const ext = this._ol.getView().calculateExtent(this._ol.getSize());
+    const ll = ol.proj.transformExtent(ext, 'EPSG:3857', 'EPSG:4326');
+    const b = new VLatLngBounds();
+    b._pts = [[ll[0],ll[1]],[ll[2],ll[3]]];
+    return b;
+  };
+  VMap.prototype.setBounds   = function(bounds) {
+    if (!bounds || bounds.isEmpty()) return;
+    this._ol.getView().fit(bounds._extent(), { padding:[60,60,60,60], maxZoom:17, duration:300 });
+  };
+  VMap.prototype.addOverlay    = function(ov) { this._ol.addOverlay(ov); };
+  VMap.prototype.removeOverlay = function(ov) { this._ol.removeOverlay(ov); };
+  VMap.prototype.addLayer      = function(l)  { this._ol.addLayer(l); };
+  VMap.prototype.getViewport   = function()   { return this._ol.getViewport(); };
+  VMap.prototype.getProjection = function() {
+    const self = this;
+    return {
+      pointFromCoords: function(ll) {
+        const px = self._ol.getPixelFromCoordinate(ll._toOl());
+        return px ? { x: px[0], y: px[1] } : { x:0, y:0 };
       },
-      // LatLngBounds
-      LatLngBounds: function() {
-        this._coords = [];
-        this.extend = (ll) => { this._coords.push([ll._lng, ll._lat]); };
-        this.isEmpty = () => this._coords.length === 0;
-        this.toExtent = function() {
-          const lngs = this._coords.map(c=>c[0]), lats = this._coords.map(c=>c[1]);
-          return ol.proj.transformExtent(
-            [Math.min(...lngs),Math.min(...lats),Math.max(...lngs),Math.max(...lats)],
-            'EPSG:4326','EPSG:3857'
-          );
-        };
-      },
-      // Map
-      Map: function(el, opts) {
-        const center = opts.center ? toLonLat(opts.center._lat, opts.center._lng) : ol.proj.fromLonLat([127.5,35.9]);
-        const zoom = opts.level ? Math.max(1, 19 - opts.level) : 14;
+      coordsFromPoint: function(pt) {
+        const coord = self._ol.getCoordinateFromPixel([pt.x, pt.y]);
+        if (!coord) return new VLatLng(0,0);
+        const ll = _fromOl(coord);
+        return new VLatLng(ll[0], ll[1]);
+      }
+    };
+  };
+  VMap.prototype.getSize       = function() { return this._ol.getSize(); };
+  VMap.prototype.updateSize    = function() { this._ol.updateSize(); };
+  VMap.prototype.getPixelFromCoordinate = function(coord) { return this._ol.getPixelFromCoordinate(coord); };
+  VMap.prototype.getCoordinateFromPixel = function(px)    { return this._ol.getCoordinateFromPixel(px); };
 
-        const layers = {
-          Base: new ol.layer.Tile({ source: new ol.source.XYZ({
-            url: `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{x}/{y}.png`,
-            maxZoom: 19
-          })}),
-          Satellite: new ol.layer.Tile({ source: new ol.source.XYZ({
-            url: `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Satellite/{z}/{x}/{y}.jpeg`,
-            maxZoom: 19
-          }), visible: false }),
-          Hybrid: new ol.layer.Tile({ source: new ol.source.XYZ({
-            url: `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Hybrid/{z}/{x}/{y}.png`,
-            maxZoom: 19
-          }), visible: false }),
-          Gray: new ol.layer.Tile({ source: new ol.source.XYZ({
-            url: `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/gray/{z}/{x}/{y}.png`,
-            maxZoom: 19
-          }), visible: false }),
-        };
+  // ── Marker ────────────────────────────────────────────────
+  function VMarker(opts) {
+    if (!(this instanceof VMarker)) return new VMarker(opts);
+    this._ll   = opts.position;
+    this._map  = null;
+    const el   = document.createElement('div');
+    el.style.cssText = 'width:28px;height:38px;cursor:pointer;';
+    el.innerHTML = '<svg viewBox="0 0 28 38" xmlns="http://www.w3.org/2000/svg"><path d="M14 0C6.3 0 0 6.3 0 14c0 9.5 14 24 14 24S28 23.5 28 14C28 6.3 21.7 0 14 0z" fill="#e53935"/><circle cx="14" cy="14" r="5" fill="white"/></svg>';
+    this._el   = el;
+    this._ov   = new ol.Overlay({ element: el, positioning: 'bottom-center', stopEvent: false });
+    this._ov.setPosition(this._ll._toOl());
+    if (opts.map) this.setMap(opts.map);
+  }
+  VMarker.prototype.setMap = function(m) {
+    if (this._map) this._map.removeOverlay(this._ov);
+    this._map = m;
+    if (m) m.addOverlay(this._ov);
+  };
+  VMarker.prototype.getMap      = function() { return this._map; };
+  VMarker.prototype.getPosition = function() { return this._ll; };
+  VMarker.prototype.setPosition = function(ll) {
+    this._ll = ll; this._ov.setPosition(ll._toOl());
+  };
+  VMarker.prototype.setDraggable = function(draggable) {
+    const self = this;
+    if (!draggable) { this._el.style.cursor = 'pointer'; return; }
+    this._el.style.cursor = 'grab';
+    let dragging = false, startPx, startCoord;
+    this._el.addEventListener('mousedown', e => {
+      dragging = true; startPx = [e.clientX, e.clientY];
+      startCoord = self._ov.getPosition();
+      e.preventDefault(); e.stopPropagation();
+    });
+    document.addEventListener('mousemove', e => {
+      if (!dragging || !self._map) return;
+      const rect = self._map.getViewport().getBoundingClientRect();
+      const px = [e.clientX - rect.left, e.clientY - rect.top];
+      const coord = self._map.getCoordinateFromPixel(px);
+      if (coord) { self._ov.setPosition(coord); const ll = _fromOl(coord); self._ll = new VLatLng(ll[0], ll[1]); }
+    });
+    document.addEventListener('mouseup', e => {
+      if (dragging) {
+        dragging = false;
+        self._el.dispatchEvent(new CustomEvent('_position_changed'));
+      }
+    });
+    // 터치
+    this._el.addEventListener('touchstart', e => {
+      dragging = true; startPx = [e.touches[0].clientX, e.touches[0].clientY];
+      startCoord = self._ov.getPosition(); e.preventDefault();
+    }, { passive: false });
+    document.addEventListener('touchmove', e => {
+      if (!dragging || !self._map) return;
+      const rect = self._map.getViewport().getBoundingClientRect();
+      const px = [e.touches[0].clientX - rect.left, e.touches[0].clientY - rect.top];
+      const coord = self._map.getCoordinateFromPixel(px);
+      if (coord) { self._ov.setPosition(coord); const ll = _fromOl(coord); self._ll = new VLatLng(ll[0], ll[1]); }
+    }, { passive: true });
+    document.addEventListener('touchend', e => {
+      if (dragging) { dragging = false; self._el.dispatchEvent(new CustomEvent('_position_changed')); }
+    });
+  };
 
-        const olMap = new ol.Map({
-          target: el,
-          layers: [layers.Base, layers.Satellite, layers.Hybrid, layers.Gray],
-          view: new ol.View({ center, zoom, projection: 'EPSG:3857' }),
-          controls: []
-        });
+  // ── Polyline ──────────────────────────────────────────────
+  function VPolyline(opts) {
+    if (!(this instanceof VPolyline)) return new VPolyline(opts);
+    this._map  = null;
+    this._path = opts.path || [];
+    this._feature = new ol.Feature();
+    this._style = new ol.style.Style({ stroke: new ol.style.Stroke({
+      color: opts.strokeColor || '#FF5733',
+      width: opts.strokeWeight || 3,
+      opacity: opts.strokeOpacity !== undefined ? opts.strokeOpacity : 0.9
+    })});
+    this._feature.setStyle(this._style);
+    this._feature._vPolyline = this;
+    if (this._path.length >= 2) this._updateGeom();
+    if (opts.map) this.setMap(opts.map);
+  }
+  VPolyline.prototype._updateGeom = function() {
+    this._feature.setGeometry(new ol.geom.LineString(this._path.map(ll => ll._toOl())));
+  };
+  VPolyline.prototype.setPath = function(path) {
+    this._path = path || [];
+    if (this._path.length >= 2) this._updateGeom();
+    else this._feature.setGeometry(null);
+  };
+  VPolyline.prototype.getPath   = function() { return [...this._path]; };
+  VPolyline.prototype.getLength = function() {
+    const g = this._feature.getGeometry();
+    return g ? ol.sphere.getLength(g) : 0;
+  };
+  VPolyline.prototype.setMap = function(m) {
+    if (this._map) this._map._vectorSrc.removeFeature(this._feature);
+    this._map = m;
+    if (m) m._vectorSrc.addFeature(this._feature);
+  };
+  VPolyline.prototype.getMap = function() { return this._map; };
 
-        // 마커/오버레이 레이어
-        const markerSource = new ol.source.Vector();
-        const markerLayer = new ol.layer.Vector({ source: markerSource, zIndex: 10 });
-        olMap.addLayer(markerLayer);
-        olMap._markerSource = markerSource;
+  // ── CustomOverlay ─────────────────────────────────────────
+  function VCustomOverlay(opts) {
+    if (!(this instanceof VCustomOverlay)) return new VCustomOverlay(opts);
+    let el;
+    if (typeof opts.content === 'string') {
+      el = document.createElement('div');
+      el.className = 'kakao-overlay';
+      el.innerHTML = opts.content;
+    } else {
+      el = opts.content;
+    }
+    this._el = el;
+    this._map = null;
+    this._ov = new ol.Overlay({ element: el, positioning: opts.yAnchor ? 'bottom-center' : 'top-left', stopEvent: true, offset: [0, opts.yAnchor ? -4 : 0] });
+    if (opts.position) this._ov.setPosition(opts.position._toOl());
+    if (opts.map) this.setMap(opts.map);
+  }
+  VCustomOverlay.prototype.setMap      = function(m) {
+    if (this._map) this._map.removeOverlay(this._ov);
+    this._map = m;
+    if (m) m.addOverlay(this._ov);
+  };
+  VCustomOverlay.prototype.getMap      = function() { return this._map; };
+  VCustomOverlay.prototype.setPosition = function(ll) { this._ov.setPosition(ll ? ll._toOl() : undefined); };
+  VCustomOverlay.prototype.setContent  = function(c)  { this._el.innerHTML = typeof c === 'string' ? c : ''; };
+  VCustomOverlay.prototype.getContent  = function()   { return this._el; };
 
-        // 지도 타입 선택기 추가
-        const typeCtrl = document.createElement('select');
-        typeCtrl.style.cssText = 'position:absolute;top:10px;right:10px;z-index:1000;padding:5px 8px;border-radius:6px;border:1px solid #ccc;background:white;font-size:13px;cursor:pointer;';
-        typeCtrl.innerHTML = '<option value="Base">일반지도</option><option value="Satellite">위성영상</option><option value="Hybrid" selected>하이브리드</option><option value="Gray">백지도</option>';
-        typeCtrl.onchange = function() {
-          Object.keys(layers).forEach(k => layers[k].setVisible(k === this.value || (this.value === 'Hybrid' && k === 'Satellite')));
-          if (this.value === 'Hybrid') { layers.Satellite.setVisible(true); layers.Hybrid.setVisible(true); }
-        };
-        // 초기: Hybrid = Satellite + Hybrid 레이어
-        layers.Satellite.setVisible(true);
-        layers.Hybrid.setVisible(true);
-        el.style.position = 'relative';
-        el.appendChild(typeCtrl);
+  // ── InfoWindow ────────────────────────────────────────────
+  function VInfoWindow(opts) {
+    if (!(this instanceof VInfoWindow)) return new VInfoWindow(opts);
+    this._el = document.createElement('div');
+    this._el.className = 'kakao-iw';
+    if (typeof opts.content === 'string') this._el.innerHTML = opts.content;
+    else if (opts.content) this._el.appendChild(opts.content);
+    if (opts.removable) {
+      const btn = document.createElement('span');
+      btn.className = 'kakao-iw-close'; btn.innerHTML = '✕';
+      btn.onclick = () => this.close();
+      this._el.appendChild(btn);
+    }
+    this._ov  = new ol.Overlay({ element: this._el, positioning: 'bottom-center', stopEvent: true, offset: [0, -38] });
+    this._map = null;
+  }
+  VInfoWindow.prototype.open       = function(m, marker) {
+    this._map = m;
+    if (marker && marker._ov) this._ov.setPosition(marker._ov.getPosition());
+    m.addOverlay(this._ov);
+  };
+  VInfoWindow.prototype.close      = function() { if (this._map) { this._map.removeOverlay(this._ov); } };
+  VInfoWindow.prototype.getContent = function() { return this._el; };
+  VInfoWindow.prototype.setContent = function(c) { if (typeof c === 'string') this._el.innerHTML = c; };
 
-        // getCenter
-        olMap.getCenter = function() {
-          const c = olMap.getView().getCenter();
-          const ll = ol.proj.toLonLat(c);
-          return new kakao.maps.LatLng(ll[1], ll[0]);
-        };
-        // setCenter
-        olMap.setCenter = function(latlng) {
-          olMap.getView().setCenter(toLonLat(latlng._lat, latlng._lng));
-        };
-        // panTo
-        olMap.panTo = olMap.setCenter;
-        // getLevel / setLevel
-        olMap.getLevel = function() { return Math.max(1, 19 - Math.round(olMap.getView().getZoom())); };
-        olMap.setLevel = function(lvl) { olMap.getView().setZoom(19 - lvl); };
-        // setBounds
-        olMap.setBounds = function(bounds) {
-          if (!bounds || bounds.isEmpty()) return;
-          olMap.getView().fit(bounds.toExtent(), { padding:[60,60,60,60], maxZoom:17, duration:300 });
-        };
-        // getProjection (픽셀↔좌표 변환용)
-        olMap.getProjection = function() {
-          return {
-            pointFromCoords: (ll) => {
-              const px = olMap.getPixelFromCoordinate(toLonLat(ll._lat, ll._lng));
-              return { x: px ? px[0] : 0, y: px ? px[1] : 0 };
-            },
-            coordsFromPoint: (pt) => {
-              const coord = olMap.getCoordinateFromPixel([pt.x, pt.y]);
-              const ll = ol.proj.toLonLat(coord);
-              return new kakao.maps.LatLng(ll[1], ll[0]);
+  // ── event ─────────────────────────────────────────────────
+  const VEvent = {
+    addListener: function(target, type, handler) {
+      if (!target || !type || !handler) return;
+
+      if (target instanceof VMap) {
+        const ol_ = target._ol;
+        if (type === 'click') {
+          ol_.on('click', function(e) {
+            if (ol_.forEachFeatureAtPixel(e.pixel, () => true, { hitTolerance: 6 })) return;
+            if (ol_.forEachOverlayAtPixel) {
+              // 마커 위 클릭이면 무시는 마커 이벤트가 처리
             }
-          };
-        };
-        // 이벤트
-        olMap._listeners = {};
-        return olMap;
-      },
-      // Marker
-      Marker: function(opts) {
-        const latlng = opts.position;
-        const el = document.createElement('div');
-        el.style.cssText = 'width:30px;height:40px;cursor:pointer;';
-        el.innerHTML = `<svg viewBox="0 0 30 40" xmlns="http://www.w3.org/2000/svg"><path d="M15 0C7 0 0 7 0 15c0 10 15 25 15 25S30 25 30 15C30 7 23 0 15 0z" fill="#FF4444"/><circle cx="15" cy="15" r="6" fill="white"/></svg>`;
-        const overlay = new ol.Overlay({ element: el, positioning: 'bottom-center', stopEvent: false });
-        overlay.setPosition(toLonLat(latlng._lat, latlng._lng));
-        overlay._latlng = latlng;
-        overlay._el = el;
-        overlay.getPosition2 = () => overlay._latlng;
-        overlay.getPosition3 = () => {
-          const p = overlay.getPosition3();
-          const ll = ol.proj.toLonLat(p);
-          return new kakao.maps.LatLng(ll[1], ll[0]);
-        };
-        overlay.setMap = function(m) {
-          if (m) { m.addOverlay(overlay); overlay._map = m; }
-          else { if (overlay._map) overlay._map.removeOverlay(overlay); overlay._map = null; }
-        };
-        overlay.getMap = function() { return overlay._map || null; };
-        overlay.setPosition2 = function(latlng) {
-          overlay._latlng = latlng;
-          overlay.setPosition(toLonLat(latlng._lat, latlng._lng));
-        };
-        overlay.setDraggable = function(v) {
-          if (!v) return;
-          let dragging = false, startPx, startCoord;
-          el.addEventListener('mousedown', e => {
-            dragging = true; startPx = [e.clientX, e.clientY];
-            startCoord = overlay.getPosition3();
+            const ll = _fromOl(e.coordinate);
+            handler({ latLng: new VLatLng(ll[0], ll[1]), clientX: e.originalEvent?.clientX, clientY: e.originalEvent?.clientY });
+          });
+        } else if (type === 'rightclick') {
+          target.getViewport().addEventListener('contextmenu', function(e) {
             e.preventDefault();
-          });
-          document.addEventListener('mousemove', e => {
-            if (!dragging) return;
-            const dx = e.clientX - startPx[0], dy = e.clientY - startPx[1];
-            const newPx = overlay._map.getPixelFromCoordinate(startCoord);
-            const newCoord = overlay._map.getCoordinateFromPixel([newPx[0]+dx, newPx[1]+dy]);
-            overlay.setPosition(newCoord);
-            const ll = ol.proj.toLonLat(newCoord);
-            overlay._latlng = new kakao.maps.LatLng(ll[1], ll[0]);
-          });
-          document.addEventListener('mouseup', () => {
-            if (dragging) {
-              dragging = false;
-              overlay._el.dispatchEvent(new CustomEvent('position_changed'));
+            const px = ol_.getEventPixel(e);
+            const coord = ol_.getCoordinateFromPixel(px);
+            if (!coord) return;
+            // 폴리라인 우클릭 먼저 확인
+            let handled = false;
+            ol_.forEachFeatureAtPixel(px, function(f) {
+              if (handled) return true;
+              if (f._vPolyline && f._rcHandlers) {
+                f._rcHandlers.forEach(h => h({ latLng: new VLatLng(_fromOl(coord)[0], _fromOl(coord)[1]), clientX: e.clientX, clientY: e.clientY }));
+                handled = true; return true;
+              }
+            }, { hitTolerance: 8 });
+            if (!handled) {
+              const ll = _fromOl(coord);
+              handler({ latLng: new VLatLng(ll[0], ll[1]), clientX: e.clientX, clientY: e.clientY });
             }
           });
-        };
-        if (opts.map) overlay.setMap(opts.map);
-        return overlay;
-      },
-      // Polyline
-      Polyline: function(opts) {
-        const feature = new ol.Feature();
-        const style = new ol.style.Style({
-          stroke: new ol.style.Stroke({
-            color: opts.strokeColor || '#FF5733',
-            width: opts.strokeWeight || 3,
-            opacity: opts.strokeOpacity || 0.9
-          })
-        });
-        feature.setStyle(style);
-        feature._map = null;
-        feature._source = null;
+        } else if (type === 'mousemove') {
+          ol_.on('pointermove', function(e) {
+            const ll = _fromOl(e.coordinate);
+            handler({ latLng: new VLatLng(ll[0], ll[1]), clientX: e.originalEvent?.clientX, clientY: e.originalEvent?.clientY });
+          });
+        } else if (type === 'zoom_changed') {
+          ol_.getView().on('change:resolution', handler);
+        }
 
-        if (opts.path && opts.path.length) {
-          feature.setGeometry(new ol.geom.LineString(
-            opts.path.map(ll => toLonLat(ll._lat, ll._lng))
-          ));
+      } else if (target instanceof VMarker) {
+        if (type === 'click') {
+          target._el.addEventListener('click', function(e) {
+            e.stopPropagation();
+            handler({ latLng: target._ll });
+          });
+        } else if (type === 'rightclick') {
+          target._el.addEventListener('contextmenu', function(e) {
+            e.preventDefault(); e.stopPropagation();
+            handler({ latLng: target._ll, clientX: e.clientX, clientY: e.clientY });
+          });
+        } else if (type === 'position_changed') {
+          target._el.addEventListener('_position_changed', handler);
+        } else if (type === 'touchstart') {
+          target._el.addEventListener('touchstart', handler, { passive: false });
+        } else if (type === 'touchend') {
+          target._el.addEventListener('touchend', handler);
+        } else if (type === 'touchmove') {
+          target._el.addEventListener('touchmove', handler, { passive: false });
         }
-        feature.setPath = function(path) {
-          if (!path || path.length < 2) { feature.setGeometry(null); return; }
-          feature.setGeometry(new ol.geom.LineString(path.map(ll => toLonLat(ll._lat, ll._lng))));
-        };
-        feature.getPath = function() {
-          const geom = feature.getGeometry();
-          if (!geom) return [];
-          return geom.getCoordinates().map(c => { const ll = ol.proj.toLonLat(c); return new kakao.maps.LatLng(ll[1], ll[0]); });
-        };
-        feature.getLength = function() {
-          const geom = feature.getGeometry();
-          if (!geom) return 0;
-          return ol.sphere.getLength(geom);
-        };
-        feature.setMap = function(m) {
-          if (feature._source) { feature._source.removeFeature(feature); feature._source = null; }
-          if (m) { m._markerSource.addFeature(feature); feature._source = m._markerSource; feature._map = m; }
-          else { feature._map = null; }
-        };
-        feature.getMap = function() { return feature._map; };
-        if (opts.map) feature.setMap(opts.map);
-        return feature;
-      },
-      // CustomOverlay
-      CustomOverlay: function(opts) {
-        const el = typeof opts.content === 'string' ? (() => { const d = document.createElement('div'); d.innerHTML = opts.content; return d; })() : opts.content;
-        const overlay = new ol.Overlay({ element: el, positioning: opts.yAnchor ? 'bottom-center' : 'top-left', stopEvent: true });
-        overlay.setMap = function(m) {
-          if (m) { m.addOverlay(overlay); overlay._map = m; }
-          else { if (overlay._map) overlay._map.removeOverlay(overlay); overlay._map = null; }
-        };
-        overlay.getMap = function() { return overlay._map || null; };
-        overlay.setPosition2 = function(latlng) { overlay.setPosition(toLonLat(latlng._lat, latlng._lng)); };
-        overlay.setContent = function(c) { el.innerHTML = typeof c === 'string' ? c : ''; };
-        overlay.getContent = function() { return el; };
-        if (opts.position) overlay.setPosition(toLonLat(opts.position._lat, opts.position._lng));
-        if (opts.map) overlay.setMap(opts.map);
-        return overlay;
-      },
-      // InfoWindow
-      InfoWindow: function(opts) {
-        const content = typeof opts.content === 'string' ? (() => { const d = document.createElement('div'); d.innerHTML = opts.content; d.style.cssText='background:white;border-radius:8px;padding:8px 10px;box-shadow:0 2px 8px rgba(0,0,0,0.3);min-width:100px;position:relative;'; return d; })() : opts.content;
-        // 닫기 버튼
-        if (opts.removable) {
-          const btn = document.createElement('span');
-          btn.textContent = '✕'; btn.style.cssText = 'position:absolute;top:4px;right:6px;cursor:pointer;color:#999;font-size:12px;';
-          btn.onclick = () => overlay.close();
-          content.appendChild(btn);
+
+      } else if (target instanceof VPolyline) {
+        if (type === 'rightclick') {
+          if (!target._feature._rcHandlers) target._feature._rcHandlers = [];
+          target._feature._rcHandlers.push(handler);
+        } else if (type === 'mouseover') {
+          if (!target._feature._moHandlers) target._feature._moHandlers = [];
+          target._feature._moHandlers.push(handler);
+        } else if (type === 'touchstart') {
+          // 폴리라인 터치: 맵 이벤트로 처리
         }
-        const overlay = new ol.Overlay({ element: content, positioning: 'bottom-center', stopEvent: true, offset: [0, -10] });
-        overlay._map = null;
-        overlay._marker = null;
-        overlay.open = function(m, marker) {
-          overlay._map = m; overlay._marker = marker;
-          const pos = marker ? marker.getPosition3() : null;
-          if (pos) overlay.setPosition(pos);
-          m.addOverlay(overlay);
-        };
-        overlay.close = function() { if (overlay._map) overlay._map.removeOverlay(overlay); };
-        overlay.getContent = function() { return content; };
-        overlay.setContent2 = function(c) { if (typeof c === 'string') content.innerHTML = c; };
-        return overlay;
-      },
-      // event
-      event: {
-        addListener: function(target, type, handler) {
-          if (!target || !type) return;
-          if (target instanceof ol.Map) {
-            if (type === 'click') {
-              target.on('click', function(e) {
-                const ll = ol.proj.toLonLat(e.coordinate);
-                const latlng = new kakao.maps.LatLng(ll[1], ll[0]);
-                handler({ latLng: latlng, clientX: e.originalEvent?.clientX, clientY: e.originalEvent?.clientY });
-              });
-            } else if (type === 'rightclick') {
-              target.getViewport().addEventListener('contextmenu', function(e) {
-                e.preventDefault();
-                const px = target.getEventPixel(e);
-                const coord = target.getCoordinateFromPixel(px);
-                const ll = ol.proj.toLonLat(coord);
-                handler({ latLng: new kakao.maps.LatLng(ll[1], ll[0]), clientX: e.clientX, clientY: e.clientY });
-              });
-            } else if (type === 'mousemove') {
-              target.on('pointermove', function(e) {
-                const ll = ol.proj.toLonLat(e.coordinate);
-                handler({ latLng: new kakao.maps.LatLng(ll[1], ll[0]), clientX: e.originalEvent?.clientX, clientY: e.originalEvent?.clientY });
-              });
-            } else if (type === 'zoom_changed') {
-              target.getView().on('change:resolution', handler);
-            }
-          } else if (target._el) {
-            // Marker overlay
-            if (type === 'click') {
-              target._el.addEventListener('click', function(e) {
-                e.stopPropagation();
-                handler({ latLng: target._latlng });
-              });
-            } else if (type === 'rightclick') {
-              target._el.addEventListener('contextmenu', function(e) {
-                e.preventDefault(); e.stopPropagation();
-                handler({ latLng: target._latlng, clientX: e.clientX, clientY: e.clientY });
-              });
-            } else if (type === 'position_changed') {
-              target._el.addEventListener('position_changed', handler);
-            }
-          } else if (target instanceof ol.Feature) {
-            // Polyline feature
-            if (type === 'rightclick' && target._source) {
-              // handled via map rightclick
-              if (!target._rcHandlers) target._rcHandlers = [];
-              target._rcHandlers.push(handler);
-            }
-          }
-        }
-      },
-      // MapTypeId (더미)
-      MapTypeId: { HYBRID: 'Hybrid', ROADMAP: 'Base', SATELLITE: 'Satellite' },
-      // services
-      services: {
-        Status: { OK: 'OK' },
-        Geocoder: function() {
-          this.coord2Address = function(lng, lat, callback) {
-            fetch(`https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point=${lng},${lat}&format=json&type=both&key=${VWORLD_KEY}`)
-              .then(r => r.json())
-              .then(data => {
-                if (data.response?.status === 'OK' && data.response?.result?.length) {
-                  const addr = data.response.result[0];
-                  callback([{ address: { address_name: addr.text || '' } }], 'OK');
-                } else { callback([], 'ZERO_RESULTS'); }
-              })
-              .catch(() => callback([], 'ERROR'));
-          };
-          this.addressSearch = function(query, callback) {
-            fetch(`https://api.vworld.kr/req/search?service=search&request=search&version=2.0&crs=epsg:4326&size=10&page=1&query=${encodeURIComponent(query)}&type=address&format=json&key=${VWORLD_KEY}`)
-              .then(r => r.json())
-              .then(data => {
-                if (data.response?.status === 'OK') {
-                  const items = data.response.result?.items || [];
-                  const results = items.map(item => ({
-                    address_name: item.address?.parcel || item.title,
-                    x: item.point?.x, y: item.point?.y,
-                    road_address: item.address?.road ? { address_name: item.address.road } : null
-                  }));
-                  callback(results, 'OK');
-                } else { callback([], 'ZERO_RESULTS'); }
-              })
-              .catch(() => callback([], 'ERROR'));
-          };
-        }
-      },
-      // Point
-      Point: function(x, y) { this.x = x; this.y = y; }
+      }
     }
   };
 
-  // getPosition → getPosition3 (LatLng 반환)
-  // setMap(null) 처리를 위한 글로벌 map 변수 접근
+  // ── Geocoder (v월드 주소 API) ─────────────────────────────
+  function VGeocoder() {}
+  VGeocoder.prototype.coord2Address = function(lng, lat, callback) {
+    const url = `https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point=${lng},${lat}&format=json&type=both&key=${VWORLD_KEY}`;
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        if (data.response?.status === 'OK' && data.response.result?.length) {
+          const r = data.response.result[0];
+          callback([{ address: { address_name: r.text || '' }, road_address: r.refined?.text ? { address_name: r.refined.text } : null }], 'OK');
+        } else callback([], 'ZERO_RESULTS');
+      })
+      .catch(() => callback([], 'ERROR'));
+  };
+  VGeocoder.prototype.addressSearch = function(query, callback) {
+    const url = `https://api.vworld.kr/req/search?service=search&request=search&version=2.0&crs=epsg:4326&size=10&query=${encodeURIComponent(query)}&type=address&format=json&key=${VWORLD_KEY}`;
+    fetch(url)
+      .then(r => r.json())
+      .then(data => {
+        if (data.response?.status === 'OK') {
+          const items = data.response.result?.items || [];
+          callback(items.map(item => ({
+            address_name: item.address?.parcel || item.title || '',
+            x: item.point?.x, y: item.point?.y,
+            road_address: item.address?.road ? { address_name: item.address.road } : null
+          })), 'OK');
+        } else callback([], 'ZERO_RESULTS');
+      })
+      .catch(() => callback([], 'ERROR'));
+  };
 
-  // Polyline rightclick 처리 (지도 rightclick 이벤트에서 가장 가까운 feature 탐색)
-  function setupPolylineRightClick(olMap) {
-    if (!olMap || !olMap.getViewport) return;
-    olMap.getViewport().addEventListener('contextmenu', function(e) {
-      e.preventDefault();
-      const px = olMap.getEventPixel(e);
-      olMap.forEachFeatureAtPixel(px, function(feature) {
-        if (feature._rcHandlers) {
-          feature._rcHandlers.forEach(h => h({ latLng: olMap.getCenter(), clientX: e.clientX, clientY: e.clientY }));
-          return true;
-        }
-      }, { hitTolerance: 8 });
-    });
-  }
+  // ── Point ─────────────────────────────────────────────────
+  function VPoint(x, y) { this.x = x; this.y = y; }
+
+  // ── kakao 네임스페이스 ────────────────────────────────────
+  const kakao = {
+    maps: {
+      LatLng:        function(lat, lng)  { return new VLatLng(lat, lng); },
+      LatLngBounds:  function()          { return new VLatLngBounds(); },
+      Map:           function(el, opts)  { return new VMap(el, opts); },
+      Marker:        function(opts)      { return new VMarker(opts); },
+      Polyline:      function(opts)      { return new VPolyline(opts); },
+      CustomOverlay: function(opts)      { return new VCustomOverlay(opts); },
+      InfoWindow:    function(opts)      { return new VInfoWindow(opts); },
+      Point:         function(x, y)      { return new VPoint(x, y); },
+      event:         VEvent,
+      MapTypeId:     { HYBRID: 'Hybrid', ROADMAP: 'Base', SATELLITE: 'Satellite' },
+      services: {
+        Status:    { OK: 'OK', ZERO_RESULTS: 'ZERO_RESULTS' },
+        Geocoder:  function() { return new VGeocoder(); }
+      }
+    }
+  };
+
+  // setupPolylineRightClick - VMap의 rightclick 이벤트에서 처리하므로 빈 함수
+  function setupPolylineRightClick(m) {}
+
+  // panBy 지원 (내 위치 추적용)
+  VMap.prototype.panBy = function(dx, dy) {
+    const view = this._ol.getView();
+    const center = view.getCenter();
+    const resolution = view.getResolution();
+    view.animate({ center: [center[0] + dx * resolution, center[1] - dy * resolution], duration: 200 });
+  };
   </script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <style>
@@ -472,7 +556,7 @@ function getRandomColor() {
 
 function attachMarkerFollower(marker, followers = []) {
   kakao.maps.event.addListener(marker, 'position_changed', () => {
-    const pos = marker.getPosition3();
+    const pos = marker.getPosition();
     followers.forEach(obj => {
       if (typeof obj.setPosition === 'function') {
         obj.setPosition(pos);
@@ -513,7 +597,7 @@ function updateDistance(mouseEvent) {
   `;
 
   if (distanceOverlay) {
-    distanceOverlay.setPosition2(mousePosition);
+    distanceOverlay.setPosition(mousePosition);
     distanceOverlay.setContent(content);
   } else {
     distanceOverlay = new kakao.maps.CustomOverlay({
@@ -536,12 +620,11 @@ function initializeMap(center) {
   map = new kakao.maps.Map(document.getElementById('map'), { center, level: 4, mapTypeId: kakao.maps.MapTypeId.HYBRID });
   // 카카오맵 기본 줌/내위치 버튼 DOM에서 제거
   setTimeout(() => {
-    // v월드: 줌 컨트롤 기본 제거됨
+    document.querySelectorAll('.zoom_in, .zoom_out, .zoom_reset, .map_zoom_close').forEach(el => el.remove());
   }, 500);
   window.map = map;
   geocoder = new kakao.maps.services.Geocoder();
-  restorePhotoQuality();
-  setupPolylineRightClick(map);
+  restorePhotoQuality(); // 저장된 사진 용량 설정 복원
 
 kakao.maps.event.addListener(map, 'click', e => {
   if (markerInputOverlay) {
@@ -552,7 +635,7 @@ kakao.maps.event.addListener(map, 'click', e => {
 
   // ✅ 마커 위치 이동 중이면 새 위치로 설정
   if (movingPhotoMarker) {
-    movingPhotoMarker.marker.setPosition2(e.latLng);
+    movingPhotoMarker.marker.setPosition(e.latLng);
     movingPhotoMarker.marker.setDraggable(false); // ✅ 이동 후 잠금
     movingPhotoMarker = null;
     return;
@@ -580,7 +663,7 @@ kakao.maps.event.addListener(map, 'click', e => {
     }
 
 if (movingPhotoMarker) {
-  movingPhotoMarker.marker.setPosition2(e.latLng);
+  movingPhotoMarker.marker.setPosition(e.latLng);
   movingPhotoMarker.marker.setDraggable(false); // ✅ 드래그 비활성화
   movingPhotoMarker = null;
   return;
@@ -866,7 +949,7 @@ function addMarker(latlng, desc) {
 
   kakao.maps.event.addListener(marker, 'dragend', () => {
     if (movingPhotoMarker && marker === movingPhotoMarker.marker) {
-      previousPosition = marker.getPosition3();
+      previousPosition = marker.getPosition();
       marker.setDraggable(false);
       movingPhotoMarker = null;
     }
@@ -901,7 +984,7 @@ function addPhotoMarker(latlng, imgSrc, filename) {
     if (isDownloading) return;
     isDownloading = true;
     const img = div.querySelector('img');
-    const latlng = marker.getPosition3();
+    const latlng = marker.getPosition();
     const lat = latlng.getLat();
     const lng = latlng.getLng();
     const currentEntry = markers.find(m => m.marker === marker);
@@ -940,7 +1023,7 @@ function addPhotoMarker(latlng, imgSrc, filename) {
 
   kakao.maps.event.addListener(marker, 'dragend', () => {
     if (movingPhotoMarker && marker === movingPhotoMarker.marker) {
-      previousPosition = marker.getPosition3();
+      previousPosition = marker.getPosition();
       marker.setDraggable(false);
       movingPhotoMarker = null;
     }
@@ -964,7 +1047,7 @@ function showEditInput(markerObj, label) {
   container.style = 'background:white;padding:6px;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;flex-direction:column;gap:4px;';
 
   markerInputOverlay = new kakao.maps.CustomOverlay({
-    position: markerObj.marker.getPosition3(),
+    position: markerObj.marker.getPosition(),
     content: container,
     yAnchor: 1
   });
@@ -1225,7 +1308,7 @@ function exportGPX() {
 
   // 활성 마커만 내보내기
   activeMarkers.forEach(m => {
-    const p = m.marker.getPosition3();
+    const p = m.marker.getPosition();
     gpx += `<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${m.name || ''}</name></wpt>\n`;
   });
 
@@ -1252,7 +1335,7 @@ async function exportCSV() {
   // 주소 없는 마커 역지오코딩
   const getAddr = (m) => new Promise(resolve => {
     if (m.addr !== undefined) { resolve(m.addr); return; }
-    const pos = m.marker.getPosition3();
+    const pos = m.marker.getPosition();
     geocoder.coord2Address(pos.getLng(), pos.getLat(), (res, status) => {
       if (status === kakao.maps.services.Status.OK) {
         const addr = res[0].address?.address_name || '';
@@ -1269,7 +1352,7 @@ async function exportCSV() {
 
   for (let idx = 0; idx < activeMarkers.length; idx++) {
     const m = activeMarkers[idx];
-    const pos = m.marker.getPosition ? m.marker.getPosition3() : null;
+    const pos = m.marker.getPosition ? m.marker.getPosition() : null;
     if (!pos) continue;
     const lat = pos.getLat();
     const lng = pos.getLng();
@@ -1374,7 +1457,7 @@ async function exportKMZ() {
   // 마커 → KML Placemark
   let photoIdx = 0;
   for (const m of activeMarkers) {
-    const p = m.marker.getPosition3();
+    const p = m.marker.getPosition();
     const img = m.iw.getContent().querySelector('img');
     if (img && img.src.startsWith('data:image')) {
       const safeFilename = photoFiles[photoIdx]?.filename || 'photo.jpg';
@@ -1415,7 +1498,7 @@ function exportVisibleGPX() {
 
   // 보이는 영역 안에 있는 활성 마커만
   const visibleMarkers = activeMarkers.filter(m =>
-    bounds.contain(m.marker.getPosition3())
+    bounds.contain(m.marker.getPosition())
   );
 
   // 보이는 영역에 포함되는 선(폴리라인)만 선택
@@ -1439,7 +1522,7 @@ function exportVisibleGPX() {
   });
 
   visibleMarkers.forEach(m => {
-    const p = m.marker.getPosition3();
+    const p = m.marker.getPosition();
     gpx += `<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${m.name || ''}</name></wpt>\n`;
   });
 
@@ -1458,7 +1541,7 @@ function exportVisibleGPX() {
 async function exportVisibleKMZ() {
   const bounds = map.getBounds();
   const activeMarkers = markers.filter(m => m.marker && m.marker.getMap());
-  const visibleMarkers = activeMarkers.filter(m => bounds.contain(m.marker.getPosition3()));
+  const visibleMarkers = activeMarkers.filter(m => bounds.contain(m.marker.getPosition()));
   const visiblePolylines = polylines.filter(pl =>
     pl && pl.getMap() && pl.getPath().some(p => bounds.contain(p))
   );
@@ -1540,7 +1623,7 @@ async function exportVisibleKMZ() {
   // 마커
   let photoIdx = 0;
   for (const m of visibleMarkers) {
-    const p = m.marker.getPosition3();
+    const p = m.marker.getPosition();
     const img = m.iw.getContent().querySelector('img');
     if (img && img.src.startsWith('data:image')) {
       const safeFilename = photoFiles[photoIdx]?.filename || 'photo.jpg';
@@ -1653,7 +1736,7 @@ document.addEventListener('drop', e => {
                 content: `<div style="padding:5px 8px;background:white;border:1px solid #333;font-size:1.0em;border-radius:3px;"><b>${trackName}</b><br>총거리: ${formatDistance(distance)}</div>`,
                 yAnchor: 1, zIndex: 4
               });
-              kakao.maps.event.addListener(poly, 'mouseover', () => { const _mid = poly.getPath()[Math.floor(pts.length/2)]; if (_mid) { overlay.setPosition2(_mid); overlay.setMap(map); } });
+              kakao.maps.event.addListener(poly, 'mouseover', () => { overlay.setPosition(poly.getPath()[Math.floor(pts.length/2)]); overlay.setMap(map); });
               kakao.maps.event.addListener(poly, 'mouseout', () => overlay.setMap(null));
               polylines.push(poly);
               attachPolylineRightClick(poly);
@@ -2035,7 +2118,7 @@ async function downloadAllPhotos() {
 
   for (const m of photoMarkers) {
     const img = m.iw.getContent().querySelector('img');
-    const latlng = m.marker.getPosition3();
+    const latlng = m.marker.getPosition();
     await downloadPhotoWithGPS(img.src, m.name, latlng.getLat(), latlng.getLng());
   }
 }
