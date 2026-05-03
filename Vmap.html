@@ -88,8 +88,11 @@ const WMTS = (layer, ext) => new ol.layer.Tile({
       target: el,
       layers: [...Object.values(this._layers), this._vectorLayer],
       view: new ol.View({ center, zoom, projection: 'EPSG:3857', minZoom: 2, maxZoom: 19 }),
-      controls: ol.control.defaults({ zoom: true, rotate: false }),
-    });
+      this.controls = ol.control.defaults.defaults({
+    zoom: true,
+    attribution: true,
+    rotate: true
+});
     _olMap = this._ol;
 
     // 기본 지도 타입 = Hybrid (Satellite + Hybrid 레이어)
@@ -107,15 +110,19 @@ const WMTS = (layer, ext) => new ol.layer.Tile({
     setTimeout(() => this._ol.updateSize(), 100);
   }
 
-  VMap.prototype._setType = function(type) {
-    Object.keys(this._layers).forEach(k => {
-      if (type === 'Hybrid') {
-        this._layers[k].setVisible(k === 'Satellite' || k === 'Hybrid');
-      } else {
-        this._layers[k].setVisible(k === type);
-      }
-    });
-  };
+VMap.prototype._setType = function(type) {
+  Object.keys(this._layers).forEach(k => {
+    // Hybrid 선택 시 위성(Satellite)과 하이브리드(Hybrid) 레이어를 동시에 켭니다.
+    if (type === 'Hybrid') {
+      this._layers[k].setVisible(k === 'Satellite' || k === 'Hybrid');
+    } else if (type === 'Satellite') {
+      this._layers[k].setVisible(k === 'Satellite'); // 순수 위성만
+    } else {
+      this._layers[k].setVisible(k === type);
+    }
+  });
+};
+
   VMap.prototype.getCenter   = function() {
     const ll = _fromOl(this._ol.getView().getCenter());
     return new VLatLng(ll[0], ll[1]);
@@ -586,15 +593,11 @@ function updateDistance(mouseEvent) {
   moveLine.setMap(map);
 
   const totalDistance = currentPolyline.getLength() + moveLine.getLength();
-
-  const formatDistance = d => {
-    if (d <= 1000) return `${d.toFixed(1)}m`;
-    return `${(d / 1000).toFixed(2)}km`;
-  };
+  const formatDistance = d => (d <= 1000) ? `${d.toFixed(1)}m` : `${(d / 1000).toFixed(2)}km`;
 
   const content = `
-    <div class="dotOverlay distanceInfo" style="font-size: 0.8em; margin-left:4px; margin-bottom:8px;">
-      총거리 <span class="number">${formatDistance(totalDistance)}</span>
+    <div class="dotOverlay distanceInfo" style="background:white; padding:5px; border:1px solid #db4040; border-radius:3px; font-size:12px;">
+      총거리 <span class="number" style="color:#db4040; font-weight:bold;">${formatDistance(totalDistance)}</span>
     </div>
   `;
 
@@ -612,7 +615,6 @@ function updateDistance(mouseEvent) {
     });
   }
 }
-
 
 // END: 거리 표시용 전역변수 및 함수
 
