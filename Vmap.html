@@ -62,12 +62,14 @@
     const center = opts.center ? opts.center._toOl() : _toOl(35.9, 127.5);
     const zoom   = opts.level  ? 19 - opts.level : 14;
 
-    const WMTS = (layer, ext) => new ol.layer.Tile({
-      source: new ol.source.XYZ({
-        url: `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/${layer}/{z}/{x}/{y}.${ext}`,
-        maxZoom: 19, crossOrigin: 'anonymous'
-      }), visible: false
-    });
+const WMTS = (layer, ext) => new ol.layer.Tile({
+  source: new ol.source.XYZ({
+    // URL 끝에 레이어 이름을 명시적으로 확인
+    url: `https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/${layer}/{z}/{y}/{x}.${ext}`, 
+    crossOrigin: 'anonymous'
+  }),
+  visible: false
+});
 
     this._layers = {
       Base:      WMTS('Base',      'png'),
@@ -617,11 +619,18 @@ function updateDistance(mouseEvent) {
 const trimCityProvince = str => str?.split(' ').slice(1).join(' ') || '';
 
 function initializeMap(center) {
-  map = new kakao.maps.Map(document.getElementById('map'), { center, level: 4, mapTypeId: kakao.maps.MapTypeId.HYBRID });
-  // 카카오맵 기본 줌/내위치 버튼 DOM에서 제거
-  setTimeout(() => {
-    document.querySelectorAll('.zoom_in, .zoom_out, .zoom_reset, .map_zoom_close').forEach(el => el.remove());
-  }, 500);
+  // 지도를 담을 div 엘리먼트
+  const mapContainer = document.getElementById('map');
+  
+  // 가상 카카오 객체를 통해 VMap 인스턴스 생성
+  map = new kakao.maps.Map(mapContainer, { 
+    center: center, 
+    level: 4 
+  });
+
+  // 초기 맵 타입 강제 설정 (Hybrid가 안 뜨면 Base로 우선 시도)
+  map._setType('Base'); 
+  
   window.map = map;
   geocoder = new kakao.maps.services.Geocoder();
   restorePhotoQuality(); // 저장된 사진 용량 설정 복원
