@@ -67,24 +67,31 @@
     <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
     <button type="button" onclick="resetPolylines()">선 초기화</button>
     <button type="button" onclick="resetAll()">화면 초기화</button>
-    <select id="photoQuality" style="padding:5px;" title="사진 저장 용량" onchange="savePhotoQuality(this.value)">
-      <option value="300" selected>사진 300KB↓</option>
-      <option value="500">사진 500KB↓</option>
-      <option value="800">사진 800KB↓</option>
-      <option value="1024">사진 1MB↓</option>
-      <option value="0">사진 원본</option>
-    </select>
     <select id="exportFormat" style="padding:5px;">
       <option value="kmz">KMZ 내보내기</option>
       <option value="gpx">GPX 내보내기</option>
       <option value="csv">CSV 내보내기</option>
+      <option value="photos">📸 사진 다운로드</option>
     </select>
     <select id="exportArea" style="padding:5px;">
       <option value="all">전체 영역</option>
       <option value="visible">현재 영역</option>
     </select>
+    <select id="photoQuality" style="padding:5px;" title="사진 저장 용량">
+      <option value="200">200KB↓</option>
+      <option value="300">300KB↓</option>
+      <option value="500" selected>500KB↓</option>
+      <option value="800">800KB↓</option>
+      <option value="1024">1MB↓</option>
+      <option value="0">원본</option>
+    </select>
     <button type="button" onclick="exportByFormat()">💾 저장</button>
-    <button type="button" onclick="downloadAllPhotos()">📸 사진 다운로드</button>
+    <br>
+    <select id="mapTypeSelect" style="padding:5px; margin-top:4px;" onchange="changeMapType(this.value)">
+      <option value="HYBRID" selected>위성+지도</option>
+      <option value="SKYVIEW">위성</option>
+      <option value="ROADMAP">일반지도</option>
+    </select>
   </div>
   <div id="map"></div>
 
@@ -175,7 +182,6 @@ function initializeMap(center) {
   }, 500);
   window.map = map;
   geocoder = new kakao.maps.services.Geocoder();
-  restorePhotoQuality(); // 저장된 사진 용량 설정 복원
 
 kakao.maps.event.addListener(map, 'click', e => {
   if (markerInputOverlay) {
@@ -653,20 +659,6 @@ function showEditInput(markerObj, label) {
 
 let locationMarkerCount = 0; // 위치 마커 번호 카운터
 
-function savePhotoQuality(val) {
-  try { localStorage.setItem('photoQuality', val); } catch(e) {}
-}
-
-function restorePhotoQuality() {
-  try {
-    const saved = localStorage.getItem('photoQuality');
-    if (saved !== null) {
-      const sel = document.getElementById('photoQuality');
-      if (sel) sel.value = saved;
-    }
-  } catch(e) {}
-}
-
 function copyCoordFromInput(el) {
   const text = el.value;
   if (!text) return;
@@ -929,6 +921,17 @@ function exportByFormat() {
   if (format === 'kmz') { area === 'visible' ? exportVisibleKMZ() : exportKMZ(); }
   else if (format === 'gpx') { area === 'visible' ? exportVisibleGPX() : exportGPX(); }
   else if (format === 'csv') exportCSV();
+  else if (format === 'photos') downloadAllPhotos();
+}
+
+// 파일형식 변경 시 photoQuality 표시 여부
+document.getElementById('exportFormat').addEventListener('change', function() {
+  const q = document.getElementById('photoQuality');
+  q.style.display = (this.value === 'photos' || this.value === 'kmz') ? '' : 'none';
+});
+
+function changeMapType(type) {
+  map.setMapTypeId(kakao.maps.MapTypeId[type]);
 }
 
 async function exportKMZ() {
