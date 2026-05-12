@@ -5,6 +5,7 @@
   <title>KMZ & 사진 지도 (v1.0)</title>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
   <style>
     html, body { height:100%; margin:0; overflow:hidden; }
     #map { width:100%; height:100%; }
@@ -1306,51 +1307,54 @@ document.addEventListener('drop', e => {
       };
       reader.readAsText(file);
 
-    // 2) 이미지
-    } else if (file.type.startsWith('image/') || /\.(jpe?g|png)$/i.test(name)) {
-      const reader = new FileReader();
-      reader.onload = ev => {
-        const imgSrc = ev.target.result;
-        const imgName = file.name.replace(/\.[^/.]+$/, '');
+    // 2) 이미지 (HEIC/HEIF 포함)
+    } else if (file.type.startsWith('image/') || /\.(jpe?g|png|heic|heif)$/i.test(name)) {
+      (async () => {
+        const imgFile = await convertHeicIfNeeded(file);
+        const reader = new FileReader();
+        reader.onload = ev => {
+          const imgSrc = ev.target.result;
+          const imgName = file.name.replace(/\.[^/.]+$/, '');
 
-        // piexif로 EXIF GPS 읽기
-        let latlng = null;
-        try {
-          const exif = piexif.load(imgSrc);
-          const gps = exif['GPS'];
-          if (gps && gps[piexif.GPSIFD.GPSLatitude] && gps[piexif.GPSIFD.GPSLongitude]) {
-            const toDec = (dms, ref) => {
-              const d = dms[0][0]/dms[0][1];
-              const m = dms[1][0]/dms[1][1];
-              const s = dms[2][0]/dms[2][1];
-              return (d + m/60 + s/3600) * ((ref === 'S' || ref === 'W') ? -1 : 1);
-            };
-            const lat = toDec(gps[piexif.GPSIFD.GPSLatitude],  gps[piexif.GPSIFD.GPSLatitudeRef]  || 'N');
-            const lng = toDec(gps[piexif.GPSIFD.GPSLongitude], gps[piexif.GPSIFD.GPSLongitudeRef] || 'E');
-            if (!isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
-              latlng = new kakao.maps.LatLng(lat, lng);
+          // piexif로 EXIF GPS 읽기
+          let latlng = null;
+          try {
+            const exif = piexif.load(imgSrc);
+            const gps = exif['GPS'];
+            if (gps && gps[piexif.GPSIFD.GPSLatitude] && gps[piexif.GPSIFD.GPSLongitude]) {
+              const toDec = (dms, ref) => {
+                const d = dms[0][0]/dms[0][1];
+                const m = dms[1][0]/dms[1][1];
+                const s = dms[2][0]/dms[2][1];
+                return (d + m/60 + s/3600) * ((ref === 'S' || ref === 'W') ? -1 : 1);
+              };
+              const lat = toDec(gps[piexif.GPSIFD.GPSLatitude],  gps[piexif.GPSIFD.GPSLatitudeRef]  || 'N');
+              const lng = toDec(gps[piexif.GPSIFD.GPSLongitude], gps[piexif.GPSIFD.GPSLongitudeRef] || 'E');
+              if (!isNaN(lat) && !isNaN(lng) && (lat !== 0 || lng !== 0)) {
+                latlng = new kakao.maps.LatLng(lat, lng);
+              }
+            }
+          } catch(ex) {}
+
+          if (latlng) {
+            bounds.extend(latlng);
+            addPhotoMarker(latlng, imgSrc, imgName);
+            if (!bounds.isEmpty()) map.setBounds(bounds);
+          } else {
+            if (photoWithoutGPSAction === null) {
+              photoWithoutGPSAction = confirm(`"${file.name}" 사진에 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번에 올리는 모든 사진에 적용됩니다)`);
+            }
+            if (photoWithoutGPSAction) {
+              const center = map.getCenter();
+              addPhotoMarker(center, imgSrc, imgName);
+              map.panTo(center);
+              const added = markers.at(-1);
+              if (added) { added.marker.setDraggable(true); movingPhotoMarker = added; }
             }
           }
-        } catch(ex) {}
-
-        if (latlng) {
-          bounds.extend(latlng);
-          addPhotoMarker(latlng, imgSrc, imgName);
-          if (!bounds.isEmpty()) map.setBounds(bounds);
-        } else {
-          if (photoWithoutGPSAction === null) {
-            photoWithoutGPSAction = confirm(`"${file.name}" 사진에 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번에 올리는 모든 사진에 적용됩니다)`);
-          }
-          if (photoWithoutGPSAction) {
-            const center = map.getCenter();
-            addPhotoMarker(center, imgSrc, imgName);
-            map.panTo(center);
-            const added = markers.at(-1);
-            if (added) { added.marker.setDraggable(true); movingPhotoMarker = added; }
-          }
-        }
-      };
-      reader.readAsDataURL(file);
+        };
+        reader.readAsDataURL(imgFile);
+      })();
 
     // 3) CSV — 헤더 자동 감지 (이름/위도/경도/주소 컬럼 순서 무관)
     } else if (name.endsWith('.csv')) {
@@ -1533,6 +1537,16 @@ window.onload = () => {
     () => initializeMap(new kakao.maps.LatLng(35.6478, 127.5213))
   );
 };
+
+// ─── HEIC → JPEG 변환 ────────────────────────────────
+async function convertHeicIfNeeded(file) {
+  const isHeic = file.type === 'image/heic' || file.type === 'image/heif' ||
+                 /\.(heic|heif)$/i.test(file.name);
+  if (!isHeic) return file;
+  const blob = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.92 });
+  const outBlob = Array.isArray(blob) ? blob[0] : blob;
+  return new File([outBlob], file.name.replace(/\.(heic|heif)$/i, '.jpg'), { type: 'image/jpeg' });
+}
 
 // ─── 이미지 압축 (저장 시 500KB 이하) ────────────────
 function compressImage(imgSrc) {
