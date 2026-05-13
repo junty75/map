@@ -6,6 +6,7 @@
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/exif-js"></script>
   <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/exifr@7/dist/full.umd.cjs"></script>
   <style>
     html, body { height:100%; margin:0; overflow:hidden; }
     #map { width:100%; height:100%; }
@@ -1307,14 +1308,52 @@ document.addEventListener('drop', e => {
       };
       reader.readAsText(file);
 
-    // 2) 이미지 (HEIC/HEIF 포함)
-    } else if (file.type.startsWith('image/') || /\.(jpe?g|png|heic|heif)$/i.test(name)) {
+    // 2) 이미지 (HEIC/HEIF/RAW 포함)
+    } else if (file.type.startsWith('image/') || /\.(jpe?g|png|heic|heif|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2)$/i.test(name)) {
       (async () => {
+        const imgName = file.name.replace(/\.[^/.]+$/, '');
+
+        // RAW 파일 처리
+        if (/\.(arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2)$/i.test(name)) {
+          let imgSrc = null, latlng = null;
+          if (typeof exifr !== 'undefined') {
+            const [gpsData, thumbBuf] = await Promise.all([
+              exifr.gps(file).catch(() => null),
+              exifr.thumbnail(file).catch(() => null)
+            ]);
+            if (gpsData?.longitude !== undefined) {
+              latlng = new kakao.maps.LatLng(gpsData.latitude, gpsData.longitude);
+            }
+            if (thumbBuf) {
+              const blob = new Blob([thumbBuf], { type: 'image/jpeg' });
+              imgSrc = await new Promise(r => { const fr=new FileReader(); fr.onload=e=>r(e.target.result); fr.readAsDataURL(blob); });
+            }
+          }
+          if (!imgSrc) {
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150"><rect width="200" height="150" fill="#e0e0e0" rx="8"/><text x="100" y="70" text-anchor="middle" font-size="48">📷</text><text x="100" y="108" text-anchor="middle" font-size="18" fill="#555">RAW</text><text x="100" y="132" text-anchor="middle" font-size="11" fill="#888">${imgName}</text></svg>`;
+            imgSrc = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+          }
+          if (latlng) {
+            bounds.extend(latlng);
+            addPhotoMarker(latlng, imgSrc, imgName);
+            if (!bounds.isEmpty()) map.setBounds(bounds);
+          } else {
+            if (photoWithoutGPSAction === null) {
+              photoWithoutGPSAction = confirm(`"${file.name}" 사진에 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번에 올리는 모든 사진에 적용됩니다)`);
+            }
+            if (photoWithoutGPSAction) {
+              const center = map.getCenter();
+              addPhotoMarker(center, imgSrc, imgName);
+            }
+          }
+          return;
+        }
+
+        // JPEG/PNG/HEIC 처리
         const imgFile = await convertHeicIfNeeded(file);
         const reader = new FileReader();
         reader.onload = ev => {
           const imgSrc = ev.target.result;
-          const imgName = file.name.replace(/\.[^/.]+$/, '');
 
           // piexif로 EXIF GPS 읽기
           let latlng = null;
