@@ -93,7 +93,8 @@
       <option value="HYBRID" selected>위성+지도</option>
       <option value="SKYVIEW">위성사진</option>
       <option value="ROADMAP">일반지도</option>
-      <option value="TERRAIN">지형도</option>
+      <option value="TERRAIN">🏔️ 지형도</option>
+      <option value="USE_DISTRICT">🗺️ 지적도</option>
     </select>
   </div>
   <div id="map"></div>
@@ -933,8 +934,28 @@ document.getElementById('exportFormat').addEventListener('change', function() {
   q.style.display = (this.value === 'photos' || this.value === 'kmz') ? '' : 'none';
 });
 
-function changeMapType(type) {
-  map.setMapTypeId(kakao.maps.MapTypeId[type]);
+// 지도 유형 변경 — 지형도·지적도는 오버레이로 처리
+let _lastBaseType = 'HYBRID';   // 마지막 베이스맵 기억
+let _terrainOn = false;
+let _cadastralOn = false;
+
+function changeMapType(value) {
+  // 기존 오버레이 제거
+  if (_terrainOn)   { map.removeOverlayMapTypeId(kakao.maps.MapTypeId.TERRAIN);      _terrainOn  = false; }
+  if (_cadastralOn) { map.removeOverlayMapTypeId(kakao.maps.MapTypeId.USE_DISTRICT); _cadastralOn = false; }
+
+  if (value === 'TERRAIN') {
+    map.setMapTypeId(kakao.maps.MapTypeId[_lastBaseType]);   // 이전 베이스맵 유지
+    map.addOverlayMapTypeId(kakao.maps.MapTypeId.TERRAIN);
+    _terrainOn = true;
+  } else if (value === 'USE_DISTRICT') {
+    map.setMapTypeId(kakao.maps.MapTypeId[_lastBaseType]);   // 이전 베이스맵 유지
+    map.addOverlayMapTypeId(kakao.maps.MapTypeId.USE_DISTRICT);
+    _cadastralOn = true;
+  } else {
+    _lastBaseType = value;                                   // 베이스맵 변경 시 기억
+    map.setMapTypeId(kakao.maps.MapTypeId[value]);
+  }
 }
 
 async function exportKMZ() {
