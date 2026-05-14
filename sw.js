@@ -14,24 +14,26 @@ self.addEventListener('install', e => {
 });
 
 // 활성화: 이전 캐시 삭제
-self.addEventListener('activate', e => {
-  e.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
-  );
-  self.clients.claim();
-});
-
-// 요청 처리: 캐시 우선, 없으면 네트워크
 self.addEventListener('fetch', e => {
-  // 카카오맵 API는 항상 네트워크 (오프라인 불가)
-  if (e.request.url.includes('dapi.kakao.com') ||
-      e.request.url.includes('daumcdn.net') ||
-      e.request.url.includes('kakao.com')) {
-    return;
+  if (e.request.mode === 'navigate') {
+    return; // 🔥 중요
   }
+  if (e.request.url.includes('kakao.com')) return;
   e.respondWith(
     caches.match(e.request).then(cached => cached || fetch(e.request))
   );
+});
+
+// 요청 처리: 캐시 우선, 없으면 네트워크
+window.addEventListener('popstate', function (e) {
+  if (drawingMode) {
+    if (currentPath.length > 0) {
+      undoLastPoint();
+    }
+    // 🔥 두 번 넣어서 스택 유지 강화
+    history.pushState({ page: 'map' }, null, '');
+    history.pushState({ page: 'map2' }, null, '');
+  } else {
+    history.pushState({ page: 'map' }, null, '');
+  }
 });
