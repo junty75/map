@@ -1633,6 +1633,17 @@ function compressImage(imgSrc) {
         quality = Math.round((quality - 0.05) * 100) / 100;
         result = canvas.toDataURL('image/jpeg', quality);
       }
+      // ★ 원본 EXIF 복원 — canvas는 EXIF를 모두 버리므로
+      //   촬영 날짜·카메라 정보·GPS 등을 원본에서 읽어 압축 결과에 삽입
+      try {
+        const exif = piexif.load(imgSrc);
+        if (exif['0th']) {
+          delete exif['0th'][piexif.ImageIFD.UserComment];
+          delete exif['0th'][piexif.ImageIFD.ImageDescription];
+        }
+        if (exif['Exif']) delete exif['Exif'][piexif.ExifIFD.UserComment];
+        result = piexif.insert(piexif.dump(exif), result);
+      } catch(e) {}
       resolve(result);
     };
     img.src = imgSrc;
