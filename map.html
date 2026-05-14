@@ -80,9 +80,9 @@
       <option value="visible">현재 영역</option>
     </select>
     <select id="photoQuality" style="padding:5px;" title="사진 저장 용량">
-      <option value="200">200KB↓</option>
+      <option value="200" selected>200KB↓</option>
       <option value="300">300KB↓</option>
-      <option value="500" selected>500KB↓</option>
+      <option value="500">500KB↓</option>
       <option value="800">800KB↓</option>
       <option value="1024">1MB↓</option>
       <option value="0">원본</option>
@@ -1256,7 +1256,8 @@ document.addEventListener('drop', e => {
         // 폴리라인/폴리곤 추출: linePath\d+, polygonPath\d+ 모두 처리
         const lineBlocks = [...html.matchAll(/var\s+(linePath\d+|polygonPath\d+)\s*=\s*\[([\s\S]*?)\];/g)];
         lineBlocks.forEach((m, i) => {
-          const pts = [...m[2].matchAll(/new\s+kakao\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)]
+          // kakao.maps.LatLng 및 구 daum.maps.LatLng 모두 지원
+          const pts = [...m[2].matchAll(/new\s+(?:kakao|daum)\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)]
             .map(c => { const ll = new kakao.maps.LatLng(parseFloat(c[1]), parseFloat(c[2])); bounds.extend(ll); return ll; });
           if (pts.length < 2) return;
           const poly = new kakao.maps.Polyline({ map, path: pts, strokeWeight: 3, strokeColor: '#FF00FF', strokeOpacity: 0.85 });
@@ -1265,8 +1266,8 @@ document.addEventListener('drop', e => {
         });
 
         // 마커 추출: positions 배열 또는 개별 Marker 선언
-        // 방식1: positions 배열 { content: '...', latlng: new kakao.maps.LatLng(...) }
-        const posMatches = [...html.matchAll(/content:\s*'([^']*)'[\s\S]*?latlng:\s*new\s+kakao\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)];
+        // 방식1: positions 배열 { content: '...', latlng: new kakao/daum.maps.LatLng(...) }
+        const posMatches = [...html.matchAll(/content:\s*'([^']*)'[\s\S]*?latlng:\s*new\s+(?:kakao|daum)\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)];
         posMatches.forEach(m => {
           const rawHtml = m[1];
           const rawName = rawHtml
@@ -1278,9 +1279,9 @@ document.addEventListener('drop', e => {
           addMarker(ll, rawName);
         });
 
-        // 방식2: new kakao.maps.Marker({ position: new kakao.maps.LatLng(...) })
+        // 방식2: new kakao/daum.maps.Marker({ position: new kakao/daum.maps.LatLng(...) })
         if (posMatches.length === 0) {
-          const mkMatches = [...html.matchAll(/new\s+kakao\.maps\.Marker\s*\(\s*\{[^}]*position:\s*new\s+kakao\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)];
+          const mkMatches = [...html.matchAll(/new\s+(?:kakao|daum)\.maps\.Marker\s*\(\s*\{[^}]*position:\s*new\s+(?:kakao|daum)\.maps\.LatLng\(([\d.]+),([\d.]+)\)/g)];
           mkMatches.forEach((m, i) => {
             const ll = new kakao.maps.LatLng(parseFloat(m[1]), parseFloat(m[2]));
             bounds.extend(ll);
@@ -1612,7 +1613,7 @@ async function convertHeicIfNeeded(file) {
 // ─── 이미지 압축 (저장 시 500KB 이하) ────────────────
 function compressImage(imgSrc) {
   return new Promise(resolve => {
-    const qVal = parseInt(document.getElementById('photoQuality')?.value ?? '300');
+    const qVal = parseInt(document.getElementById('photoQuality')?.value ?? '200');
     if (qVal === 0) { resolve(imgSrc); return; } // 원본 그대로
     const img = new Image();
     img.onload = () => {
@@ -1663,7 +1664,7 @@ function downloadCompressedImage(imgSrc, filename, maxWidth = 1600, quality = 0.
 // ─── 사진 다운로드 공통 함수 (photoQuality 선택값 적용) ─
 function downloadPhotoWithGPS(imgSrc, name, lat, lng) {
   return new Promise(resolve => {
-    const qVal = parseInt(document.getElementById('photoQuality')?.value ?? '500');
+    const qVal = parseInt(document.getElementById('photoQuality')?.value ?? '200');
 
     const toDMS = val => {
       const abs = Math.abs(val);
