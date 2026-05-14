@@ -1000,14 +1000,16 @@ async function exportKMZ() {
   const zip = new JSZip();
   const photoFiles = []; // { filename, dataUrl }
 
-  // 사진 마커에서 이미지 추출 (파일명 중복 방지용 인덱스 추가)
-  let photoCount = 0;
+  // 사진 마커에서 이미지 추출 (파일명 중복 방지)
+  const usedNames = new Set();
   for (const m of activeMarkers) {
     const img = m.iw.getContent().querySelector('img');
     if (img && img.src.startsWith('data:image')) {
-      photoCount++;
-      const safeName = (m.name || 'photo').replace(/[^\w가-힣\-_.]/g, '_');
-      const safeFilename = `${photoCount}_${safeName}.jpg`;
+      let baseName = (m.name || 'photo').replace(/[\/\\:*?"<>|]/g, '_').replace(/\.jpg$/i, '');
+      let safeFilename = baseName + '.jpg';
+      let suffix = 1;
+      while (usedNames.has(safeFilename)) { safeFilename = `${baseName}_${suffix++}.jpg`; }
+      usedNames.add(safeFilename);
       photoFiles.push({ filename: safeFilename, markerName: m.name });
       const compressed = await compressImage(img.src);
       zip.file(`files/${safeFilename}`, compressed.split(',')[1], { base64: true });
@@ -1163,14 +1165,16 @@ async function exportVisibleKMZ() {
   const zip = new JSZip();
   const photoFiles = [];
 
-  // 사진 추출
-  let photoCount = 0;
+  // 사진 추출 (파일명 중복 방지)
+  const usedNames2 = new Set();
   for (const m of visibleMarkers) {
     const img = m.iw.getContent().querySelector('img');
     if (img && img.src.startsWith('data:image')) {
-      photoCount++;
-      const safeName = (m.name || 'photo').replace(/[^\w가-힣\-_.]/g, '_');
-      const safeFilename = `${photoCount}_${safeName}.jpg`;
+      let baseName = (m.name || 'photo').replace(/[\/\\:*?"<>|]/g, '_').replace(/\.jpg$/i, '');
+      let safeFilename = baseName + '.jpg';
+      let suffix = 1;
+      while (usedNames2.has(safeFilename)) { safeFilename = `${baseName}_${suffix++}.jpg`; }
+      usedNames2.add(safeFilename);
       photoFiles.push({ filename: safeFilename, markerName: m.name });
       const compressed = await compressImage(img.src);
       zip.file(`files/${safeFilename}`, compressed.split(',')[1], { base64: true });
