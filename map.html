@@ -1676,8 +1676,10 @@ function downloadPhotoWithGPS(imgSrc, name, lat, lng) {
 
     const insertGPS = (dataUrl) => {
       try {
+        // ★ 원본(imgSrc)에서 EXIF 읽기 — canvas 압축 시 EXIF 전체가 사라지므로
+        //   압축 결과(dataUrl)가 아닌 원본에서 날짜·방향 등 전체 EXIF를 가져옴
         let exif = {};
-        try { exif = piexif.load(dataUrl); } catch(e) {}
+        try { exif = piexif.load(imgSrc); } catch(e) {}
         if (exif["0th"]) {
           delete exif["0th"][piexif.ImageIFD.UserComment];
           delete exif["0th"][piexif.ImageIFD.ImageDescription];
