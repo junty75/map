@@ -550,22 +550,12 @@ window.onload = () => {
   window.history.pushState({ page: 'map' }, null, '');
 
   window.onpopstate = (e) => {
-    // 2. 그리기 모드일 때 뒤로가기를 누르면 (이전 점 삭제)
     if (drawingMode && currentPath.length > 0) {
-      undoLastPoint(); // 실제 삭제 동작 수행
-      
-      // 3. 삭제 후 즉시 다시 히스토리를 푸시하여 
-      // 뒤로가기 스택이 비지 않게 유지 (종료 방지)
-      window.history.pushState({ page: 'map' }, null, '');
-    } else {
-      if (confirm('앱을 종료하시겠습니까?')) {
-        // 실제 종료를 원하면 주석 해제 (단, 웹앱 환경에 따라 다름)
-        // window.history.back(); 
-      } else {
-        // 종료 취소 시 다시 상태 복구
-        window.history.pushState({ page: 'map' }, null, '');
-      }
+      undoLastPoint();
+    } else if (drawingMode) {
+      stopDrawing();
     }
+    window.history.pushState({ page: 'map' }, null, '');
   };
 
   // PC 키보드 이벤트
