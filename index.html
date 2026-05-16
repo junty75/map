@@ -11,6 +11,14 @@
   <title>KMZ 뷰어</title>
   <link rel="manifest" href="./manifest.json">
   <link rel="apple-touch-icon" href="./icon-192.png">
+  <!-- 뒤로가기로 앱이 종료되지 않도록 카카오 로딩보다 먼저 버퍼 설치 -->
+  <script>
+  history.replaceState({k:0},'','');
+  history.pushState({k:1},'','');
+  history.pushState({k:2},'','');
+  function _earlyBackHandler(){ history.forward(); }
+  window.addEventListener('popstate', _earlyBackHandler);
+  </script>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&autoload=false&libraries=services"></script>
   <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/piexifjs"></script>
@@ -538,36 +546,24 @@ document.getElementById('markerBtn').onclick = () => {
   }
 };
 
-let historyState = 0; // 상태 카운터 추가
+// 뒤로가기 핸들러 (index.html과 동일 방식)
+// addEventListener 사용: window.onpopstate는 외부 라이브러리가 덮어쓸 수 있어 불안정
+let _ignoreNextPop = false;
 
-function preventBack() {
-  historyState++;
-  window.history.pushState({ id: historyState }, null, '');
-}
+window.removeEventListener('popstate', _earlyBackHandler); // 초기 임시 핸들러 제거
+window.addEventListener('popstate', function() {
+  if (_ignoreNextPop) { _ignoreNextPop = false; return; }
+  if (drawingMode) {
+    // 선그리기 모드: 마지막 점 삭제, 점이 없으면 모드 종료
+    if (currentPath.length > 0) { undoLastPoint(); }
+    else { stopDrawing(); }
+  }
+  // 모드에 관계없이 forward()로 복귀 → 앱 종료 완전 차단
+  _ignoreNextPop = true;
+  window.history.forward();
+});
 
 window.onload = () => {
-  // 1. 처음 로드될 때 히스토리 스택에 상태 추가
-  window.history.pushState({ page: 'map' }, null, '');
-
-  window.onpopstate = (e) => {
-    // 2. 그리기 모드일 때 뒤로가기를 누르면 (이전 점 삭제)
-    if (drawingMode && currentPath.length > 0) {
-      undoLastPoint(); // 실제 삭제 동작 수행
-      
-      // 3. 삭제 후 즉시 다시 히스토리를 푸시하여 
-      // 뒤로가기 스택이 비지 않게 유지 (종료 방지)
-      window.history.pushState({ page: 'map' }, null, '');
-    } else {
-      if (confirm('앱을 종료하시겠습니까?')) {
-        // 실제 종료를 원하면 주석 해제 (단, 웹앱 환경에 따라 다름)
-        // window.history.back(); 
-      } else {
-        // 종료 취소 시 다시 상태 복구
-        window.history.pushState({ page: 'map' }, null, '');
-      }
-    }
-  };
-
   // PC 키보드 이벤트
   document.addEventListener('keydown', e => {
     if (drawingMode && currentPath.length > 0) {
@@ -715,7 +711,6 @@ function initMap(center) {
   let lastTapTime = 0, lastTapPolyline = null;
 
   kakao.maps.event.addListener(map, 'click', (e) => {
-    preventBack();
     if (suppressMapClick) { suppressMapClick = false; return; }
     if (drawingMode) {
       // scale 1이면 그대로, scale 확대 중이면 저장된 네이티브 좌표로 보정
