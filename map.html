@@ -1271,7 +1271,7 @@ async function exportKMZ() {
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('파일명',ds+'_지도');if(!fname)return;
   const zip=new JSZip(),photoFiles=[],usedNames=new Set();
-  for(const m of am){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});zip.file(`files/${sf}`,(await compressImage(img.src)).split(',')[1],{base64:true});}}
+  for(const m of am){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
   polylines.forEach((pl,i)=>{if(!pl||!pl.getMap())return;const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>path${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
   let pi=0;
@@ -1302,7 +1302,7 @@ async function exportVisibleKMZ(){
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('보이는 영역 KMZ',ds+'_지도');if(!fname)return;
   const zip=new JSZip(),photoFiles=[],usedNames=new Set();
-  for(const m of vm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});zip.file(`files/${sf}`,(await compressImage(img.src)).split(',')[1],{base64:true});}else photoFiles.push(null);}
+  for(const m of vm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}else photoFiles.push(null);}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
   vp.forEach((pl,i)=>{const coords=pl.getPath().filter(p=>bounds.contain(p)).map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>path${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
   let pi=0;
@@ -1357,7 +1357,7 @@ async function exportSelectedKMZ(){
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('선택 객체 KMZ',ds+'_선택');if(!fname)return;
   const zip=new JSZip(),photoFiles=[],usedNames=new Set();
-  for(const m of sm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});zip.file(`files/${sf}`,(await compressImage(img.src)).split(',')[1],{base64:true});}}
+  for(const m of sm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
   sp.forEach((pl,i)=>{const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>path${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
   let pi=0;
@@ -1385,6 +1385,19 @@ async function convertHeicIfNeeded(file){
   if(!isHeic)return file;
   const blob=await heic2any({blob:file,toType:'image/jpeg',quality:0.92});
   return new File([Array.isArray(blob)?blob[0]:blob],file.name.replace(/\.(heic|heif)$/i,'.jpg'),{type:'image/jpeg'});
+}
+
+function injectGPS(dataUrl,lat,lng){
+  try{
+    const toDMS=v=>{const a=Math.abs(v),d=Math.floor(a),m=Math.floor((a-d)*60),s=(a-d-m/60)*3600;return[[d,1],[m,1],[Math.round(s*100),100]];};
+    let ex={};try{ex=piexif.load(dataUrl);}catch(e){}
+    if(!ex['GPS'])ex['GPS']={};
+    ex['GPS'][piexif.GPSIFD.GPSLatitudeRef]=lat>=0?'N':'S';
+    ex['GPS'][piexif.GPSIFD.GPSLatitude]=toDMS(lat);
+    ex['GPS'][piexif.GPSIFD.GPSLongitudeRef]=lng>=0?'E':'W';
+    ex['GPS'][piexif.GPSIFD.GPSLongitude]=toDMS(lng);
+    return piexif.insert(piexif.dump(ex),dataUrl);
+  }catch(e){return dataUrl;}
 }
 
 function compressImage(imgSrc){
