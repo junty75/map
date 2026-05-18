@@ -304,7 +304,6 @@ function renderList() {
     const dotCls = { photo:'dot-photo', marker:'dot-marker', track:'dot-track' }[item.type];
     nameTd.innerHTML = `<span class="type-dot ${dotCls}"></span><span class="item-name">${escHtml(item.name)}</span>`;
     nameTd.title = item.name;
-    nameTd.querySelector('.item-name').ondblclick = e => { e.stopPropagation(); startEditItem(tr, item, idx); };
 
     const addrTd = document.createElement('td');
     addrTd.textContent = item.address !== undefined ? (item.address || '…') : '…';
@@ -312,8 +311,15 @@ function renderList() {
 
     tr.append(nameTd, addrTd);
 
+    tr.ondblclick = e => {
+      if (e.target.tagName === 'INPUT') return;
+      e.stopPropagation();
+      startEditItem(tr, item, idx);
+    };
+
     tr.onmousedown = e => {
       if (e.button !== 0) return;
+      if (e.target.tagName === 'INPUT') return;
       dragStartIdx = idx; isDragging = false;
       dragStartX = e.clientX; dragStartY = e.clientY;
       e.preventDefault();
@@ -418,7 +424,7 @@ function startEditItem(tr, item, idx) {
       const found = markers.find(m => m.marker === item.markerObj.marker);
       if (found) found.name = newName;
       const iwContent = item.markerObj.iw.getContent();
-      if (iwContent) { const t = iwContent.querySelector('div'); if (t) t.textContent = newName; }
+      if (iwContent) { const t = iwContent.querySelector('span') || iwContent.querySelector('div'); if (t) t.textContent = newName; }
     }
     if (item.polyline) item.polyline._name = newName;
     renderList();
