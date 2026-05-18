@@ -154,8 +154,9 @@
     <div id="photoListWrapper" tabindex="0">
       <table id="photoTable">
         <thead><tr>
-          <th id="nameColTh" style="width:70%;position:relative;cursor:pointer;user-select:none;">이름<span id="sortNameInd"></span><div class="col-resizer" id="colResizer"></div></th>
-          <th id="addrColTh" style="width:30%;cursor:pointer;user-select:none;">주소<span id="sortAddrInd"></span></th>
+          <th id="numColTh" style="width:10%;position:relative;text-align:center;user-select:none;">번호<div class="col-resizer" id="numColResizer"></div></th>
+          <th id="nameColTh" style="width:58%;position:relative;cursor:pointer;user-select:none;">이름<span id="sortNameInd"></span><div class="col-resizer" id="colResizer"></div></th>
+          <th id="addrColTh" style="width:32%;cursor:pointer;user-select:none;">주소<span id="sortAddrInd"></span></th>
         </tr></thead>
         <tbody id="photoTbody"></tbody>
       </table>
@@ -308,6 +309,10 @@ function renderList() {
     const tr = document.createElement('tr');
     if (selectedItems.has(idx)) tr.classList.add('selected');
 
+    const numTd = document.createElement('td');
+    numTd.textContent = idx + 1;
+    numTd.style.cssText = 'text-align:center;color:#777;font-size:11px;';
+
     const nameTd = document.createElement('td');
     const dotCls = { photo:'dot-photo', marker:'dot-marker', track:'dot-track' }[item.type];
     nameTd.innerHTML = `<span class="type-dot ${dotCls}"></span><span class="item-name">${escHtml(item.name)}</span>`;
@@ -317,7 +322,7 @@ function renderList() {
     addrTd.textContent = item.address !== undefined ? (item.address || '…') : '…';
     addrTd.title = item.address || '';
 
-    tr.append(nameTd, addrTd);
+    tr.append(numTd, nameTd, addrTd);
 
     tr.ondblclick = e => {
       if (e.target.tagName === 'INPUT') return;
@@ -551,12 +556,13 @@ function getImgExt(imgSrc) {
 // ── 목록 클립보드 복사 ──
 document.getElementById('copyListBtn').onclick = () => {
   const filtered = getFilteredItems();
-  const items = selectedItems.size > 0
-    ? [...selectedItems].sort((a,b)=>a-b).map(i=>filtered[i]).filter(Boolean)
-    : [];
+  const selIdxs = [...selectedItems].sort((a,b)=>a-b);
+  const items = selIdxs.map(i=>({item:filtered[i], rowNum:i+1})).filter(x=>x.item);
   if (!items.length) { alert('복사할 항목을 선택하세요.'); return; }
-  const rows = [['이름', '읍면', '리', '번지', '위도', '경도', '사진'].join('\t')];
-  items.forEach(item => {
+  const hdrs = ['번호', '이름', '읍면', '리', '번지', '위도', '경도', '사진'];
+  const rows = [hdrs.join('\t')];
+  const hRows = [`<tr>${hdrs.map(h=>`<th>${h}</th>`).join('')}</tr>`];
+  items.forEach(({item, rowNum}) => {
     let lat = '', lng = '';
     if (item.markerObj) {
       const pos = item.markerObj.marker.getPosition();
@@ -570,20 +576,24 @@ document.getElementById('copyListBtn').onclick = () => {
     }
     const [eup, ri, bunji] = parseAddr3(item.address || '');
     const photo = item.type === 'photo' ? item.name + getImgExt(item.imgSrc) : '';
-    rows.push([item.name, eup, ri, bunji, lat, lng, photo].join('\t'));
+    const vals = [rowNum, item.name, eup, ri, bunji, lat, lng, photo];
+    rows.push(vals.join('\t'));
+    hRows.push(`<tr>${vals.map(v=>`<td style="mso-number-format:'@'">${String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td>`).join('')}</tr>`);
   });
   const text = rows.join('\n');
+  const html = `<html><body><table>${hRows.join('')}</table></body></html>`;
   const btn = document.getElementById('copyListBtn');
-  navigator.clipboard.writeText(text).then(() => {
-    const orig = btn.textContent; btn.textContent = '✅ 복사됨';
-    setTimeout(() => btn.textContent = orig, 1500);
-  }).catch(() => {
-    const ta = document.createElement('textarea');
-    ta.value = text; ta.style = 'position:fixed;opacity:0;';
-    document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta);
-    const orig = btn.textContent; btn.textContent = '✅ 복사됨';
-    setTimeout(() => btn.textContent = orig, 1500);
-  });
+  function showDone(){const orig=btn.textContent;btn.textContent='✅ 복사됨';setTimeout(()=>btn.textContent=orig,1500);}
+  (async()=>{
+    try{
+      await navigator.clipboard.write([new ClipboardItem({'text/plain':new Blob([text],{type:'text/plain'}),'text/html':new Blob([html],{type:'text/html'})})]);
+      showDone();
+    }catch(e){
+      navigator.clipboard.writeText(text).then(showDone).catch(()=>{
+        const ta=document.createElement('textarea');ta.value=text;ta.style='position:fixed;opacity:0;';document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);showDone();
+      });
+    }
+  })();
 };
 
 // ── 사이드바 토글 ──
@@ -600,7 +610,7 @@ function closeSidebar() {
   if (map) setTimeout(() => map.relayout(), 50);
 }
 document.getElementById('sidebarOpenBtn').onclick = () => {
-  const isOpen = document.getElementById('sidebar').style.display !== 'none';
+  const isOpen = getComputedStyle(document.getElementById('sidebar')).display !== 'none';
   isOpen ? closeSidebar() : openSidebar();
 };
 
@@ -1581,7 +1591,7 @@ function downloadPhotoWithGPS(imgSrc,name,lat,lng){
   sr.addEventListener('mousedown',e=>{rS=true;e.preventDefault();});
   pr.addEventListener('mousedown',e=>{rP=true;e.preventDefault();});
   document.addEventListener('mousemove',e=>{
-    if(rS){const w=e.clientX;if(w>=160&&w<=700)sidebar.style.width=w+'px';}
+    if(rS){const w=e.clientX;if(w>=160&&w<=window.innerWidth-100)sidebar.style.width=w+'px';}
     if(rP){const sRect=sidebar.getBoundingClientRect();const h=sRect.bottom-e.clientY;if(h>=60&&h<=sRect.height-80)ps.style.height=h+'px';}
   });
   document.addEventListener('mouseup',()=>{rS=false;rP=false;});
@@ -1703,11 +1713,19 @@ document.addEventListener('mouseup', () => {
 
 // ── 컬럼 리사이즈 ──
 (function(){
+  const nr = document.getElementById('numColResizer');
   const cr = document.getElementById('colResizer');
   if (!cr) return;
+  const numTh = document.getElementById('numColTh');
   const nameTh = document.getElementById('nameColTh');
   const addrTh = document.getElementById('addrColTh');
-  let dragging = false, startX = 0, startW = 0, tableW = 0;
+  let dragging = false, draggingN = false, startX = 0, startW = 0, startW2 = 0, tableW = 0;
+  if (nr) nr.addEventListener('mousedown', e => {
+    draggingN = true; startX = e.clientX;
+    startW = numTh.offsetWidth; startW2 = nameTh.offsetWidth;
+    tableW = numTh.closest('table').offsetWidth;
+    e.preventDefault(); e.stopPropagation();
+  });
   cr.addEventListener('mousedown', e => {
     dragging = true; startX = e.clientX;
     startW = nameTh.offsetWidth;
@@ -1715,13 +1733,21 @@ document.addEventListener('mouseup', () => {
     e.preventDefault(); e.stopPropagation();
   });
   document.addEventListener('mousemove', e => {
-    if (!dragging) return;
-    const newW = Math.max(60, Math.min(tableW - 40, startW + e.clientX - startX));
-    const pct = (newW / tableW * 100).toFixed(1);
-    nameTh.style.width = pct + '%';
-    addrTh.style.width = (100 - parseFloat(pct)).toFixed(1) + '%';
+    if (draggingN) {
+      const nw = Math.max(28, Math.min(tableW - 80, startW + e.clientX - startX));
+      const nmw = Math.max(50, startW + startW2 - nw);
+      numTh.style.width = (nw / tableW * 100).toFixed(1) + '%';
+      nameTh.style.width = (nmw / tableW * 100).toFixed(1) + '%';
+    }
+    if (dragging) {
+      const numW = numTh.offsetWidth;
+      const newW = Math.max(50, Math.min(tableW - numW - 30, startW + e.clientX - startX));
+      const pct = (newW / tableW * 100).toFixed(1);
+      nameTh.style.width = pct + '%';
+      addrTh.style.width = ((tableW - numW - newW) / tableW * 100).toFixed(1) + '%';
+    }
   });
-  document.addEventListener('mouseup', () => { dragging = false; });
+  document.addEventListener('mouseup', () => { dragging = false; draggingN = false; });
 })();
 
 // ══════════════════════════════════════════════════
