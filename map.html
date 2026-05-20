@@ -240,6 +240,8 @@ let anchorIdx = -1;            // shift-click anchor
 let lastClickedIdx = -1;       // keyboard nav + InfoWindow focus
 let dragStartIdx = -1, isDragging = false, dragStartX = 0, dragStartY = 0;
 let trackCounter = 0;
+let _blockMapClick = false;
+function blockMapClick() { _blockMapClick = true; setTimeout(() => _blockMapClick = false, 150); }
 
 function getFilteredItems() {
   const base = currentFilter === 'all' ? allItems : allItems.filter(i => i.type === currentFilter);
@@ -384,6 +386,7 @@ function selectFilteredItem(idx) {
   lastClickedIdx = idx;
   const item = filtered[idx];
 
+  blockMapClick();
   allItems.forEach(i => { if (i.markerObj) i.markerObj.iw.close(); });
   if (item.markerObj) {
     const pos = item.markerObj.marker.getPosition();
@@ -764,6 +767,7 @@ function initializeMap(center) {
   geocoder = new kakao.maps.services.Geocoder();
 
   kakao.maps.event.addListener(map, 'click', e => {
+    if (_blockMapClick) return;
     if (markerInputOverlay) { markerInputOverlay.setMap(null); markerInputOverlay=null; return; }
     if (movingPhotoMarker) {
       movingPhotoMarker.marker.setPosition(e.latLng);
@@ -922,7 +926,7 @@ function addMarker(latlng, desc) {
   div.innerHTML=`<span>${desc}</span><div style="cursor:pointer;font-weight:bold;margin-left:8px;">✖</div>`;
   const [label,btn]=div.querySelectorAll('span,div');
   const iw=new kakao.maps.InfoWindow({content:div});
-  kakao.maps.event.addListener(marker,'click',()=>{iw.open(map,marker);selectItemByMarker(marker);});
+  kakao.maps.event.addListener(marker,'click',()=>{blockMapClick();iw.open(map,marker);selectItemByMarker(marker);});
   kakao.maps.event.addListener(marker,'rightclick',()=>showEditInput({marker,iw,name:desc},label));
   btn.onclick=()=>iw.close();
   let holdTimer=null;
@@ -962,7 +966,7 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate) {
       const entry=allItems.find(i=>i.markerObj?.marker===marker);
       showEditInput(entry?entry.markerObj:{marker,iw,name:filename},title);
     } else {
-      _clickTimer=setTimeout(()=>{_clickTimer=null;iw.open(map,marker);selectItemByMarker(marker);},280);
+      _clickTimer=setTimeout(()=>{_clickTimer=null;blockMapClick();iw.open(map,marker);selectItemByMarker(marker);},280);
     }
   });
   kakao.maps.event.addListener(marker,'rightclick',()=>{const e=allItems.find(i=>i.markerObj?.marker===marker);showEditInput(e?e.markerObj:{marker,iw,name:filename},title);});
