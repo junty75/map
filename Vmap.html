@@ -699,7 +699,18 @@ document.addEventListener('keydown', e => {
   }
   if (e.altKey){e.preventDefault();toggleDraw();return;}
   if (e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();doExport();return;}
-  if (e.ctrlKey&&e.key.toLowerCase()==='c'&&!getSelection().toString()){e.preventDefault();copyAndMark();return;}
+  if (e.ctrlKey&&e.key.toLowerCase()==='c'&&!getSelection().toString()){
+    e.preventDefault();
+    const anyPopupOpen = markers.some(m => m.ov !== null);
+    if (!anyPopupOpen) {
+      // 지도에 팝업 없으면 마커 생성 (사이드바 선택 무관)
+      copyAndMark();
+    } else if (selectedItems.size > 0) {
+      // 팝업 열려있고 사이드바 선택 있으면 목록 복사
+      document.getElementById('copyListBtn').click();
+    }
+    return;
+  }
   if (drawing&&(e.key==='Backspace'||e.key==='Escape'||(e.ctrlKey&&e.key==='z'))){e.preventDefault();drawCoords.pop();refreshDraw();if(!drawCoords.length)clearGuide();}
 
   // 목록 단축키 (사이드바가 열려있고 일반 input 포커스가 없을 때)

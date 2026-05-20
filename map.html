@@ -1097,7 +1097,18 @@ document.addEventListener('keydown', e => {
   // 일반 단축키
   if (!inInput) {
     if (e.ctrlKey&&e.key.toLowerCase()==='a'){e.preventDefault();const fl=getFilteredItems();fl.forEach((_,i)=>selectedItems.add(i));anchorIdx=0;lastClickedIdx=fl.length-1;renderList();return;}
-    if (e.ctrlKey&&e.key.toLowerCase()==='c'&&!window.getSelection().toString()){e.preventDefault();copyAndMarkLocation();return;}
+    if (e.ctrlKey&&e.key.toLowerCase()==='c'&&!window.getSelection().toString()){
+      e.preventDefault();
+      const anyIwOpen = markers.some(m => m.iw && m.iw.getMap && m.iw.getMap());
+      if (!anyIwOpen) {
+        // 지도에 팝업 없으면 마커 생성 (사이드바 선택 무관)
+        copyAndMarkLocation();
+      } else if (selectedItems.size > 0) {
+        // 팝업 열려있고 사이드바 선택 있으면 목록 복사
+        document.getElementById('copyListBtn').click();
+      }
+      return;
+    }
     if (e.key==='F1'){e.preventDefault();window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes');return;}
     if (e.altKey){e.preventDefault();if(drawingMode){if(moveLine)moveLine.setMap(null);if(distanceOverlay)distanceOverlay.setMap(null);drawingMode=false;document.getElementById('map').classList.remove('drawing-cursor');}else startDrawing();return;}
   }
