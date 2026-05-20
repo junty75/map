@@ -778,6 +778,8 @@ function initializeMap(center) {
         distanceOverlay = new kakao.maps.CustomOverlay({ map, content:`<div class="dotOverlay distanceInfo" style="font-size:.8em;margin-left:4px;margin-bottom:8px;">총거리 0m</div>`, position:e.latLng, xAnchor:0, yAnchor:1, zIndex:3 });
     }
     allItems.forEach(i => { if (i.markerObj) i.markerObj.iw.close(); });
+    // 주소검색창 포커스 해제 (포커스 있으면 마커 생성이 막히므로)
+    document.getElementById('address-input').blur();
     // 지도 클릭 시 사이드바 선택 전체 해제
     if (selectedItems.size > 0) {
       selectedItems.clear(); anchorIdx=-1; lastClickedIdx=-1;
@@ -901,8 +903,20 @@ function showMarkerInput(latlng) {
   cancelBtn.onclick=()=>markerInputOverlay.setMap(null);
 }
 
+// ── 마커 이미지 생성 (SVG 원형) ──
+function mkMarkerImg(color) {
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"><circle cx="9" cy="9" r="8" fill="${color}" stroke="white" stroke-width="2"/></svg>`;
+  return new kakao.maps.MarkerImage(
+    'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg),
+    new kakao.maps.Size(18, 18),
+    { offset: new kakao.maps.Point(9, 9) }
+  );
+}
+const MARKER_IMG_RED  = ()=>mkMarkerImg('#e74c3c');  // 설명/위치 마커
+const MARKER_IMG_BLUE = ()=>mkMarkerImg('#2471a3');  // 사진 마커
+
 function addMarker(latlng, desc) {
-  const marker=new kakao.maps.Marker({map,position:latlng,draggable:false});
+  const marker=new kakao.maps.Marker({map,position:latlng,image:MARKER_IMG_RED(),draggable:false});
   const div=document.createElement('div');
   div.style='position:relative;display:flex;align-items:center;justify-content:space-between;padding:5px;';
   div.innerHTML=`<span>${desc}</span><div style="cursor:pointer;font-weight:bold;margin-left:8px;">✖</div>`;
@@ -921,7 +935,7 @@ function addMarker(latlng, desc) {
 }
 
 function addPhotoMarker(latlng, imgSrc, filename, takenDate) {
-  const marker=new kakao.maps.Marker({map,position:latlng,draggable:false});
+  const marker=new kakao.maps.Marker({map,position:latlng,image:MARKER_IMG_BLUE(),draggable:false});
   const div=document.createElement('div');
   div.style='position:relative;width:374px;overflow:hidden;';
   div.innerHTML=`<div style="font-weight:bold;font-size:13px;padding:4px 6px 2px;">${filename}</div><div style="position:relative;"><img src="${imgSrc}" style="display:block;width:100%;max-height:281px;object-fit:cover;"><div style="position:absolute;top:4px;right:4px;display:flex;gap:3px;"><span class="dl-btn" style="cursor:pointer;font-size:13px;background:rgba(0,0,0,0.5);color:#fff;border-radius:3px;padding:1px 5px;" title="다운로드">💾</span><span class="cl-btn" style="cursor:pointer;font-size:13px;font-weight:bold;background:rgba(0,0,0,0.5);color:#fff;border-radius:3px;padding:1px 5px;">✖</span></div></div>`;
