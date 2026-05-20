@@ -417,9 +417,11 @@ function selectFilteredItem(idx) {
   lastClickedIdx = idx;
   const item = filtered[idx];
 
-  // 번호 표시 모드: 팝업 없이 번호 색상만 변경
+  // 번호 표시 모드: 팝업 없이 번호 색상만 변경 + 지도 이동
   if (showNumbers) {
     renderNumbers();
+    const ll = getItemLatLng(item);
+    if (ll) map.panTo(ll);
     const rows = document.querySelectorAll('#photoTbody tr');
     if (rows[idx]) rows[idx].scrollIntoView({ block:'nearest' });
     document.getElementById('photoListWrapper').focus();
