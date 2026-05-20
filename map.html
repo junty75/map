@@ -319,8 +319,9 @@ function renderList() {
     nameTd.title = item.name;
 
     const addrTd = document.createElement('td');
-    addrTd.textContent = item.address !== undefined ? (item.address || '…') : '…';
-    addrTd.title = item.address || '';
+    const addrText = (item.address !== undefined ? (item.address || '…') : '…') + trackLenStr(item);
+    addrTd.textContent = addrText;
+    addrTd.title = addrText;
 
     tr.append(numTd, nameTd, addrTd);
 
@@ -529,6 +530,18 @@ document.getElementById('addrColTh').onclick = () => {
   selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
   updateSortIndicators(); renderList();
 };
+
+// ── 트랙 길이 포맷 ──
+function fmtDist(d) {
+  if (d < 1000) return d < 100 ? `${d.toFixed(1)}m` : `${Math.round(d)}m`;
+  return `${(d/1000).toFixed(2)}km`;
+}
+function trackLenStr(item) {
+  if (item.type !== 'track' || !item.polyline) return '';
+  const m = item.polyline.getLength();
+  if (!m) return '';
+  return ` (L=${fmtDist(m)})`;
+}
 
 // ── 주소 → [읍면, 리, 번지] 분리 ──
 function parseAddr3(addr) {
@@ -765,6 +778,11 @@ function initializeMap(center) {
         distanceOverlay = new kakao.maps.CustomOverlay({ map, content:`<div class="dotOverlay distanceInfo" style="font-size:.8em;margin-left:4px;margin-bottom:8px;">총거리 0m</div>`, position:e.latLng, xAnchor:0, yAnchor:1, zIndex:3 });
     }
     allItems.forEach(i => { if (i.markerObj) i.markerObj.iw.close(); });
+    // 지도 클릭 시 사이드바 선택 전체 해제
+    if (selectedItems.size > 0) {
+      selectedItems.clear(); anchorIdx=-1; lastClickedIdx=-1;
+      document.querySelectorAll('#photoTbody tr').forEach(r=>r.classList.remove('selected'));
+    }
     const lat=e.latLng.getLat(), lng=e.latLng.getLng();
     document.getElementById('latlng-display').value = `${lat}, ${lng}`;
     geocoder.coord2Address(lng, lat, (res, status) => {
@@ -1099,18 +1117,28 @@ document.addEventListener('keydown', e => {
     if (e.ctrlKey&&e.key.toLowerCase()==='a'){e.preventDefault();const fl=getFilteredItems();fl.forEach((_,i)=>selectedItems.add(i));anchorIdx=0;lastClickedIdx=fl.length-1;renderList();return;}
     if (e.ctrlKey&&e.key.toLowerCase()==='c'&&!window.getSelection().toString()){
       e.preventDefault();
-      const anyIwOpen = markers.some(m => m.iw && m.iw.getMap && m.iw.getMap());
-      if (!anyIwOpen) {
-        // 지도에 팝업 없으면 마커 생성 (사이드바 선택 무관)
-        copyAndMarkLocation();
-      } else if (selectedItems.size > 0) {
-        // 팝업 열려있고 사이드바 선택 있으면 목록 복사
+      if (selectedItems.size > 0) {
         document.getElementById('copyListBtn').click();
+      } else {
+        copyAndMarkLocation();
       }
       return;
     }
     if (e.key==='F1'){e.preventDefault();window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes');return;}
-    if (e.altKey){e.preventDefault();if(drawingMode){if(moveLine)moveLine.setMap(null);if(distanceOverlay)distanceOverlay.setMap(null);drawingMode=false;document.getElementById('map').classList.remove('drawing-cursor');}else startDrawing();return;}
+    if (e.altKey){
+      e.preventDefault();
+      if (drawingMode) {
+        if(moveLine){moveLine.setMap(null);moveLine=null;}
+        if(distanceOverlay){distanceOverlay.setMap(null);distanceOverlay=null;}
+        drawingMode=false; document.getElementById('map').classList.remove('drawing-cursor');
+        if (currentPath.length>=2) {
+          const tname=currentPolyline._name||`경로 ${++trackCounter}`;
+          if(!currentPolyline._name) currentPolyline._name=tname;
+          addItem({type:'track',name:tname,address:'',polyline:currentPolyline});
+        } else { currentPolyline.setMap(null); polylines=polylines.filter(p=>p!==currentPolyline); }
+      } else startDrawing();
+      return;
+    }
   }
   if (e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();exportByFormat();return;}
 
