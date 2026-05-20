@@ -350,7 +350,7 @@ function renderList() {
         document.querySelectorAll('#photoTbody tr').forEach((r, i) => {
           r.style.opacity = selectedItems.has(i) ? '0.4' : '1';
         });
-      }, 600);
+      }, 300);
     };
 
     tr.onclick = e => {
@@ -930,7 +930,7 @@ function addMarker(latlng, desc) {
   kakao.maps.event.addListener(marker,'rightclick',()=>showEditInput({marker,iw,name:desc},label));
   btn.onclick=()=>iw.close();
   let holdTimer=null;
-  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);movingPhotoMarker={marker,iw,name:desc};},1000);});
+  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);movingPhotoMarker={marker,iw,name:desc};},300);});
   ['mouseup','mouseout'].forEach(evt=>kakao.maps.event.addListener(marker,evt,()=>{clearTimeout(holdTimer);map.setDraggable(true);}));
   kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;}});
   const markerObj={marker,iw,name:desc};
@@ -975,7 +975,7 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate) {
   clBtn.onclick=()=>iw.close();
 
   let holdTimer=null;
-  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);movingPhotoMarker={marker,iw,name:filename};},1000);});
+  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);movingPhotoMarker={marker,iw,name:filename};},300);});
   ['mouseup','mouseout'].forEach(evt=>kakao.maps.event.addListener(marker,evt,()=>{clearTimeout(holdTimer);map.setDraggable(true);}));
   kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;renderList();}});
 

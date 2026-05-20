@@ -260,7 +260,7 @@ function initMap(lat, lng) {
       if (m.ov) { vmap.removeOverlay(m.ov); m.ov = null; }
       vmap.getInteractions().forEach(i => { if (i instanceof ol.interaction.DragPan) i.setActive(false); });
       movingMk = m; isDraggingMk = true; document.body.style.cursor = 'move';
-    }, 1000);
+    }, 300);
   });
 
   vp.addEventListener('pointermove', e => {
@@ -1327,7 +1327,7 @@ function renderList(){
         }
         reorderMode=true;reorderTargetIdx=-1;
         document.querySelectorAll('#photoTbody tr').forEach((r,i)=>{r.style.opacity=selectedItems.has(i)?'0.4':'1';});
-      },600);
+      },300);
     };
     tr.onclick=e=>{
       if(isDragging){isDragging=false;return;}
