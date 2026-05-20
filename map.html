@@ -422,6 +422,14 @@ function selectFilteredItem(idx) {
     renderNumbers();
     const ll = getItemLatLng(item);
     if (ll) map.panTo(ll);
+    const _img = document.getElementById('previewImg');
+    const _ph  = document.getElementById('previewPlaceholder');
+    if (item.type === 'photo' && item.imgSrc) {
+      _img.src = item.imgSrc; _img.style.display = 'block'; _ph.style.display = 'none';
+    } else {
+      _img.style.display = 'none'; _img.src = '';
+      _ph.style.display = ''; _ph.textContent = item.type === 'track' ? `🗺 트랙: ${item.name}` : `📍 마커: ${item.name}`;
+    }
     const rows = document.querySelectorAll('#photoTbody tr');
     if (rows[idx]) rows[idx].scrollIntoView({ block:'nearest' });
     document.getElementById('photoListWrapper').focus();

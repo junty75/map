@@ -1531,6 +1531,7 @@ function selectFilteredItem(idx){
     if(item.mkObj) coord=item.mkObj.feat.getGeometry().getCoordinates();
     else if(item.polyLyr){const cs=getCoords(item.polyLyr);if(cs.length)coord=cs[Math.floor(cs.length/2)];}
     if(coord) panTo(coord);
+    if(item.mkObj&&item.type==='photo'&&item.mkObj.imgSrc)showPreview(item);else clearPreview();
     const rows=document.querySelectorAll('#photoTbody tr');
     if(rows[idx])rows[idx].scrollIntoView({block:'nearest'});
     document.getElementById('photoListWrapper').focus();
