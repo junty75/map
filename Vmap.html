@@ -31,6 +31,9 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 #folderBar{background:#d6eaf8;padding:4px 6px;flex-shrink:0;display:flex;align-items:center;gap:6px;border-bottom:1px solid #85c1e9;}
 #folderSelectBtn{font-size:11px;padding:3px 8px;cursor:pointer;background:#fff;border:1px solid #2980b9;border-radius:3px;color:#1a5276;white-space:nowrap;}
 #folderSelectBtn:hover{background:#d6eaf8;}
+#numToggleBtn{font-size:11px;padding:3px 8px;cursor:pointer;background:#fff;border:1px solid #2980b9;border-radius:3px;color:#1a5276;white-space:nowrap;}
+#numToggleBtn:hover{background:#d6eaf8;}
+#numToggleBtn.on{background:#1a5276;color:#fff;border-color:#1a5276;}
 #folderName{font-size:10px;color:#1a5276;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #photoListWrapper{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0;outline:none;}
 #photoTable{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;}
@@ -105,13 +108,14 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
   <div id="folderBar">
     <button id="folderSelectBtn">📁 폴더 선택</button>
     <button id="copyListBtn" title="목록 클립보드 복사">📋 복사</button>
+    <button id="numToggleBtn" title="지도에 번호 표시/숨기기">① 번호</button>
     <span id="folderName"></span>
   </div>
   <div id="photoListWrapper" tabindex="0">
     <table id="photoTable">
       <thead><tr>
-        <th id="numColTh" style="width:10%;position:relative;text-align:center;user-select:none;">번호<div class="col-resizer" id="numColResizer"></div></th>
-        <th id="nameColTh" style="width:58%;position:relative;cursor:pointer;user-select:none;">이름<span id="sortNameInd"></span><div class="col-resizer" id="colResizer"></div></th>
+        <th id="numColTh" style="width:10%;text-align:center;user-select:none;">번호<div class="col-resizer" id="numColResizer"></div></th>
+        <th id="nameColTh" style="width:58%;cursor:pointer;user-select:none;">이름<span id="sortNameInd"></span><div class="col-resizer" id="colResizer"></div></th>
         <th id="addrColTh" style="width:32%;cursor:pointer;user-select:none;">주소<span id="sortAddrInd"></span></th>
       </tr></thead>
       <tbody id="photoTbody"></tbody>
@@ -198,9 +202,32 @@ let markers   = [];   // {feat, lyr, ov, name, addr, isPhoto, imgSrc}
 let polylines = [];   // ol.layer.Vector[]
 let drawing   = false, drawCoords = [], drawLayer = null;
 let guideLine = null, distOv = null, distEl = null;
-let movingMk  = null, inputOv = null, locCount = 0;
+let movingMk  = null, movingGhost = null, inputOv = null, locCount = 0;
+let showNumbers = false, numberOverlays = [];
 let isDraggingMk = false;
 let vp = null;
+
+/* ── Undo / Redo ── */
+const undoStack = [], redoStack = [];
+function pushHistory(op) {
+  undoStack.push(op);
+  if (undoStack.length > 50) undoStack.shift();
+  redoStack.length = 0;
+}
+function doUndo() {
+  if (!undoStack.length) return;
+  const op = undoStack.pop();
+  op.undo();
+  redoStack.push(op);
+  renderList();
+}
+function doRedo() {
+  if (!redoStack.length) return;
+  const op = redoStack.pop();
+  op.redo();
+  undoStack.push(op);
+  renderList();
+}
 let lastCX    = 0, lastCY = 0, polyTarget = null;
 let lastAddr  = '주소 없음', lastLL = null;
 let searchMarker = null;
@@ -259,7 +286,18 @@ function initMap(lat, lng) {
       const m = holdTarget; holdTarget = null; holdTimer = null;
       if (m.ov) { vmap.removeOverlay(m.ov); m.ov = null; }
       vmap.getInteractions().forEach(i => { if (i instanceof ol.interaction.DragPan) i.setActive(false); });
-      movingMk = m; isDraggingMk = true; document.body.style.cursor = 'move';
+      // prevCoord는 드래그 시작 시점에 캡처 (endMoveMode에서 이미 바뀔 수 있으므로)
+      const prevCoord = m.feat.getGeometry().getCoordinates().slice();
+      // ghost overlay: CSS 위치 업데이트라 항상 즉각 반응
+      const color = m.isPhoto ? '#1565C0' : '#e53935';
+      const ghostEl = document.createElement('div');
+      ghostEl.style.cssText = `width:16px;height:16px;border-radius:50%;background:${color};border:2px solid white;box-shadow:0 2px 8px rgba(0,0,0,.5);pointer-events:none;opacity:.85;`;
+      const ghost = new ol.Overlay({ element: ghostEl, positioning: 'center-center', stopEvent: false, autoPan: false });
+      vmap.addOverlay(ghost);
+      ghost.setPosition(prevCoord);
+      m.feat.setStyle(new ol.style.Style({})); // 실제 마커 숨김
+      m._prevCoord = prevCoord; // endMoveMode에서 사용
+      movingMk = m; isDraggingMk = true; movingGhost = ghost; document.body.style.cursor = 'move';
     }, 300);
   });
 
@@ -268,11 +306,14 @@ function initMap(lat, lng) {
       clearTimeout(holdTimer); holdTimer = null; holdTarget = null;
       try { vp.releasePointerCapture(e.pointerId); } catch(_) {}
     }
-    if (movingMk) {
+    if (movingMk && movingGhost) {
       const rect = vp.getBoundingClientRect();
       const pixel = [(e.clientX - rect.left) * (vp.offsetWidth / rect.width), (e.clientY - rect.top) * (vp.offsetHeight / rect.height)];
       const coord = vmap.getCoordinateFromPixel(pixel);
-      if (coord) movingMk.feat.getGeometry().setCoordinates(coord);
+      if (coord) {
+        movingGhost.setPosition(coord);
+        movingMk.feat.getGeometry().setCoordinates(coord); // 실제 좌표도 동시 업데이트 → fetchAddrForItem이 정확한 좌표를 읽음
+      }
     }
   });
 
@@ -290,12 +331,23 @@ function initMap(lat, lng) {
 
 function endMoveMode() {
   const moved = movingMk;
-  movingMk = null; isDraggingMk = false; document.body.style.cursor = '';
+  const ghost = movingGhost;
+  movingMk = null; isDraggingMk = false; movingGhost = null; document.body.style.cursor = '';
   vmap.getInteractions().forEach(i => { if (i instanceof ol.interaction.DragPan) i.setActive(true); });
-  // 이동된 마커의 주소 업데이트
-  if (moved) {
-    const item = allItems.find(i => i.mkObj === moved);
-    if (item) { item.address = '…'; renderList(); fetchAddrForItem(item); }
+  if (!moved) { if (ghost) vmap.removeOverlay(ghost); return; }
+  if (ghost) vmap.removeOverlay(ghost);
+  // feature 좌표는 pointermove에서 이미 최신 위치로 업데이트됨
+  const prevCoord = moved._prevCoord || moved.feat.getGeometry().getCoordinates().slice();
+  const newCoord  = moved.feat.getGeometry().getCoordinates().slice();
+  delete moved._prevCoord;
+  moved.feat.setStyle(moved.isPhoto ? mkPhotoStyle() : mkNormalStyle());
+  const item = allItems.find(i => i.mkObj === moved);
+  if (item) {
+    item.address = '…'; renderList(); fetchAddrForItem(item);
+    pushHistory({
+      undo() { moved.feat.getGeometry().setCoordinates(prevCoord); item.address='…'; fetchAddrForItem(item); },
+      redo() { moved.feat.getGeometry().setCoordinates(newCoord);  item.address='…'; fetchAddrForItem(item); }
+    });
   }
 }
 
@@ -386,6 +438,7 @@ window.onload = () => {
     const hdrs = ['번호', '이름', '읍면', '리', '번지', '위도', '경도', '사진'];
     const rows = [hdrs.join('\t')];
     const hRows = [`<tr>${hdrs.map(h=>`<th>${h}</th>`).join('')}</tr>`];
+    const digits = String(filtered.length).length;
     items.forEach(({item, rowNum}) => {
       let lat = '', lng = '';
       if (item.mkObj) {
@@ -413,8 +466,11 @@ window.onload = () => {
       const ri=addrParts.slice(1).join(' ')||'';
       const bunji=parts.slice(lotIdx).join(' ')||'';
       const imgExt = (() => { const m=(item.imgSrc||'').match(/^data:image\/([a-zA-Z]+);/); if(!m)return''; return m[1].toLowerCase()==='jpeg'?'.jpg':'.'+m[1].toLowerCase(); })();
-      const photo = item.type === 'photo' ? item.name + imgExt : '';
-      const vals = [rowNum, item.name, eup, ri, bunji, lat, lng, photo];
+      // 번호 모드면 번호_이름 형태로 복사
+      const baseName = item.name.replace(/^\d+_/,'');
+      const exportName = showNumbers ? String(rowNum).padStart(digits,'0')+'_'+baseName : item.name;
+      const photo = item.type === 'photo' ? exportName + imgExt : '';
+      const vals = [rowNum, exportName, eup, ri, bunji, lat, lng, photo];
       rows.push(vals.join('\t'));
       hRows.push(`<tr>${vals.map(v=>`<td style="mso-number-format:'@'">${String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td>`).join('')}</tr>`);
     });
@@ -556,7 +612,8 @@ function mapClick(evt) {
     if (hit) return;
     const m = markers.find(mk => mk.feat === feat);
     if (m) {
-      hit = true; openPopup(m);
+      hit = true;
+      if (!showNumbers) openPopup(m);
       // 사이드바 싱크: 해당 마커를 사이드바에서 선택하고 스크롤
       const fi = allItems.find(i => i.mkObj === m);
       if (fi) {
@@ -565,7 +622,7 @@ function mapClick(evt) {
         if (idx >= 0) {
           selectedItems.clear(); selectedItems.add(idx); anchorIdx = idx; lastClickedIdx = idx;
           document.querySelectorAll('#photoTbody tr').forEach((r,i) => r.classList.toggle('selected', selectedItems.has(i)));
-          if (fi.type==='photo' && fi.mkObj.imgSrc) showPreview(fi); else clearPreview();
+          if (showNumbers) { renderNumbers(); } else { if (fi.type==='photo' && fi.mkObj.imgSrc) showPreview(fi); else clearPreview(); }
           const rows = document.querySelectorAll('#photoTbody tr');
           if (rows[idx]) rows[idx].scrollIntoView({block:'nearest'});
         }
@@ -573,11 +630,12 @@ function mapClick(evt) {
     }
   }, { hitTolerance:16 });
   if (hit) return;
-  closeAllPopups();
+  if (!showNumbers) closeAllPopups();
   // 지도 클릭 시 사이드바 선택 전체 해제
   if (selectedItems.size > 0) {
     selectedItems.clear(); anchorIdx=-1; lastClickedIdx=-1;
     document.querySelectorAll('#photoTbody tr').forEach(r=>r.classList.remove('selected'));
+    if (showNumbers) renderNumbers();
   }
   const ll = fromMerc(evt.coordinate); lastLL = ll;
   document.getElementById('latlng-box').value = `${ll[1].toFixed(6)}, ${ll[0].toFixed(6)}`;
@@ -632,6 +690,11 @@ function endDraw() {
     if (allItems.length===1) openSidebar();
     renderList();
     fetchAddrForItem(item);
+    const addedLyr=drawLayer;
+    pushHistory({
+      undo(){removeLyr(addedLyr);polylines=polylines.filter(p=>p!==addedLyr);allItems=allItems.filter(i=>i!==item);},
+      redo(){addLyr(addedLyr);polylines.push(addedLyr);allItems.push(item);if(allItems.length===1)openSidebar();}
+    });
   } else if (drawLayer) removeLyr(drawLayer);
   drawLayer=null; drawCoords=[];
 }
@@ -677,10 +740,18 @@ document.addEventListener('click',e=>{if(!document.getElementById('polyMenu').co
 document.getElementById('polyMenuCancelBtn').onclick=hidePolyMenu;
 document.getElementById('polyDeleteBtn').onclick=()=>{
   if(!polyTarget)return;
-  removeLyr(polyTarget);
-  polylines=polylines.filter(p=>p!==polyTarget);
-  allItems=allItems.filter(i=>i.polyLyr!==polyTarget);
+  const lyr=polyTarget;
+  const item=allItems.find(i=>i.polyLyr===lyr);
+  const allIdx=item?allItems.indexOf(item):-1;
+  const polyIdx=polylines.indexOf(lyr);
+  removeLyr(lyr);
+  polylines=polylines.filter(p=>p!==lyr);
+  allItems=allItems.filter(i=>i.polyLyr!==lyr);
   hidePolyMenu(); renderList();
+  if(item){pushHistory({
+    undo(){addLyr(lyr);if(polyIdx>=0)polylines.splice(polyIdx,0,lyr);else polylines.push(lyr);allItems.splice(Math.min(allIdx,allItems.length),0,item);if(allItems.length===1)openSidebar();},
+    redo(){removeLyr(lyr);polylines=polylines.filter(p=>p!==lyr);allItems=allItems.filter(i=>i!==item);}
+  });}
 };
 document.getElementById('polyEditBtn').onclick=()=>{
   if(!polyTarget)return;
@@ -700,7 +771,15 @@ document.getElementById('polyEditBtn').onclick=()=>{
 document.addEventListener('keydown', e => {
   if (e.key==='F1'){e.preventDefault();openHelp();return;}
   if (e.key==='Escape'){
-    if(movingMk){isDraggingMk=false;movingMk=null;document.body.style.cursor='';endMoveMode();e.preventDefault();return;}
+    if(movingMk){
+      // 이동 취소: ghost 제거, 실제 마커를 원래 위치로 복원
+      if(movingGhost){vmap.removeOverlay(movingGhost);movingGhost=null;}
+      if(movingMk._prevCoord){movingMk.feat.getGeometry().setCoordinates(movingMk._prevCoord);delete movingMk._prevCoord;}
+      movingMk.feat.setStyle(movingMk.isPhoto?mkPhotoStyle():mkNormalStyle());
+      movingMk=null;isDraggingMk=false;document.body.style.cursor='';
+      vmap.getInteractions().forEach(i=>{if(i instanceof ol.interaction.DragPan)i.setActive(true);});
+      e.preventDefault();return;
+    }
     if(inputOv){closeInputOv();e.preventDefault();return;}
   }
   if (e.altKey){e.preventDefault();toggleDraw();return;}
@@ -714,7 +793,9 @@ document.addEventListener('keydown', e => {
     }
     return;
   }
-  if (drawing&&(e.key==='Backspace'||e.key==='Escape'||(e.ctrlKey&&e.key==='z'))){e.preventDefault();drawCoords.pop();refreshDraw();if(!drawCoords.length)clearGuide();}
+  if (drawing&&(e.key==='Backspace'||e.key==='Escape'||(e.ctrlKey&&e.key.toLowerCase()==='z'))){e.preventDefault();drawCoords.pop();refreshDraw();if(!drawCoords.length)clearGuide();return;}
+  if (!drawing&&e.ctrlKey&&e.key.toLowerCase()==='z'&&!e.target.matches('input,textarea,select')){e.preventDefault();doUndo();return;}
+  if (!drawing&&e.ctrlKey&&(e.key.toLowerCase()==='y'||(e.shiftKey&&e.key.toLowerCase()==='z'))&&!e.target.matches('input,textarea,select')){e.preventDefault();doRedo();return;}
 
   // 목록 단축키 (사이드바가 열려있고 일반 input 포커스가 없을 때)
   const listEl=document.getElementById('photoListWrapper');
@@ -727,12 +808,25 @@ document.addEventListener('keydown', e => {
     if(!toDelete.length)return;
     const names=toDelete.map(i=>i.name).join(', ');
     if(!confirm(`"${names}"\n\n${toDelete.length}개 항목을 삭제하시겠습니까?`))return;
+    const deletedInfos=toDelete.map(item=>({item,allIdx:allItems.indexOf(item)}));
     toDelete.forEach(item=>{
       if(item.mkObj){removeLyr(item.mkObj.lyr);if(item.mkObj.ov)vmap.removeOverlay(item.mkObj.ov);markers=markers.filter(m=>m!==item.mkObj);}
       if(item.polyLyr){removeLyr(item.polyLyr);polylines=polylines.filter(p=>p!==item.polyLyr);}
     });
     allItems=allItems.filter(i=>!toDelete.includes(i));
     selectedItems.clear();anchorIdx=-1;lastClickedIdx=-1;clearPreview();renderList();
+    pushHistory({
+      undo(){deletedInfos.slice().sort((a,b)=>a.allIdx-b.allIdx).forEach(({item,allIdx})=>{
+        if(item.mkObj){addLyr(item.mkObj.lyr);markers.push(item.mkObj);}
+        if(item.polyLyr){addLyr(item.polyLyr);polylines.push(item.polyLyr);}
+        allItems.splice(Math.min(allIdx,allItems.length),0,item);
+      });},
+      redo(){deletedInfos.forEach(({item})=>{
+        if(item.mkObj){removeLyr(item.mkObj.lyr);if(item.mkObj.ov)vmap.removeOverlay(item.mkObj.ov);markers=markers.filter(m=>m!==item.mkObj);}
+        if(item.polyLyr){removeLyr(item.polyLyr);polylines=polylines.filter(p=>p!==item.polyLyr);}
+        allItems=allItems.filter(i=>i!==item);
+      });}
+    });
     return;
   }
   if (e.ctrlKey&&e.key.toLowerCase()==='a'&&(document.activeElement===listEl||sidebarOpen)&&!inInput){
@@ -791,6 +885,10 @@ function addMarker(coord, name, addr) {
   if(allItems.length===1)openSidebar();
   renderList();
   if(!addr) fetchAddrForItem(item);
+  pushHistory({
+    undo(){removeLyr(obj.lyr);if(obj.ov)vmap.removeOverlay(obj.ov);markers=markers.filter(m=>m!==obj);allItems=allItems.filter(i=>i!==item);},
+    redo(){addLyr(obj.lyr);markers.push(obj);allItems.push(item);if(allItems.length===1)openSidebar();}
+  });
   return obj;
 }
 
@@ -806,6 +904,10 @@ function addPhotoMarker(coord, imgSrc, name) {
   if(allItems.length===1)openSidebar();
   renderList();
   fetchAddrForItem(item);
+  pushHistory({
+    undo(){removeLyr(obj.lyr);if(obj.ov)vmap.removeOverlay(obj.ov);markers=markers.filter(m=>m!==obj);allItems=allItems.filter(i=>i!==item);},
+    redo(){addLyr(obj.lyr);markers.push(obj);allItems.push(item);if(allItems.length===1)openSidebar();}
+  });
   return obj;
 }
 
@@ -878,10 +980,16 @@ function showEditInput(m){
     closeInputOv();renderList();
   };
   el.querySelector('.cancel').onclick=()=>{
+    const item=allItems.find(i=>i.mkObj===m);
+    const allIdx=item?allItems.indexOf(item):-1;
     removeLyr(m.lyr);if(m.ov)vmap.removeOverlay(m.ov);
     markers=markers.filter(x=>x!==m);
     allItems=allItems.filter(i=>i.mkObj!==m);
     closeInputOv();renderList();
+    if(item){pushHistory({
+      undo(){addLyr(m.lyr);markers.push(m);allItems.splice(Math.min(allIdx,allItems.length),0,item);if(allItems.length===1)openSidebar();},
+      redo(){removeLyr(m.lyr);if(m.ov)vmap.removeOverlay(m.ov);markers=markers.filter(x=>x!==m);allItems=allItems.filter(i=>i!==item);}
+    });}
   };
   inp.onkeydown=e=>{if(e.key==='Enter')el.querySelector('.ok').click();};
 }
@@ -1183,32 +1291,36 @@ async function defName(ms){
 async function exportGPX(vis=false){
   const ms=getMks(vis),ls=getLyrs(vis);
   const fname=prompt('GPX 파일명',await defName(ms));if(!fname)return;
+  const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="VWorldMap">\n';
-  ls.forEach((l,i)=>{const pts=getCoords(l).map(c=>{const ll=fromMerc(c);return`<trkpt lat="${ll[1]}" lon="${ll[0]}"></trkpt>\n`;}).join('');gpx+=`<trk><name>path${i+1}</name><trkseg>\n${pts}</trkseg></trk>\n`;});
-  ms.forEach(m=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());gpx+=`<wpt lat="${ll[1]}" lon="${ll[0]}"><name>${m.name}</name></wpt>\n`;});
+  ls.forEach((l,i)=>{const pts=getCoords(l).map(c=>{const ll=fromMerc(c);return`<trkpt lat="${ll[1]}" lon="${ll[0]}"></trkpt>\n`;}).join('');gpx+=`<trk><name>${nnm?.get(l)||'path'+(i+1)}</name><trkseg>\n${pts}</trkseg></trk>\n`;});
+  ms.forEach(m=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());gpx+=`<wpt lat="${ll[1]}" lon="${ll[0]}"><name>${nnm?.get(m)||m.name}</name></wpt>\n`;});
   gpx+='</gpx>';dlBlob(new Blob([gpx],{type:'application/gpx+xml'}),fname+'.gpx');
 }
 async function exportCSV(){
   const ms=getMks(false);if(!ms.length){alert('내보낼 마커가 없습니다.');return;}
   const fname=prompt('CSV 파일명',await defName(ms));if(!fname)return;
+  const nnm=buildNumNameMap();
   let csv='﻿이름,위도,경도,주소\n';
-  for(const m of ms){const ll=fromMerc(m.feat.getGeometry().getCoordinates());const addr=m.addr||await new Promise(r=>reverseGeocode(ll[0],ll[1],r));csv+=`"${m.name}",${ll[1]},${ll[0]},"${addr}"\n`;}
+  for(const m of ms){const ll=fromMerc(m.feat.getGeometry().getCoordinates());const addr=m.addr||await new Promise(r=>reverseGeocode(ll[0],ll[1],r));csv+=`"${nnm?.get(m)||m.name}",${ll[1]},${ll[0]},"${addr}"\n`;}
   dlBlob(new Blob([csv],{type:'text/csv;charset=utf-8;'}),fname+'.csv');
 }
 async function exportKMZ(vis=false){
   const ms=getMks(vis),ls=getLyrs(vis);
   const fname=prompt('KMZ 파일명',await defName(ms));if(!fname)return;
+  const nnm=buildNumNameMap();
   const zip=new JSZip(),pFiles=new Array(ms.length).fill(null),usedFn=new Set();
-  for(let i=0;i<ms.length;i++){const m=ms[i];if(m.isPhoto&&m.imgSrc){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;usedFn.add(fn);pFiles[i]=fn;const ll=fromMerc(m.feat.getGeometry().getCoordinates());const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);zip.file(`files/${fn}`,img.split(',')[1],{base64:true});}}
+  for(let i=0;i<ms.length;i++){const m=ms[i];if(m.isPhoto&&m.imgSrc){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;usedFn.add(fn);pFiles[i]=fn;const ll=fromMerc(m.feat.getGeometry().getCoordinates());const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);zip.file(`files/${fn}`,img.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(fname)}</name>\n`;
-  ls.forEach((l,i)=>{const coords=getCoords(l).map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');kml+=`<Placemark><name>path${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
-  ms.forEach((m,i)=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());if(m.isPhoto&&pFiles[i]){kml+=`<Placemark><name>${esc(m.name)}</name><description><![CDATA[<img src="files/${pFiles[i]}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${pFiles[i]}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}else{kml+=`<Placemark><name>${esc(m.name)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}});
+  ls.forEach((l,i)=>{const coords=getCoords(l).map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');kml+=`<Placemark><name>${esc(nnm?.get(l)||'path'+(i+1))}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
+  ms.forEach((m,i)=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());const nm=nnm?.get(m)||m.name;if(m.isPhoto&&pFiles[i]){kml+=`<Placemark><name>${esc(nm)}</name><description><![CDATA[<img src="files/${pFiles[i]}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${pFiles[i]}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}else{kml+=`<Placemark><name>${esc(nm)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}});
   kml+='</Document></kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   dlBlob(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}),fname+'.kmz');
 }
 async function downloadAllPhotos(){
-  for(const m of markers.filter(m=>m.isPhoto&&m.imgSrc)){const ll=fromMerc(m.feat.getGeometry().getCoordinates());await downloadPhotoWithGPS(m.imgSrc,m.name,ll[1],ll[0]);}
+  const nnm=buildNumNameMap();
+  for(const m of markers.filter(m=>m.isPhoto&&m.imgSrc)){const ll=fromMerc(m.feat.getGeometry().getCoordinates());await downloadPhotoWithGPS(m.imgSrc,nnm?.get(m)||m.name,ll[1],ll[0]);}
 }
 
 /* 선택 객체 내보내기 */
@@ -1223,28 +1335,31 @@ function getSelectedExportItems(){
 async function exportSelectedGPX(){
   const r=getSelectedExportItems();if(!r)return;const{ms,ls}=r;
   const fname=prompt('선택 객체 GPX',ms.at(-1)?.name||'selected');if(!fname)return;
+  const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="VWorldMap">\n';
-  ls.forEach((l,i)=>{const pts=getCoords(l).map(c=>{const ll=fromMerc(c);return`<trkpt lat="${ll[1]}" lon="${ll[0]}"></trkpt>\n`;}).join('');gpx+=`<trk><name>path${i+1}</name><trkseg>\n${pts}</trkseg></trk>\n`;});
-  ms.forEach(m=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());gpx+=`<wpt lat="${ll[1]}" lon="${ll[0]}"><name>${m.name}</name></wpt>\n`;});
+  ls.forEach((l,i)=>{const pts=getCoords(l).map(c=>{const ll=fromMerc(c);return`<trkpt lat="${ll[1]}" lon="${ll[0]}"></trkpt>\n`;}).join('');gpx+=`<trk><name>${nnm?.get(l)||'path'+(i+1)}</name><trkseg>\n${pts}</trkseg></trk>\n`;});
+  ms.forEach(m=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());gpx+=`<wpt lat="${ll[1]}" lon="${ll[0]}"><name>${nnm?.get(m)||m.name}</name></wpt>\n`;});
   gpx+='</gpx>';dlBlob(new Blob([gpx],{type:'application/gpx+xml'}),fname+'.gpx');
 }
 async function exportSelectedCSV(){
   const r=getSelectedExportItems();if(!r)return;const{ms}=r;
   if(!ms.length){alert('선택된 마커가 없습니다.');return;}
   const fname=prompt('선택 객체 CSV','selected');if(!fname)return;
+  const nnm=buildNumNameMap();
   let csv='﻿이름,위도,경도,주소\n';
-  for(const m of ms){const ll=fromMerc(m.feat.getGeometry().getCoordinates());const addr=m.addr||await new Promise(r=>reverseGeocode(ll[0],ll[1],r));csv+=`"${m.name}",${ll[1]},${ll[0]},"${addr}"\n`;}
+  for(const m of ms){const ll=fromMerc(m.feat.getGeometry().getCoordinates());const addr=m.addr||await new Promise(r=>reverseGeocode(ll[0],ll[1],r));csv+=`"${nnm?.get(m)||m.name}",${ll[1]},${ll[0]},"${addr}"\n`;}
   dlBlob(new Blob([csv],{type:'text/csv;charset=utf-8;'}),fname+'.csv');
 }
 async function exportSelectedKMZ(){
   const r=getSelectedExportItems();if(!r)return;const{ms,ls}=r;
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('선택 객체 KMZ',ds+'_선택');if(!fname)return;
+  const nnm=buildNumNameMap();
   const zip=new JSZip(),pFiles=new Array(ms.length).fill(null),usedFn=new Set();
-  for(let i=0;i<ms.length;i++){const m=ms[i];if(m.isPhoto&&m.imgSrc){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;usedFn.add(fn);pFiles[i]=fn;const ll=fromMerc(m.feat.getGeometry().getCoordinates());const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);zip.file(`files/${fn}`,img.split(',')[1],{base64:true});}}
+  for(let i=0;i<ms.length;i++){const m=ms[i];if(m.isPhoto&&m.imgSrc){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;usedFn.add(fn);pFiles[i]=fn;const ll=fromMerc(m.feat.getGeometry().getCoordinates());const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);zip.file(`files/${fn}`,img.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(fname)}</name>\n`;
-  ls.forEach((l,i)=>{const coords=getCoords(l).map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');kml+=`<Placemark><name>path${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
-  ms.forEach((m,i)=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());if(m.isPhoto&&pFiles[i]){kml+=`<Placemark><name>${esc(m.name)}</name><description><![CDATA[<img src="files/${pFiles[i]}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${pFiles[i]}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}else{kml+=`<Placemark><name>${esc(m.name)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}});
+  ls.forEach((l,i)=>{const coords=getCoords(l).map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');kml+=`<Placemark><name>${esc(nnm?.get(l)||'path'+(i+1))}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
+  ms.forEach((m,i)=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());const nm=nnm?.get(m)||m.name;if(m.isPhoto&&pFiles[i]){kml+=`<Placemark><name>${esc(nm)}</name><description><![CDATA[<img src="files/${pFiles[i]}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${pFiles[i]}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}else{kml+=`<Placemark><name>${esc(nm)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}});
   kml+='</Document></kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   dlBlob(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}),fname+'.kmz');
@@ -1252,7 +1367,8 @@ async function exportSelectedKMZ(){
 async function downloadSelectedPhotos(){
   const r=getSelectedExportItems();if(!r)return;const{ms}=r;
   const pm=ms.filter(m=>m.isPhoto&&m.imgSrc);if(!pm.length){alert('선택된 사진 마커가 없습니다.');return;}
-  for(const m of pm){const ll=fromMerc(m.feat.getGeometry().getCoordinates());await downloadPhotoWithGPS(m.imgSrc,m.name,ll[1],ll[0]);}
+  const nnm=buildNumNameMap();
+  for(const m of pm){const ll=fromMerc(m.feat.getGeometry().getCoordinates());await downloadPhotoWithGPS(m.imgSrc,nnm?.get(m)||m.name,ll[1],ll[0]);}
 }
 
 /* ════════════════════════════════════
@@ -1274,6 +1390,21 @@ function closeSidebar(){
 function getFilteredItems(){
   const base = currentFilter==='all' ? allItems : allItems.filter(i=>i.type===currentFilter);
   return base.filter(i=>visibility[i.type]!==false);
+}
+// 번호표시 모드용: 객체 → 번호포함이름 맵 반환
+function buildNumNameMap(){
+  if(!showNumbers)return null;
+  const filtered=getFilteredItems();
+  const total=filtered.length;
+  const digits=String(total).length;
+  const m=new Map();
+  filtered.forEach((item,idx)=>{
+    const base=item.name.replace(/^\d+_/,''); // 기존 번호 프레픽스 제거
+    const n=String(idx+1).padStart(digits,'0')+'_'+base;
+    if(item.mkObj)m.set(item.mkObj,n);
+    if(item.polyLyr)m.set(item.polyLyr,n);
+  });
+  return m;
 }
 
 function renderList(){
@@ -1299,8 +1430,11 @@ function renderList(){
 
     const nameTd=document.createElement('td');
     const dotCls={photo:'dot-photo',marker:'dot-marker',track:'dot-track'}[item.type];
-    nameTd.innerHTML=`<span class="type-dot ${dotCls}"></span><span class="item-name">${escHtml(item.name)}</span>`;
-    nameTd.title=item.name;
+    const digits=String(filtered.length).length;
+    const baseName=item.name.replace(/^\d+_/,''); // 기존 번호 제거 후 재부여
+    const dispName=showNumbers?String(idx+1).padStart(digits,'0')+'_'+baseName:item.name;
+    nameTd.innerHTML=`<span class="type-dot ${dotCls}"></span><span class="item-name">${escHtml(dispName)}</span>`;
+    nameTd.title=dispName;
 
     const addrTd=document.createElement('td');
     const addrText=(item.address!==undefined?(shortAddr(item.address)||'…'):'…')+trackLenStr(item);
@@ -1350,13 +1484,59 @@ function renderList(){
     };
     tbody.appendChild(tr);
   });
+  renderNumbers();
 }
+
+/* ── 지도 번호 오버레이 ── */
+function renderNumbers(){
+  numberOverlays.forEach(o=>vmap.removeOverlay(o));
+  numberOverlays=[];
+  if(!showNumbers||!vmap)return;
+  getFilteredItems().forEach((item,idx)=>{
+    const isSel=selectedItems.has(idx);
+    let coord=null;
+    if(item.mkObj) coord=item.mkObj.feat.getGeometry().getCoordinates();
+    else if(item.polyLyr){const cs=getCoords(item.polyLyr);if(cs.length)coord=cs[Math.floor(cs.length/2)];}
+    if(!coord)return;
+    const el=document.createElement('div');
+    el.textContent=idx+1;
+    const bg=isSel?'rgba(200,0,0,.9)':'rgba(0,0,0,.65)';
+    el.style.cssText=`background:${bg};color:#fff;border-radius:4px;padding:0 4px;font-size:10px;font-weight:bold;line-height:16px;pointer-events:none;white-space:nowrap;`;
+    const ov=new ol.Overlay({element:el,positioning:'bottom-center',offset:[0,-12],stopEvent:false,autoPan:false});
+    vmap.addOverlay(ov);
+    ov.setPosition(coord);
+    // 컨테이너 z-index 직접 설정: 선택=앞, 비선택=뒤
+    const container=el.parentElement;
+    if(container) container.style.zIndex=isSel?'100':'5';
+    numberOverlays.push(ov);
+  });
+}
+document.getElementById('numToggleBtn').onclick=()=>{
+  showNumbers=!showNumbers;
+  document.getElementById('numToggleBtn').classList.toggle('on',showNumbers);
+  if(showNumbers) closeAllPopups();
+  renderList(); // renderNumbers()는 renderList() 끝에서 호출됨
+};
 
 function selectFilteredItem(idx){
   const filtered=getFilteredItems();
   if(idx<0||idx>=filtered.length)return;
   lastClickedIdx=idx;
   const item=filtered[idx];
+
+  // 번호 표시 모드: 팝업 없이 번호 색상만 변경
+  if(showNumbers){
+    renderNumbers();
+    let coord=null;
+    if(item.mkObj) coord=item.mkObj.feat.getGeometry().getCoordinates();
+    else if(item.polyLyr){const cs=getCoords(item.polyLyr);if(cs.length)coord=cs[Math.floor(cs.length/2)];}
+    if(coord) panTo(coord);
+    const rows=document.querySelectorAll('#photoTbody tr');
+    if(rows[idx])rows[idx].scrollIntoView({block:'nearest'});
+    document.getElementById('photoListWrapper').focus();
+    return;
+  }
+
   closeAllPopups();
   if(item.mkObj){
     openPopup(item.mkObj);
@@ -1416,6 +1596,7 @@ function getReorderLine(){
 }
 
 function reorderItems(targetIdx){
+  const prevOrder=allItems.slice();
   const filtered=getFilteredItems();
   const moving=[...selectedItems].sort((a,b)=>a-b).map(i=>filtered[i]).filter(Boolean);
   if(!moving.length)return;
@@ -1430,6 +1611,11 @@ function reorderItems(targetIdx){
   moving.forEach(item=>{const ni=nf.indexOf(item);if(ni>=0)selectedItems.add(ni);});
   anchorIdx=Math.min(...[...selectedItems]);lastClickedIdx=Math.max(...[...selectedItems]);
   renderList();
+  const newOrder=allItems.slice();
+  pushHistory({
+    undo(){allItems.length=0;prevOrder.forEach(i=>allItems.push(i));selectedItems.clear();},
+    redo(){allItems.length=0;newOrder.forEach(i=>allItems.push(i));selectedItems.clear();}
+  });
 }
 
 document.addEventListener('mousemove',e=>{

@@ -48,6 +48,9 @@
     #folderBar { background:#d6eaf8; padding:4px 6px; flex-shrink:0; display:flex; align-items:center; gap:6px; border-bottom:1px solid #85c1e9; }
     #folderSelectBtn { font-size:11px; padding:3px 8px; cursor:pointer; background:#fff; border:1px solid #2980b9; border-radius:3px; color:#1a5276; white-space:nowrap; }
     #folderSelectBtn:hover { background:#d6eaf8; }
+    #numToggleBtn { font-size:11px; padding:3px 8px; cursor:pointer; background:#fff; border:1px solid #2980b9; border-radius:3px; color:#1a5276; white-space:nowrap; }
+    #numToggleBtn:hover { background:#d6eaf8; }
+    #numToggleBtn.on { background:#1a5276; color:#fff; border-color:#1a5276; }
     #folderName { font-size:10px; color:#1a5276; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
     /* ── 목록 ── */
@@ -149,13 +152,14 @@
     <div id="folderBar">
       <button id="folderSelectBtn">📁 폴더 선택</button>
       <button id="copyListBtn" title="목록 클립보드 복사">📋 복사</button>
+      <button id="numToggleBtn" title="지도에 번호 표시/숨기기">① 번호</button>
       <span id="folderName"></span>
     </div>
     <div id="photoListWrapper" tabindex="0">
       <table id="photoTable">
         <thead><tr>
-          <th id="numColTh" style="width:10%;position:relative;text-align:center;user-select:none;">번호<div class="col-resizer" id="numColResizer"></div></th>
-          <th id="nameColTh" style="width:58%;position:relative;cursor:pointer;user-select:none;">이름<span id="sortNameInd"></span><div class="col-resizer" id="colResizer"></div></th>
+          <th id="numColTh" style="width:10%;text-align:center;user-select:none;">번호<div class="col-resizer" id="numColResizer"></div></th>
+          <th id="nameColTh" style="width:58%;cursor:pointer;user-select:none;">이름<span id="sortNameInd"></span><div class="col-resizer" id="colResizer"></div></th>
           <th id="addrColTh" style="width:32%;cursor:pointer;user-select:none;">주소<span id="sortAddrInd"></span></th>
         </tr></thead>
         <tbody id="photoTbody"></tbody>
@@ -247,6 +251,21 @@ function getFilteredItems() {
   const base = currentFilter === 'all' ? allItems : allItems.filter(i => i.type === currentFilter);
   return base.filter(i => visibility[i.type] !== false);
 }
+// 번호표시 모드용: 객체 → 번호포함이름 맵 반환
+function buildNumNameMap(){
+  if(!showNumbers)return null;
+  const filtered=getFilteredItems();
+  const total=filtered.length;
+  const digits=String(total).length;
+  const m=new Map();
+  filtered.forEach((item,idx)=>{
+    const base=item.name.replace(/^\d+_/,''); // 기존 번호 프레픽스 제거
+    const n=String(idx+1).padStart(digits,'0')+'_'+base;
+    if(item.markerObj)m.set(item.markerObj,n);
+    if(item.polyline)m.set(item.polyline,n);
+  });
+  return m;
+}
 
 function shortAddr(fullAddr) {
   if (!fullAddr) return '';
@@ -284,6 +303,14 @@ function getItemLatLng(item) {
   return null;
 }
 
+function updateMarkerAddr(marker) {
+  const item = allItems.find(i => i.markerObj?.marker === marker);
+  if (!item) return;
+  item.address = '…';
+  renderList();
+  fetchAddr(marker.getPosition(), addr => { item.address = addr; renderList(); });
+}
+
 function removeItem(predicate) {
   const ai = allItems.findIndex(predicate);
   if (ai < 0) return;
@@ -317,8 +344,11 @@ function renderList() {
 
     const nameTd = document.createElement('td');
     const dotCls = { photo:'dot-photo', marker:'dot-marker', track:'dot-track' }[item.type];
-    nameTd.innerHTML = `<span class="type-dot ${dotCls}"></span><span class="item-name">${escHtml(item.name)}</span>`;
-    nameTd.title = item.name;
+    const digits = String(filtered.length).length;
+    const baseName = item.name.replace(/^\d+_/,''); // 기존 번호 제거 후 재부여
+    const dispName = showNumbers ? String(idx+1).padStart(digits,'0')+'_'+baseName : item.name;
+    nameTd.innerHTML = `<span class="type-dot ${dotCls}"></span><span class="item-name">${escHtml(dispName)}</span>`;
+    nameTd.title = dispName;
 
     const addrTd = document.createElement('td');
     const addrText = (item.address !== undefined ? (item.address || '…') : '…') + trackLenStr(item);
@@ -376,6 +406,7 @@ function renderList() {
 
     tbody.appendChild(tr);
   });
+  renderNumbers();
 }
 
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -385,6 +416,15 @@ function selectFilteredItem(idx) {
   if (idx < 0 || idx >= filtered.length) return;
   lastClickedIdx = idx;
   const item = filtered[idx];
+
+  // 번호 표시 모드: 팝업 없이 번호 색상만 변경
+  if (showNumbers) {
+    renderNumbers();
+    const rows = document.querySelectorAll('#photoTbody tr');
+    if (rows[idx]) rows[idx].scrollIntoView({ block:'nearest' });
+    document.getElementById('photoListWrapper').focus();
+    return;
+  }
 
   blockMapClick();
   allItems.forEach(i => { if (i.markerObj) i.markerObj.iw.close(); });
@@ -468,6 +508,29 @@ function startEditItem(tr, item, idx) {
   };
   input.onclick = e => e.stopPropagation();
 }
+
+// ── 지도 번호 오버레이 ──
+function renderNumbers() {
+  numberOverlays.forEach(o => o.setMap(null));
+  numberOverlays = [];
+  if (!showNumbers || !map) return;
+  getFilteredItems().forEach((item, idx) => {
+    const ll = getItemLatLng(item);
+    if (!ll) return;
+    const n = idx + 1;
+    const bg = selectedItems.has(idx) ? 'rgba(200,0,0,.9)' : 'rgba(0,0,0,.65)';
+    const isSel = selectedItems.has(idx);
+    const content = `<div style="position:relative;width:0;height:0;"><div style="position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:${bg};color:#fff;border-radius:4px;padding:0 4px;font-size:10px;font-weight:bold;line-height:16px;pointer-events:none;white-space:nowrap;">${n}</div></div>`;
+    const ov = new kakao.maps.CustomOverlay({ map, content, position: ll, xAnchor: 0.5, yAnchor: 0.5, zIndex: isSel ? 10 : 5 });
+    numberOverlays.push(ov);
+  });
+}
+document.getElementById('numToggleBtn').onclick = () => {
+  showNumbers = !showNumbers;
+  document.getElementById('numToggleBtn').classList.toggle('on', showNumbers);
+  if (showNumbers) allItems.forEach(i => { if (i.markerObj) i.markerObj.iw.close(); });
+  renderList(); // renderNumbers()는 renderList() 끝에서 호출됨
+};
 
 function clearPreview() {
   const img = document.getElementById('previewImg');
@@ -578,6 +641,7 @@ document.getElementById('copyListBtn').onclick = () => {
   const hdrs = ['번호', '이름', '읍면', '리', '번지', '위도', '경도', '사진'];
   const rows = [hdrs.join('\t')];
   const hRows = [`<tr>${hdrs.map(h=>`<th>${h}</th>`).join('')}</tr>`];
+  const digits = String(filtered.length).length;
   items.forEach(({item, rowNum}) => {
     let lat = '', lng = '';
     if (item.markerObj) {
@@ -591,8 +655,11 @@ document.getElementById('copyListBtn').onclick = () => {
       }
     }
     const [eup, ri, bunji] = parseAddr3(item.address || '');
-    const photo = item.type === 'photo' ? item.name + getImgExt(item.imgSrc) : '';
-    const vals = [rowNum, item.name, eup, ri, bunji, lat, lng, photo];
+    // 번호 모드면 번호_이름 형태로 복사
+    const baseName = item.name.replace(/^\d+_/,'');
+    const exportName = showNumbers ? String(rowNum).padStart(digits,'0')+'_'+baseName : item.name;
+    const photo = item.type === 'photo' ? exportName + getImgExt(item.imgSrc) : '';
+    const vals = [rowNum, exportName, eup, ri, bunji, lat, lng, photo];
     rows.push(vals.join('\t'));
     hRows.push(`<tr>${vals.map(v=>`<td style="mso-number-format:'@'">${String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td>`).join('')}</tr>`);
   });
@@ -733,6 +800,7 @@ let currentPolyline, currentPath = [];
 let searchMarker = null, movingPhotoMarker = null;
 let moveLine = null, distanceOverlay = null;
 let locationMarkerCount = 0;
+let showNumbers = false, numberOverlays = [];
 
 function getRandomColor() { return '#' + Math.floor(Math.random()*0xFFFFFF).toString(16).padStart(6,'0'); }
 
@@ -770,9 +838,11 @@ function initializeMap(center) {
     if (_blockMapClick) return;
     if (markerInputOverlay) { markerInputOverlay.setMap(null); markerInputOverlay=null; return; }
     if (movingPhotoMarker) {
-      movingPhotoMarker.marker.setPosition(e.latLng);
-      movingPhotoMarker.marker.setDraggable(false);
+      const mk = movingPhotoMarker.marker;
+      mk.setPosition(e.latLng);
+      mk.setDraggable(false);
       movingPhotoMarker = null;
+      updateMarkerAddr(mk);
       return;
     }
     if (drawingMode) {
@@ -788,6 +858,7 @@ function initializeMap(center) {
     if (selectedItems.size > 0) {
       selectedItems.clear(); anchorIdx=-1; lastClickedIdx=-1;
       document.querySelectorAll('#photoTbody tr').forEach(r=>r.classList.remove('selected'));
+      if (showNumbers) renderNumbers();
     }
     const lat=e.latLng.getLat(), lng=e.latLng.getLng();
     document.getElementById('latlng-display').value = `${lat}, ${lng}`;
@@ -926,13 +997,13 @@ function addMarker(latlng, desc) {
   div.innerHTML=`<span>${desc}</span><div style="cursor:pointer;font-weight:bold;margin-left:8px;">✖</div>`;
   const [label,btn]=div.querySelectorAll('span,div');
   const iw=new kakao.maps.InfoWindow({content:div});
-  kakao.maps.event.addListener(marker,'click',()=>{blockMapClick();iw.open(map,marker);selectItemByMarker(marker);});
+  kakao.maps.event.addListener(marker,'click',()=>{blockMapClick();if(!showNumbers)iw.open(map,marker);selectItemByMarker(marker);});
   kakao.maps.event.addListener(marker,'rightclick',()=>showEditInput({marker,iw,name:desc},label));
   btn.onclick=()=>iw.close();
   let holdTimer=null;
   kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);movingPhotoMarker={marker,iw,name:desc};},300);});
   ['mouseup','mouseout'].forEach(evt=>kakao.maps.event.addListener(marker,evt,()=>{clearTimeout(holdTimer);map.setDraggable(true);}));
-  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;}});
+  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;updateMarkerAddr(marker);}});
   const markerObj={marker,iw,name:desc};
   markers.push(markerObj);
   addItem({type:'marker',name:desc,address:'',markerObj});
@@ -966,7 +1037,7 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate) {
       const entry=allItems.find(i=>i.markerObj?.marker===marker);
       showEditInput(entry?entry.markerObj:{marker,iw,name:filename},title);
     } else {
-      _clickTimer=setTimeout(()=>{_clickTimer=null;blockMapClick();iw.open(map,marker);selectItemByMarker(marker);},280);
+      _clickTimer=setTimeout(()=>{_clickTimer=null;blockMapClick();if(!showNumbers)iw.open(map,marker);selectItemByMarker(marker);},280);
     }
   });
   kakao.maps.event.addListener(marker,'rightclick',()=>{const e=allItems.find(i=>i.markerObj?.marker===marker);showEditInput(e?e.markerObj:{marker,iw,name:filename},title);});
@@ -977,7 +1048,7 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate) {
   let holdTimer=null;
   kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);movingPhotoMarker={marker,iw,name:filename};},300);});
   ['mouseup','mouseout'].forEach(evt=>kakao.maps.event.addListener(marker,evt,()=>{clearTimeout(holdTimer);map.setDraggable(true);}));
-  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;renderList();}});
+  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;updateMarkerAddr(marker);}});
 
   if (!markers.find(m=>m.marker===marker)) {
     const markerObj={marker,iw,name:filename};
@@ -1449,9 +1520,10 @@ document.getElementById('exportFormat').addEventListener('change',function(){doc
 function exportGPX() {
   const am=markers.filter(m=>m.marker&&m.marker.getMap());
   const fname=prompt('파일명',am.at(-1)?.name?.trim()||'data');if(!fname)return;
+  const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
-  polylines.forEach((pl,i)=>{if(pl&&pl.getMap()){const pts=pl.getPath().map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('');gpx+=`<trk><name>path${i+1}</name><trkseg>\n${pts}</trkseg></trk>\n`;}});
-  am.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${m.name||''}</name></wpt>\n`;});
+  polylines.forEach((pl,i)=>{if(pl&&pl.getMap()){const pts=pl.getPath().map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('');gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name><trkseg>\n${pts}</trkseg></trk>\n`;}});
+  am.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml'}));a.download=fname+'.gpx';document.body.appendChild(a);a.click();document.body.removeChild(a);
 }
@@ -1460,9 +1532,10 @@ async function exportCSV() {
   const am=markers.filter(m=>m.marker&&m.marker.getMap());
   if(!am.length){alert('내보낼 마커가 없습니다.');return;}
   const fname=prompt('CSV 파일명',document.getElementById('address-display').innerText.split(' ')[0]||'markers');if(!fname)return;
+  const nnm=buildNumNameMap();
   const getAddr=m=>new Promise(r=>{if(m.addr!==undefined){r(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(res,status)=>{m.addr=status===kakao.maps.services.Status.OK?(res[0].address?.address_name||''):'';r(m.addr);});});
   let csv='﻿이름,위도,경도,주소\n';
-  for(const m of am){const pos=m.marker.getPosition?m.marker.getPosition():null;if(!pos)continue;const name=(m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
+  for(const m of am){const pos=m.marker.getPosition?m.marker.getPosition():null;if(!pos)continue;const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));a.download=fname+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 
@@ -1470,14 +1543,15 @@ async function exportKMZ() {
   const am=markers.filter(m=>m.marker&&m.marker.getMap());
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('파일명',ds+'_지도');if(!fname)return;
+  const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFiles=[],usedNames=new Set();
-  for(const m of am){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
+  for(const m of am){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
-  polylines.forEach((pl,i)=>{if(!pl||!pl.getMap())return;const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>path${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
+  polylines.forEach((pl,i)=>{if(!pl||!pl.getMap())return;const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||'path'+(i+1)}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
   let pi=0;
-  for(const m of am){const p=m.marker.getPosition();const img=m.iw.getContent().querySelector('img');
-    if(img&&img.src.startsWith('data:image')){const sf=photoFiles[pi]?.filename||'photo.jpg';pi++;kml+=`  <Placemark><name>${m.name||''}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
-    else kml+=`  <Placemark><name>${m.name||''}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
+  for(const m of am){const p=m.marker.getPosition();const img=m.iw.getContent().querySelector('img');const nm=nnm?.get(m)||m.name||'';
+    if(img&&img.src.startsWith('data:image')){const sf=photoFiles[pi]?.filename||'photo.jpg';pi++;kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
+    else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
   kml+='</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a');a.href=URL.createObjectURL(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}));a.download=fname+'.kmz';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
@@ -1488,9 +1562,10 @@ function exportVisibleGPX(){
   const vm=markers.filter(m=>m.marker&&m.marker.getMap()&&bounds.contain(m.marker.getPosition()));
   const vp=polylines.filter(pl=>pl&&pl.getMap()&&pl.getPath().some(p=>bounds.contain(p)));
   const fname=prompt('보이는 영역 GPX',vm.at(-1)?.name||'visible');if(!fname)return;
+  const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
-  vp.forEach((pl,i)=>{gpx+=`<trk><name>path${i+1}</name><trkseg>\n`+pl.getPath().filter(p=>bounds.contain(p)).map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+'</trkseg></trk>\n';});
-  vm.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${m.name||''}</name></wpt>\n`;});
+  vp.forEach((pl,i)=>{gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name><trkseg>\n`+pl.getPath().filter(p=>bounds.contain(p)).map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+'</trkseg></trk>\n';});
+  vm.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml'}));a.download=fname+'.gpx';document.body.appendChild(a);a.click();document.body.removeChild(a);
 }
@@ -1501,14 +1576,15 @@ async function exportVisibleKMZ(){
   const vp=polylines.filter(pl=>pl&&pl.getMap()&&pl.getPath().some(p=>bounds.contain(p)));
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('보이는 영역 KMZ',ds+'_지도');if(!fname)return;
+  const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFiles=[],usedNames=new Set();
-  for(const m of vm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}else photoFiles.push(null);}
+  for(const m of vm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}else photoFiles.push(null);}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
-  vp.forEach((pl,i)=>{const coords=pl.getPath().filter(p=>bounds.contain(p)).map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>path${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
+  vp.forEach((pl,i)=>{const coords=pl.getPath().filter(p=>bounds.contain(p)).map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||'path'+(i+1)}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
   let pi=0;
-  for(const m of vm){const p=m.marker.getPosition();const img=m.iw.getContent().querySelector('img');
-    if(img&&img.src.startsWith('data:image')){const sf=photoFiles[pi]?.filename||'photo.jpg';pi++;kml+=`  <Placemark><name>${m.name||''}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
-    else kml+=`  <Placemark><name>${m.name||''}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
+  for(const m of vm){const p=m.marker.getPosition();const img=m.iw.getContent().querySelector('img');const nm=nnm?.get(m)||m.name||'';
+    if(img&&img.src.startsWith('data:image')){const sf=photoFiles[pi]?.filename||'photo.jpg';pi++;kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
+    else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
   kml+='</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a');a.href=URL.createObjectURL(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}));a.download=fname+'.kmz';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
@@ -1517,7 +1593,8 @@ async function exportVisibleKMZ(){
 async function downloadAllPhotos(){
   const seen=new Set();
   const pm=markers.filter(m=>{if(!m.marker||!m.marker.getMap()||seen.has(m.marker))return false;seen.add(m.marker);return!!m.iw.getContent().querySelector('img');});
-  for(const m of pm){const img=m.iw.getContent().querySelector('img');const pos=m.marker.getPosition();await downloadPhotoWithGPS(img.src,m.name,pos.getLat(),pos.getLng());}
+  const nnm=buildNumNameMap();
+  for(const m of pm){const img=m.iw.getContent().querySelector('img');const pos=m.marker.getPosition();await downloadPhotoWithGPS(img.src,nnm?.get(m)||m.name,pos.getLat(),pos.getLng());}
 }
 
 function getSelectedExportItems(){
@@ -1533,9 +1610,10 @@ function exportSelectedGPX(){
   const r=getSelectedExportItems();if(!r)return;
   const{sm,sp}=r;
   const fname=prompt('선택 객체 GPX',sm.at(-1)?.name||'selected');if(!fname)return;
+  const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
-  sp.forEach((pl,i)=>{gpx+=`<trk><name>path${i+1}</name><trkseg>\n`+pl.getPath().map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+'</trkseg></trk>\n';});
-  sm.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${m.name||''}</name></wpt>\n`;});
+  sp.forEach((pl,i)=>{gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name><trkseg>\n`+pl.getPath().map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+'</trkseg></trk>\n';});
+  sm.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml'}));a.download=fname+'.gpx';document.body.appendChild(a);a.click();document.body.removeChild(a);
 }
@@ -1545,9 +1623,10 @@ async function exportSelectedCSV(){
   const{sm}=r;
   if(!sm.length){alert('선택된 마커가 없습니다.');return;}
   const fname=prompt('선택 객체 CSV','selected');if(!fname)return;
+  const nnm=buildNumNameMap();
   const getAddr=m=>new Promise(res=>{if(m.addr!==undefined){res(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(result,status)=>{m.addr=status===kakao.maps.services.Status.OK?(result[0].address?.address_name||''):'';res(m.addr);});});
   let csv='﻿이름,위도,경도,주소\n';
-  for(const m of sm){const pos=m.marker.getPosition();const name=(m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
+  for(const m of sm){const pos=m.marker.getPosition();const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));a.download=fname+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 }
 
@@ -1556,14 +1635,15 @@ async function exportSelectedKMZ(){
   const{sm,sp}=r;
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('선택 객체 KMZ',ds+'_선택');if(!fname)return;
+  const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFiles=[],usedNames=new Set();
-  for(const m of sm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=(m.name||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
+  for(const m of sm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
-  sp.forEach((pl,i)=>{const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>path${i+1}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
+  sp.forEach((pl,i)=>{const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||'path'+(i+1)}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
   let pi=0;
-  for(const m of sm){const p=m.marker.getPosition();const img=m.iw.getContent().querySelector('img');
-    if(img&&img.src.startsWith('data:image')){const sf=photoFiles[pi]?.filename||'photo.jpg';pi++;kml+=`  <Placemark><name>${m.name||''}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
-    else kml+=`  <Placemark><name>${m.name||''}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
+  for(const m of sm){const p=m.marker.getPosition();const img=m.iw.getContent().querySelector('img');const nm=nnm?.get(m)||m.name||'';
+    if(img&&img.src.startsWith('data:image')){const sf=photoFiles[pi]?.filename||'photo.jpg';pi++;kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
+    else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
   kml+='</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a');a.href=URL.createObjectURL(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}));a.download=fname+'.kmz';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
@@ -1574,7 +1654,8 @@ async function downloadSelectedPhotos(){
   const{sm}=r;
   const pm=sm.filter(m=>m.iw.getContent().querySelector('img'));
   if(!pm.length){alert('선택된 사진 마커가 없습니다.');return;}
-  for(const m of pm){const img=m.iw.getContent().querySelector('img');const pos=m.marker.getPosition();await downloadPhotoWithGPS(img.src,m.name,pos.getLat(),pos.getLng());}
+  const nnm=buildNumNameMap();
+  for(const m of pm){const img=m.iw.getContent().querySelector('img');const pos=m.marker.getPosition();await downloadPhotoWithGPS(img.src,nnm?.get(m)||m.name,pos.getLat(),pos.getLng());}
 }
 
 // ══════════════════════════════════════════════════
