@@ -839,7 +839,7 @@ function updateDistanceOverlay(pos) {
 //  지도 초기화
 // ══════════════════════════════════════════════════
 function initializeMap(center) {
-  map = new kakao.maps.Map(document.getElementById('map'), { center, level:4, mapTypeId:kakao.maps.MapTypeId.HYBRID });
+  map = new kakao.maps.Map(document.getElementById('map'), { center, level:4, minLevel:0, mapTypeId:kakao.maps.MapTypeId.HYBRID });
   setTimeout(() => document.querySelectorAll('.zoom_in,.zoom_out,.zoom_reset,.map_zoom_close').forEach(el=>el.remove()), 500);
   window.map = map;
   geocoder = new kakao.maps.services.Geocoder();
