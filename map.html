@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>KMZ & 사진 지도 (v4.0)</title>
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services"></script>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services&autoload=false"></script>
   <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/exifr@7/dist/full.umd.js"></script>
   <style>
@@ -1915,10 +1915,12 @@ window.addEventListener('beforeunload', e => {
 });
 
 window.onload=()=>{
-  navigator.geolocation.getCurrentPosition(
-    pos=>{ initializeMap(new kakao.maps.LatLng(pos.coords.latitude,pos.coords.longitude)); },
-    ()=>{ initializeMap(new kakao.maps.LatLng(35.6478,127.5213)); }
-  );
+  kakao.maps.load(()=>{
+    navigator.geolocation.getCurrentPosition(
+      pos=>{ initializeMap(new kakao.maps.LatLng(pos.coords.latitude,pos.coords.longitude)); },
+      ()=>{ initializeMap(new kakao.maps.LatLng(35.6478,127.5213)); }
+    );
+  });
 };
 </script>
 </body>
