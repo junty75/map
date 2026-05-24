@@ -131,6 +131,44 @@
     #polyMenu button { display:block; width:100%; padding:13px 18px; border:none; background:none; text-align:left; font-size:15px; cursor:pointer; }
     #polyMenu button:hover { background:#f1f3f4; }
     #polyMenu button.danger { color:#e53935; }
+
+    /* ── 탐색기 연동 배지 ── */
+    #explorerBadge {
+      position:absolute; bottom:42px; left:10px; z-index:1001;
+      background:rgba(0,0,0,0.62); color:#fff;
+      font-size:11px; padding:4px 9px; border-radius:5px;
+      white-space:nowrap; user-select:none; pointer-events:none;
+      max-width:260px; overflow:hidden; text-overflow:ellipsis;
+    }
+    #explorerBadge.connected { background:rgba(18,110,50,0.88); }
+
+    /* ── 실시간 위치 마커 ── */
+    @keyframes liveRing {
+      0%   { transform:translate(-50%,-50%) scale(1); opacity:.8; }
+      100% { transform:translate(-50%,-50%) scale(3.2); opacity:0; }
+    }
+    .live-pin { position:relative; width:14px; height:14px; }
+    .live-pin-dot {
+      position:absolute; top:50%; left:50%;
+      width:14px; height:14px; border-radius:50%;
+      background:#00e676; border:2px solid #fff;
+      transform:translate(-50%,-50%); z-index:2;
+      box-shadow:0 0 4px rgba(0,0,0,0.4);
+    }
+    .live-pin-ring {
+      position:absolute; top:50%; left:50%;
+      width:14px; height:14px; border-radius:50%;
+      background:rgba(0,230,118,0.55);
+      transform:translate(-50%,-50%);
+      animation:liveRing 1.3s ease-out infinite; z-index:1;
+    }
+    .live-pin-label {
+      position:absolute; bottom:14px; left:50%;
+      transform:translateX(-50%);
+      background:rgba(0,0,0,0.75); color:#fff;
+      font-size:10px; padding:2px 6px; border-radius:3px;
+      white-space:nowrap; pointer-events:none;
+    }
   </style>
 </head>
 <body>
@@ -180,6 +218,7 @@
   <!-- 지도 -->
   <div id="mapContainer">
     <button id="sidebarOpenBtn" title="목록 열기/닫기">▶</button>
+    <div id="explorerBadge">🔴 탐색기 연동 대기중</div>
     <form id="search-form">
       <input id="address-input" type="text" placeholder="주소 검색" style="padding:5px;width:180px;">
       <button type="submit" style="padding:5px;">검색</button>
@@ -1928,6 +1967,103 @@ window.onload=()=>{
     );
   });
 };
+
+// ══════════════════════════════════════════════════
+//  탐색기 연동 WebSocket (explorer_watcher.py 와 통신)
+// ══════════════════════════════════════════════════
+(function(){
+  const WS_URL = 'ws://localhost:8765';
+  let ws = null, liveOvs = [], retryTimer = null;
+  const badge = document.getElementById('explorerBadge');
+
+  function setBadge(ok, text) {
+    badge.textContent = text;
+    badge.classList.toggle('connected', ok);
+  }
+
+  function removeLive() {
+    liveOvs.forEach(ov => ov.setMap(null));
+    liveOvs = [];
+  }
+
+  function showLiveMulti(items) {
+    // items: [{lat, lng, name}, ...]  — GPS 있는 것만
+    removeLive();
+    if (!map || !items.length) return;
+
+    const bounds = new kakao.maps.LatLngBounds();
+
+    items.forEach(({ lat, lng, name }) => {
+      const pos = new kakao.maps.LatLng(lat, lng);
+      const el  = document.createElement('div');
+      el.className = 'live-pin';
+      el.innerHTML = `<div class="live-pin-label">${name}</div>`
+                   + `<div class="live-pin-ring"></div>`
+                   + `<div class="live-pin-dot"></div>`;
+      const ov = new kakao.maps.CustomOverlay({
+        map, content: el, position: pos,
+        xAnchor: 0.5, yAnchor: 0.5, zIndex: 999
+      });
+      liveOvs.push(ov);
+      bounds.extend(pos);
+    });
+
+    if (items.length === 1) {
+      map.panTo(new kakao.maps.LatLng(items[0].lat, items[0].lng));
+    } else {
+      map.setBounds(bounds, 60);   // 60px 여백
+    }
+  }
+
+  function connect() {
+    if (ws && ws.readyState < 2) return;
+    try { ws = new WebSocket(WS_URL); } catch(e) { scheduleRetry(); return; }
+
+    ws.onopen = () => {
+      setBadge(true, '🟢 탐색기 연동 중');
+      clearTimeout(retryTimer);
+    };
+
+    ws.onmessage = ({ data }) => {
+      try {
+        const d = JSON.parse(data);
+        if (d.type === 'photos') {
+          const gpsItems = d.items.filter(i => i.has_gps);
+          const noGps    = d.items.length - gpsItems.length;
+
+          if (gpsItems.length > 0) {
+            showLiveMulti(gpsItems);
+            const label = gpsItems.length === 1
+              ? gpsItems[0].name
+              : `${gpsItems.length}장 선택`;
+            setBadge(true, `🟢 ${label}${noGps ? ` (GPS없음 ${noGps}장)` : ''}`);
+          } else {
+            removeLive();
+            setBadge(true, `⚠️ GPS 없음 (${d.items.length}장)`);
+          }
+        }
+      } catch(e) {}
+    };
+
+    ws.onclose = ws.onerror = () => {
+      ws = null;
+      setBadge(false, '🔴 탐색기 연동 대기중');
+      scheduleRetry();
+    };
+  }
+
+  function scheduleRetry() {
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(connect, 3000);
+  }
+
+  // 로컬(http:// 또는 file://)에서만 연결 시도 — GitHub Pages(https://)에서는 숨김
+  if (location.protocol !== 'https:') {
+    setTimeout(connect, 3000);
+  } else {
+    badge.style.display = 'none';
+  }
+})();
 </script>
 </body>
 </html>

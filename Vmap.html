@@ -87,6 +87,17 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 .dist-tip{background:#fff;border:1px solid #db4040;border-radius:3px;padding:3px 7px;font-size:12px;white-space:nowrap;pointer-events:none;}
 .draw-mode,.draw-mode *{cursor:crosshair !important;}
 #cadastralBtn.active{background:#e8f5e9;border-color:#43a047;color:#2e7d32;font-weight:bold;}
+
+/* ── 탐색기 연동 배지 ── */
+#explorerBadge{position:absolute;bottom:42px;left:10px;z-index:1001;background:rgba(0,0,0,0.62);color:#fff;font-size:11px;padding:4px 9px;border-radius:5px;white-space:nowrap;user-select:none;pointer-events:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;}
+#explorerBadge.connected{background:rgba(18,110,50,0.88);}
+
+/* ── 실시간 위치 마커 ── */
+@keyframes liveRing{0%{transform:translate(-50%,-50%) scale(1);opacity:.8;}100%{transform:translate(-50%,-50%) scale(3.2);opacity:0;}}
+.live-pin{position:relative;width:14px;height:14px;}
+.live-pin-dot{position:absolute;top:50%;left:50%;width:14px;height:14px;border-radius:50%;background:#00e676;border:2px solid #fff;transform:translate(-50%,-50%);z-index:2;box-shadow:0 0 4px rgba(0,0,0,.4);}
+.live-pin-ring{position:absolute;top:50%;left:50%;width:14px;height:14px;border-radius:50%;background:rgba(0,230,118,.55);transform:translate(-50%,-50%);animation:liveRing 1.3s ease-out infinite;z-index:1;}
+.live-pin-label{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#fff;font-size:10px;padding:2px 6px;border-radius:3px;white-space:nowrap;pointer-events:none;}
 </style>
 </head>
 <body>
@@ -136,6 +147,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 <!-- 지도 -->
 <div id="mapWrap">
   <button id="sidebarOpenBtn" title="목록 열기/닫기">▶</button>
+  <div id="explorerBadge">🔴 탐색기 연동 대기중</div>
 
   <form id="search-form">
     <input id="addr-input" type="text" placeholder="주소 검색" style="width:175px;padding:4px;">
@@ -1803,6 +1815,89 @@ function dlBlob(blob,filename){
   document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
 }
 function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if(ch==='"')inQ=!inQ;else if(ch===','&&!inQ){r.push(cur.trim());cur='';}else cur+=ch;}r.push(cur.trim());return r;}
+
+// ══════════════════════════════════════════════════
+//  탐색기 연동 WebSocket (explorer_watcher.py 와 통신)
+// ══════════════════════════════════════════════════
+(function(){
+  const WS_URL='ws://localhost:8765';
+  let ws=null, liveOvs=[], retryTimer=null;
+  const badge=document.getElementById('explorerBadge');
+
+  function setBadge(ok,text){badge.textContent=text;badge.classList.toggle('connected',ok);}
+
+  function removeLive(){
+    liveOvs.forEach(ov=>vmap.removeOverlay(ov));
+    liveOvs=[];
+  }
+
+  function showLiveMulti(items){
+    // items: [{lat, lng, name}, ...]  — GPS 있는 것만
+    removeLive();
+    if(!vmap||!items.length)return;
+
+    const coords=[];
+    items.forEach(({lat,lng,name})=>{
+      const coord=toMerc(lng,lat);
+      coords.push(coord);
+      const el=document.createElement('div');
+      el.className='live-pin';
+      el.innerHTML='<div class="live-pin-label">'+name+'</div>'
+                  +'<div class="live-pin-ring"></div>'
+                  +'<div class="live-pin-dot"></div>';
+      const ov=new ol.Overlay({element:el,position:coord,positioning:'center-center',stopEvent:false});
+      vmap.addOverlay(ov);
+      liveOvs.push(ov);
+    });
+
+    if(items.length===1){
+      panTo(coords[0]);
+    } else {
+      const extent=ol.extent.boundingExtent(coords);
+      vmap.getView().fit(extent,{padding:[70,70,70,70],maxZoom:16,duration:400});
+    }
+  }
+
+  function connect(){
+    if(ws&&ws.readyState<2)return;
+    try{ws=new WebSocket(WS_URL);}catch(e){scheduleRetry();return;}
+
+    ws.onopen=()=>{setBadge(true,'🟢 탐색기 연동 중');clearTimeout(retryTimer);};
+
+    ws.onmessage=({data})=>{
+      try{
+        const d=JSON.parse(data);
+        if(d.type==='photos'){
+          const gpsItems=d.items.filter(i=>i.has_gps);
+          const noGps=d.items.length-gpsItems.length;
+          if(gpsItems.length>0){
+            showLiveMulti(gpsItems);
+            const label=gpsItems.length===1?gpsItems[0].name:gpsItems.length+'장 선택';
+            setBadge(true,'🟢 '+label+(noGps?' (GPS없음 '+noGps+'장)':''));
+          } else {
+            removeLive();
+            setBadge(true,'⚠️ GPS 없음 ('+d.items.length+'장)');
+          }
+        }
+      }catch(e){}
+    };
+
+    ws.onclose=ws.onerror=()=>{
+      ws=null;
+      setBadge(false,'🔴 탐색기 연동 대기중');
+      scheduleRetry();
+    };
+  }
+
+  function scheduleRetry(){clearTimeout(retryTimer);retryTimer=setTimeout(connect,3000);}
+
+  // 로컬(http:// 또는 file://)에서만 연결 시도 — GitHub Pages(https://)에서는 숨김
+  if(location.protocol!=='https:'){
+    setTimeout(connect,3000);
+  } else {
+    badge.style.display='none';
+  }
+})();
 </script>
 </body>
 </html>
