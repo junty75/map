@@ -94,9 +94,11 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 
 /* ── 실시간 위치 마커 ── */
 @keyframes liveRing{0%{transform:translate(-50%,-50%) scale(1);opacity:.8;}100%{transform:translate(-50%,-50%) scale(3.2);opacity:0;}}
-.live-pin{position:relative;width:14px;height:14px;}
+.live-pin{position:relative;width:14px;height:14px;cursor:grab;user-select:none;}
+.live-pin:active,.live-pin.dragging{cursor:grabbing;}
 .live-pin-dot{position:absolute;top:50%;left:50%;width:14px;height:14px;border-radius:50%;background:#00e676;border:2px solid #fff;transform:translate(-50%,-50%);z-index:2;box-shadow:0 0 4px rgba(0,0,0,.4);}
 .live-pin-ring{position:absolute;top:50%;left:50%;width:14px;height:14px;border-radius:50%;background:rgba(0,230,118,.55);transform:translate(-50%,-50%);animation:liveRing 1.3s ease-out infinite;z-index:1;}
+.live-pin.dragging .live-pin-ring{animation:none;opacity:0;}
 .live-pin-label{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,.75);color:#fff;font-size:10px;padding:2px 6px;border-radius:3px;white-space:nowrap;pointer-events:none;}
 </style>
 </head>
@@ -1817,7 +1819,7 @@ function dlBlob(blob,filename){
 function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if(ch==='"')inQ=!inQ;else if(ch===','&&!inQ){r.push(cur.trim());cur='';}else cur+=ch;}r.push(cur.trim());return r;}
 
 // ══════════════════════════════════════════════════
-//  탐색기 연동 WebSocket (explorer_watcher.py 와 통신)
+//  탐색기 연동 WebSocket (사진위치표시.py 와 통신)
 // ══════════════════════════════════════════════════
 (function(){
   const WS_URL='ws://localhost:8765';
@@ -1831,22 +1833,83 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
     liveOvs=[];
   }
 
+  // ── 드래그로 마커 이동 + Python에 새 좌표 전송 ──
+  function makeDraggable(el, ov, path){
+    el.addEventListener('pointerdown', e=>{
+      if(e.button!==0)return;
+      e.stopPropagation();              // 지도 클릭 이벤트 차단
+      // e.preventDefault() 제거 → 키보드 포커스 관리 정상 유지
+      const sx=e.clientX, sy=e.clientY;
+      const origCoord=ov.getPosition(); // 취소 시 복원용
+      let dragging=false;
+
+      const holdTimer=setTimeout(()=>{
+        dragging=true;
+        el.classList.add('dragging');
+      }, 400);
+
+      function onMove(e){
+        if(!dragging){
+          if(Math.hypot(e.clientX-sx,e.clientY-sy)>6){clearTimeout(holdTimer);cleanup();}
+          return;
+        }
+        // 마우스 픽셀 → 지도 좌표 변환
+        const mapEl=document.getElementById('vmap');
+        const rect=mapEl.getBoundingClientRect();
+        const pixel=[e.clientX-rect.left, e.clientY-rect.top];
+        const coord=vmap.getCoordinateFromPixel(pixel);
+        if(coord) ov.setPosition(coord);
+      }
+
+      function onUp(){
+        clearTimeout(holdTimer); cleanup();
+        if(!dragging)return;
+        el.classList.remove('dragging');
+        // overlay는 드래그된 위치에 있음 → 확인창 뜨는 동안 그대로 보임
+
+        const coord=ov.getPosition();
+        if(!coord)return;
+        const [lng,lat]=fromMerc(coord);
+        const name=path.split('\\').pop();
+
+        if(!confirm(`📍 GPS 위치를 수정하시겠습니까?\n\n파일: ${name}\n위도: ${lat.toFixed(6)}\n경도: ${lng.toFixed(6)}`)){
+          ov.setPosition(origCoord);    // 취소 → 원래 위치로 복원
+          return;
+        }
+
+        // 확인 → Python으로 새 좌표 전송
+        if(ws&&ws.readyState===1){
+          ws.send(JSON.stringify({type:'update_gps',path,lat,lng}));
+          setBadge(true,'💾 저장 중...');
+        }
+      }
+
+      function cleanup(){
+        document.removeEventListener('pointermove',onMove);
+        document.removeEventListener('pointerup',  onUp);
+      }
+      document.addEventListener('pointermove',onMove);
+      document.addEventListener('pointerup',  onUp);
+    });
+  }
+
   function showLiveMulti(items){
-    // items: [{lat, lng, name}, ...]  — GPS 있는 것만
     removeLive();
     if(!vmap||!items.length)return;
 
     const coords=[];
-    items.forEach(({lat,lng,name})=>{
+    items.forEach(({lat,lng,name,path})=>{
       const coord=toMerc(lng,lat);
       coords.push(coord);
       const el=document.createElement('div');
       el.className='live-pin';
+      el.title='길게 눌러 드래그하면 GPS 위치 수정';
       el.innerHTML='<div class="live-pin-label">'+name+'</div>'
                   +'<div class="live-pin-ring"></div>'
                   +'<div class="live-pin-dot"></div>';
-      const ov=new ol.Overlay({element:el,position:coord,positioning:'center-center',stopEvent:false});
+      const ov=new ol.Overlay({element:el,position:coord,positioning:'center-center',stopEvent:true});
       vmap.addOverlay(ov);
+      makeDraggable(el,ov,path);
       liveOvs.push(ov);
     });
 
@@ -1878,6 +1941,10 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
             removeLive();
             setBadge(true,'⚠️ GPS 없음 ('+d.items.length+'장)');
           }
+        } else if(d.type==='gps_saved'){
+          const name=d.path.split('\\').pop();
+          setBadge(true, d.ok?'✅ 저장됨: '+name:'❌ 저장실패: '+name);
+          setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
         }
       }catch(e){}
     };

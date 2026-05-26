@@ -147,7 +147,8 @@
       0%   { transform:translate(-50%,-50%) scale(1); opacity:.8; }
       100% { transform:translate(-50%,-50%) scale(3.2); opacity:0; }
     }
-    .live-pin { position:relative; width:14px; height:14px; }
+    .live-pin { position:relative; width:14px; height:14px; user-select:none; pointer-events:none; }
+    .live-pin.dragging .live-pin-ring { animation:none; opacity:0; }
     .live-pin-dot {
       position:absolute; top:50%; left:50%;
       width:14px; height:14px; border-radius:50%;
@@ -169,6 +170,24 @@
       font-size:10px; padding:2px 6px; border-radius:3px;
       white-space:nowrap; pointer-events:none;
     }
+
+    /* ── GPS 드래그 확인 모달 ── */
+    #gpsDragModal {
+      display:none; position:fixed; inset:0; z-index:10000;
+      background:rgba(0,0,0,0.45);
+      align-items:center; justify-content:center;
+    }
+    #gpsDragModal.visible { display:flex; }
+    #gpsDragBox {
+      background:#fff; padding:18px 22px; border-radius:10px;
+      min-width:250px; box-shadow:0 4px 20px rgba(0,0,0,0.35); font-size:13px;
+    }
+    #gpsDragBox strong { font-size:14px; }
+    #gpsDragInfo { color:#555; font-size:12px; margin:8px 0 16px; white-space:pre-line; }
+    .gps-modal-btns { display:flex; gap:8px; justify-content:flex-end; }
+    .gps-modal-btns button { padding:6px 16px; border-radius:5px; cursor:pointer; font-size:13px; }
+    #gpsDragCancel { background:#f5f5f5; border:1px solid #ccc; }
+    #gpsDragOk { background:#2980b9; color:#fff; border:none; font-weight:bold; }
   </style>
 </head>
 <body>
@@ -214,6 +233,18 @@
   </div>
 
   <div id="sidebarResizer"></div>
+
+  <!-- GPS 드래그 확인 모달 -->
+  <div id="gpsDragModal">
+    <div id="gpsDragBox">
+      <strong>📍 GPS 위치를 수정하시겠습니까?</strong>
+      <div id="gpsDragInfo"></div>
+      <div class="gps-modal-btns">
+        <button id="gpsDragCancel">취소</button>
+        <button id="gpsDragOk">저장</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 지도 -->
   <div id="mapContainer">
@@ -1969,12 +2000,17 @@ window.onload=()=>{
 };
 
 // ══════════════════════════════════════════════════
-//  탐색기 연동 WebSocket (explorer_watcher.py 와 통신)
+//  탐색기 연동 WebSocket (사진위치표시.py 와 통신)
 // ══════════════════════════════════════════════════
 (function(){
   const WS_URL = 'ws://localhost:8765';
   let ws = null, liveOvs = [], retryTimer = null;
   const badge = document.getElementById('explorerBadge');
+
+  // 마커 이동 Undo/Redo 스택
+  const undoStack = [];   // [{ path, prevLat, prevLng, newLat, newLng }, ...]
+  const redoStack = [];
+  const pathToMarker = new Map();   // path → { marker, ringOv }
 
   function setBadge(ok, text) {
     badge.textContent = text;
@@ -1984,34 +2020,126 @@ window.onload=()=>{
   function removeLive() {
     liveOvs.forEach(ov => ov.setMap(null));
     liveOvs = [];
+    pathToMarker.clear();
   }
 
+  // path 로 식별되는 마커 위치 갱신 (undo/redo 시 시각 반영)
+  function applyPos(path, lat, lng) {
+    const m = pathToMarker.get(path);
+    if (m) {
+      const p = new kakao.maps.LatLng(lat, lng);
+      m.marker.setPosition(p);
+      m.ringOv.setPosition(p);
+    }
+  }
+
+  // ── GPS 드래그 확인 모달 ──
+  function showDragConfirm(name, lat, lng, onOk, onCancel) {
+    const modal  = document.getElementById('gpsDragModal');
+    const info   = document.getElementById('gpsDragInfo');
+    const okBtn  = document.getElementById('gpsDragOk');
+    const canBtn = document.getElementById('gpsDragCancel');
+    info.textContent = `파일: ${name}\n위도: ${lat}\n경도: ${lng}`;
+    modal.classList.add('visible');
+    function handleOk()     { modal.classList.remove('visible'); unbind(); onOk();     }
+    function handleCancel() { modal.classList.remove('visible'); unbind(); onCancel(); }
+    function unbind() {
+      okBtn.removeEventListener('click', handleOk);
+      canBtn.removeEventListener('click', handleCancel);
+    }
+    okBtn.addEventListener('click', handleOk);
+    canBtn.addEventListener('click', handleCancel);
+  }
+
+  // ── Kakao 내장 Marker(draggable) 사용 → 좌표 계산/이벤트 충돌 문제 모두 해소 ──
   function showLiveMulti(items) {
-    // items: [{lat, lng, name}, ...]  — GPS 있는 것만
+    // items: [{lat, lng, name, path}, ...]  — GPS 있는 것만
     removeLive();
     if (!map || !items.length) return;
 
-    const bounds = new kakao.maps.LatLngBounds();
+    // 초록 점 + 흰 테두리 (Marker 이미지)
+    const dotSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22">'
+                 + '<circle cx="11" cy="11" r="7" fill="#00e676" stroke="white" stroke-width="2.5"/>'
+                 + '</svg>';
+    const markerImg = new kakao.maps.MarkerImage(
+      'data:image/svg+xml;base64,' + btoa(dotSvg),
+      new kakao.maps.Size(22, 22),
+      { offset: new kakao.maps.Point(11, 11) }
+    );
 
-    items.forEach(({ lat, lng, name }) => {
+    const bounds = new kakao.maps.LatLngBounds();
+    items.forEach(({ lat, lng, name, path }) => {
       const pos = new kakao.maps.LatLng(lat, lng);
-      const el  = document.createElement('div');
-      el.className = 'live-pin';
-      el.innerHTML = `<div class="live-pin-label">${name}</div>`
-                   + `<div class="live-pin-ring"></div>`
-                   + `<div class="live-pin-dot"></div>`;
-      const ov = new kakao.maps.CustomOverlay({
-        map, content: el, position: pos,
-        xAnchor: 0.5, yAnchor: 0.5, zIndex: 999
+
+      // ① 펄스 링 + 라벨 (CustomOverlay, pointer-events:none → 드래그 방해 X)
+      const ringEl = document.createElement('div');
+      ringEl.className = 'live-pin';
+      ringEl.style.pointerEvents = 'none';
+      ringEl.innerHTML = `<div class="live-pin-label">${name}</div>`
+                       + `<div class="live-pin-ring"></div>`;
+      const ringOv = new kakao.maps.CustomOverlay({
+        map, content: ringEl, position: pos,
+        xAnchor: 0.5, yAnchor: 0.5, zIndex: 998
       });
-      liveOvs.push(ov);
+
+      // ② 드래그 가능한 Marker (Kakao 내장 드래그 사용)
+      const marker = new kakao.maps.Marker({
+        map: map, position: pos, image: markerImg,
+        draggable: true, title: '드래그해서 GPS 위치 수정', zIndex: 999
+      });
+
+      let originalPos = pos;
+
+      // 드래그 시작 → 원위치 저장
+      kakao.maps.event.addListener(marker, 'dragstart', () => {
+        originalPos = marker.getPosition();
+        ringEl.classList.add('dragging');
+      });
+
+      // 드래그 중 → 펄스 링도 따라 이동
+      kakao.maps.event.addListener(marker, 'drag', () => {
+        ringOv.setPosition(marker.getPosition());
+      });
+
+      // 드래그 종료 → 확인 모달
+      kakao.maps.event.addListener(marker, 'dragend', () => {
+        ringEl.classList.remove('dragging');
+        const newPos = marker.getPosition();
+        ringOv.setPosition(newPos);   // 최종 위치로 링 정렬
+        const lat = newPos.getLat().toFixed(6);
+        const lng = newPos.getLng().toFixed(6);
+
+        showDragConfirm(name, lat, lng,
+          () => {  // 저장 → undo 스택에 기록
+            undoStack.push({
+              path,
+              prevLat: originalPos.getLat(),
+              prevLng: originalPos.getLng(),
+              newLat:  parseFloat(lat),
+              newLng:  parseFloat(lng)
+            });
+            redoStack.length = 0;   // 새 액션 시 redo 스택 비움
+            if (ws && ws.readyState === 1) {
+              ws.send(JSON.stringify({ type:'update_gps', path, lat:parseFloat(lat), lng:parseFloat(lng) }));
+              setBadge(true, '💾 저장 중...');
+            }
+          },
+          () => {  // 취소 → 원위치 복원
+            marker.setPosition(originalPos);
+            ringOv.setPosition(originalPos);
+          }
+        );
+      });
+
+      pathToMarker.set(path, { marker, ringOv });
+      liveOvs.push(marker, ringOv);
       bounds.extend(pos);
     });
 
     if (items.length === 1) {
       map.panTo(new kakao.maps.LatLng(items[0].lat, items[0].lng));
     } else {
-      map.setBounds(bounds, 60);   // 60px 여백
+      map.setBounds(bounds, 60);
     }
   }
 
@@ -2030,17 +2158,18 @@ window.onload=()=>{
         if (d.type === 'photos') {
           const gpsItems = d.items.filter(i => i.has_gps);
           const noGps    = d.items.length - gpsItems.length;
-
           if (gpsItems.length > 0) {
             showLiveMulti(gpsItems);
-            const label = gpsItems.length === 1
-              ? gpsItems[0].name
-              : `${gpsItems.length}장 선택`;
+            const label = gpsItems.length === 1 ? gpsItems[0].name : `${gpsItems.length}장 선택`;
             setBadge(true, `🟢 ${label}${noGps ? ` (GPS없음 ${noGps}장)` : ''}`);
           } else {
             removeLive();
             setBadge(true, `⚠️ GPS 없음 (${d.items.length}장)`);
           }
+        } else if (d.type === 'gps_saved') {
+          const name = d.path.split('\\').pop();
+          setBadge(true, d.ok ? `✅ 저장됨: ${name}` : `❌ 저장실패: ${name}`);
+          setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
         }
       } catch(e) {}
     };
@@ -2056,6 +2185,36 @@ window.onload=()=>{
     clearTimeout(retryTimer);
     retryTimer = setTimeout(connect, 3000);
   }
+
+  // ── Ctrl+Z / Ctrl+Y: 마커 이동 되돌리기 / 다시 실행 ──
+  document.addEventListener('keydown', e => {
+    if (!e.ctrlKey) return;
+    const t = e.target.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA') return;
+    // 그리기 모드는 기존 핸들러가 처리하도록 양보
+    if (typeof drawingMode !== 'undefined' && drawingMode && currentPath && currentPath.length > 0) return;
+
+    const key = e.key.toLowerCase();
+    if (key === 'z' && undoStack.length > 0) {
+      e.preventDefault();
+      const a = undoStack.pop();
+      redoStack.push(a);
+      applyPos(a.path, a.prevLat, a.prevLng);
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type:'update_gps', path: a.path, lat: a.prevLat, lng: a.prevLng }));
+        setBadge(true, '↩ 되돌림: ' + a.path.split('\\').pop());
+      }
+    } else if (key === 'y' && redoStack.length > 0) {
+      e.preventDefault();
+      const a = redoStack.pop();
+      undoStack.push(a);
+      applyPos(a.path, a.newLat, a.newLng);
+      if (ws && ws.readyState === 1) {
+        ws.send(JSON.stringify({ type:'update_gps', path: a.path, lat: a.newLat, lng: a.newLng }));
+        setBadge(true, '↪ 다시 실행: ' + a.path.split('\\').pop());
+      }
+    }
+  });
 
   // 로컬(http:// 또는 file://)에서만 연결 시도 — GitHub Pages(https://)에서는 숨김
   if (location.protocol !== 'https:') {
