@@ -1825,12 +1825,29 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
   const WS_URL='ws://localhost:8765';
   let ws=null, liveOvs=[], retryTimer=null;
   const badge=document.getElementById('explorerBadge');
+  // path → overlay 매핑 (undo/redo에서 위치 복원에 사용)
+  const pathToOv=new Map();
 
   function setBadge(ok,text){badge.textContent=text;badge.classList.toggle('connected',ok);}
 
   function removeLive(){
     liveOvs.forEach(ov=>vmap.removeOverlay(ov));
     liveOvs=[];
+    pathToOv.clear();
+  }
+
+  // path 로 식별되는 마커 위치 적용 (undo/redo 시 시각 반영)
+  function applyPos(path, lat, lng){
+    const ov=pathToOv.get(path);
+    if(ov) ov.setPosition(toMerc(lng, lat));
+  }
+
+  // Python 측 GPS 저장 요청
+  function sendGps(path, lat, lng){
+    if(ws&&ws.readyState===1){
+      ws.send(JSON.stringify({type:'update_gps',path,lat,lng}));
+      setBadge(true,'💾 저장 중...');
+    }
   }
 
   // ── 드래그로 마커 이동 + Python에 새 좌표 전송 ──
@@ -1870,6 +1887,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
         const coord=ov.getPosition();
         if(!coord)return;
         const [lng,lat]=fromMerc(coord);
+        const [prevLng,prevLat]=fromMerc(origCoord);
         const name=path.split('\\').pop();
 
         if(!confirm(`📍 GPS 위치를 수정하시겠습니까?\n\n파일: ${name}\n위도: ${lat.toFixed(6)}\n경도: ${lng.toFixed(6)}`)){
@@ -1877,11 +1895,12 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           return;
         }
 
-        // 확인 → Python으로 새 좌표 전송
-        if(ws&&ws.readyState===1){
-          ws.send(JSON.stringify({type:'update_gps',path,lat,lng}));
-          setBadge(true,'💾 저장 중...');
-        }
+        // 확인 → Python으로 새 좌표 전송 + 글로벌 undo 스택에 기록
+        sendGps(path, lat, lng);
+        pushHistory({
+          undo(){ applyPos(path, prevLat, prevLng); sendGps(path, prevLat, prevLng); },
+          redo(){ applyPos(path, lat,     lng);     sendGps(path, lat,     lng);     }
+        });
       }
 
       function cleanup(){
@@ -1911,6 +1930,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
       vmap.addOverlay(ov);
       makeDraggable(el,ov,path);
       liveOvs.push(ov);
+      pathToOv.set(path, ov);
     });
 
     if(items.length===1){

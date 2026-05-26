@@ -315,6 +315,32 @@ let lastClickedIdx = -1;       // keyboard nav + InfoWindow focus
 let dragStartIdx = -1, isDragging = false, dragStartX = 0, dragStartY = 0;
 let trackCounter = 0;
 let _blockMapClick = false;
+
+// ── Undo / Redo (Vmap 스타일 통합 스택) ──
+const undoStack = [], redoStack = [];
+let _restoring = false;   // undo/redo 실행 중 재귀 기록 방지
+function pushHistory(op) {
+  if (_restoring) return;
+  undoStack.push(op);
+  if (undoStack.length > 100) undoStack.shift();
+  redoStack.length = 0;
+}
+function doUndo() {
+  if (!undoStack.length) return;
+  const op = undoStack.pop();
+  _restoring = true;
+  try { op.undo(); } catch(e) { console.error('undo error', e); }
+  _restoring = false;
+  redoStack.push(op);
+}
+function doRedo() {
+  if (!redoStack.length) return;
+  const op = redoStack.pop();
+  _restoring = true;
+  try { op.redo(); } catch(e) { console.error('redo error', e); }
+  _restoring = false;
+  undoStack.push(op);
+}
 function blockMapClick() { _blockMapClick = true; setTimeout(() => _blockMapClick = false, 150); }
 
 function getFilteredItems() {
@@ -362,6 +388,48 @@ function addItem(item) {
   renderList();
   const ll = getItemLatLng(item);
   if (ll) fetchAddr(ll, addr => { item.address = addr; renderList(); });
+  pushHistory({
+    undo() { _removeItemSilent(item); },
+    redo() { _readdItemSilent(item); }
+  });
+}
+
+// 마커/폴리라인의 지도 표시를 복원
+function _showItemOnMap(item) {
+  if (item.markerObj && item.markerObj.marker) {
+    item.markerObj.marker.setMap(map);
+    if (!markers.includes(item.markerObj)) markers.push(item.markerObj);
+  }
+  if (item.polyline) {
+    item.polyline.setMap(map);
+    if (!polylines.includes(item.polyline)) polylines.push(item.polyline);
+  }
+}
+function _hideItemOnMap(item) {
+  if (item.markerObj && item.markerObj.marker) {
+    if (item.markerObj.iw) item.markerObj.iw.close();
+    item.markerObj.marker.setMap(null);
+    markers = markers.filter(m => m !== item.markerObj);
+  }
+  if (item.polyline) {
+    item.polyline.setMap(null);
+    polylines = polylines.filter(p => p !== item.polyline);
+  }
+}
+function _removeItemSilent(item) {
+  _hideItemOnMap(item);
+  const idx = allItems.indexOf(item);
+  if (idx >= 0) allItems.splice(idx, 1);
+  selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
+  clearPreview(); renderList();
+}
+function _readdItemSilent(item) {
+  _showItemOnMap(item);
+  if (!allItems.includes(item)) {
+    allItems.push(item);
+    if (allItems.length === 1) openSidebar();
+  }
+  renderList();
 }
 
 function getItemLatLng(item) {
@@ -1087,9 +1155,10 @@ function addMarker(latlng, desc) {
   kakao.maps.event.addListener(marker,'rightclick',()=>showEditInput({marker,iw,name:desc},label));
   btn.onclick=()=>iw.close();
   let holdTimer=null;
-  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);movingPhotoMarker={marker,iw,name:desc};},300);});
+  let _dragStartPos = null;
+  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);_dragStartPos=marker.getPosition();movingPhotoMarker={marker,iw,name:desc};},300);});
   ['mouseup','mouseout'].forEach(evt=>kakao.maps.event.addListener(marker,evt,()=>{clearTimeout(holdTimer);map.setDraggable(true);}));
-  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;updateMarkerAddr(marker);}});
+  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;const prev=_dragStartPos;const next=marker.getPosition();_dragStartPos=null;updateMarkerAddr(marker);if(prev&&(prev.getLat()!==next.getLat()||prev.getLng()!==next.getLng())){pushHistory({undo(){marker.setPosition(prev);updateMarkerAddr(marker);},redo(){marker.setPosition(next);updateMarkerAddr(marker);}});}}});
   const markerObj={marker,iw,name:desc};
   markers.push(markerObj);
   addItem({type:'marker',name:desc,address:'',markerObj});
@@ -1132,9 +1201,10 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate) {
   clBtn.onclick=()=>iw.close();
 
   let holdTimer=null;
-  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);movingPhotoMarker={marker,iw,name:filename};},300);});
+  let _dragStartPos2 = null;
+  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);_dragStartPos2=marker.getPosition();movingPhotoMarker={marker,iw,name:filename};},300);});
   ['mouseup','mouseout'].forEach(evt=>kakao.maps.event.addListener(marker,evt,()=>{clearTimeout(holdTimer);map.setDraggable(true);}));
-  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;updateMarkerAddr(marker);}});
+  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;const prev=_dragStartPos2;const next=marker.getPosition();_dragStartPos2=null;updateMarkerAddr(marker);if(prev&&(prev.getLat()!==next.getLat()||prev.getLng()!==next.getLng())){pushHistory({undo(){marker.setPosition(prev);updateMarkerAddr(marker);},redo(){marker.setPosition(next);updateMarkerAddr(marker);}});}}});
 
   if (!markers.find(m=>m.marker===marker)) {
     const markerObj={marker,iw,name:filename};
@@ -1178,9 +1248,22 @@ function showEditInput(markerObj, label) {
     markerObj.iw.close(); markerInputOverlay.setMap(null);
   };
   deleteBtn.onclick=()=>{
-    markerObj.marker.setMap(null); markerObj.iw.close(); markerInputOverlay.setMap(null);
-    markers=markers.filter(m=>m.marker!==markerObj.marker);
-    removeItem(i=>i.markerObj?.marker===markerObj.marker);
+    markerInputOverlay.setMap(null);
+    const item = allItems.find(i => i.markerObj?.marker === markerObj.marker);
+    if (item) {
+      _hideItemOnMap(item);
+      const idx = allItems.indexOf(item);
+      if (idx >= 0) allItems.splice(idx, 1);
+      selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
+      clearPreview(); renderList();
+      pushHistory({
+        undo(){ _readdItemSilent(item); },
+        redo(){ _removeItemSilent(item); }
+      });
+    } else {
+      markerObj.marker.setMap(null); markerObj.iw.close();
+      markers = markers.filter(m => m.marker !== markerObj.marker);
+    }
   };
 }
 
@@ -1213,9 +1296,22 @@ document.getElementById('polyMenuCancelBtn').onclick=hidePolyMenu;
 
 document.getElementById('polyDeleteBtn').onclick=()=>{
   if (!polyMenuTarget) return;
-  const t=polyMenuTarget; t.setMap(null);
-  polylines=polylines.filter(p=>p!==t);
-  removeItem(i=>i.type==='track'&&i.polyline===t);
+  const t=polyMenuTarget;
+  const item = allItems.find(i => i.type==='track' && i.polyline===t);
+  if (item) {
+    _hideItemOnMap(item);
+    const idx = allItems.indexOf(item);
+    if (idx >= 0) allItems.splice(idx, 1);
+    selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
+    clearPreview(); renderList();
+    pushHistory({
+      undo(){ _readdItemSilent(item); },
+      redo(){ _removeItemSilent(item); }
+    });
+  } else {
+    t.setMap(null);
+    polylines = polylines.filter(p => p !== t);
+  }
   hidePolyMenu();
 };
 
@@ -1289,6 +1385,9 @@ document.addEventListener('keydown', e => {
 
   // 일반 단축키
   if (!inInput) {
+    // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y — 통합 Undo/Redo
+    if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase()==='z'){e.preventDefault();doUndo();return;}
+    if (e.ctrlKey && ((e.shiftKey && e.key.toLowerCase()==='z') || e.key.toLowerCase()==='y')){e.preventDefault();doRedo();return;}
     if (e.ctrlKey&&e.key.toLowerCase()==='a'){e.preventDefault();const fl=getFilteredItems();fl.forEach((_,i)=>selectedItems.add(i));anchorIdx=0;lastClickedIdx=fl.length-1;renderList();return;}
     if (e.ctrlKey&&e.key.toLowerCase()==='c'&&!window.getSelection().toString()){
       e.preventDefault();
@@ -1326,13 +1425,14 @@ document.addEventListener('keydown', e => {
       const toDelete=[...selectedItems].map(i=>filtered[i]).filter(Boolean);
       const names=toDelete.map(i=>i.name).join(', ');
       if (!confirm(`"${names}"\n\n${toDelete.length}개 항목을 삭제하시겠습니까?`)) return;
-      toDelete.forEach(item=>{
-        if (item.markerObj){item.markerObj.iw.close();item.markerObj.marker.setMap(null);markers=markers.filter(m=>m.marker!==item.markerObj.marker);}
-        if (item.polyline){item.polyline.setMap(null);polylines=polylines.filter(p=>p!==item.polyline);}
-      });
+      toDelete.forEach(item => _hideItemOnMap(item));
       allItems=allItems.filter(i=>!toDelete.includes(i));
       selectedItems.clear(); anchorIdx=-1; lastClickedIdx=-1;
       clearPreview(); renderList();
+      pushHistory({
+        undo(){ toDelete.forEach(item => _readdItemSilent(item)); },
+        redo(){ toDelete.forEach(item => _removeItemSilent(item)); }
+      });
       return;
     }
 
@@ -2007,10 +2107,8 @@ window.onload=()=>{
   let ws = null, liveOvs = [], retryTimer = null;
   const badge = document.getElementById('explorerBadge');
 
-  // 마커 이동 Undo/Redo 스택
-  const undoStack = [];   // [{ path, prevLat, prevLng, newLat, newLng }, ...]
-  const redoStack = [];
-  const pathToMarker = new Map();   // path → { marker, ringOv }
+  // 마커 path → { marker, ringOv } 매핑 (드래그 후 위치 복원/재적용에 사용)
+  const pathToMarker = new Map();
 
   function setBadge(ok, text) {
     badge.textContent = text;
@@ -2110,19 +2208,22 @@ window.onload=()=>{
         const lng = newPos.getLng().toFixed(6);
 
         showDragConfirm(name, lat, lng,
-          () => {  // 저장 → undo 스택에 기록
-            undoStack.push({
-              path,
-              prevLat: originalPos.getLat(),
-              prevLng: originalPos.getLng(),
-              newLat:  parseFloat(lat),
-              newLng:  parseFloat(lng)
+          () => {  // 저장 → 글로벌 undo 스택에 기록
+            const prevLat = originalPos.getLat();
+            const prevLng = originalPos.getLng();
+            const newLat  = parseFloat(lat);
+            const newLng  = parseFloat(lng);
+            const sendGps = (la, ln) => {
+              if (ws && ws.readyState === 1) {
+                ws.send(JSON.stringify({ type:'update_gps', path, lat:la, lng:ln }));
+                setBadge(true, '💾 저장 중...');
+              }
+            };
+            sendGps(newLat, newLng);
+            pushHistory({
+              undo() { applyPos(path, prevLat, prevLng); sendGps(prevLat, prevLng); },
+              redo() { applyPos(path, newLat,  newLng);  sendGps(newLat,  newLng);  }
             });
-            redoStack.length = 0;   // 새 액션 시 redo 스택 비움
-            if (ws && ws.readyState === 1) {
-              ws.send(JSON.stringify({ type:'update_gps', path, lat:parseFloat(lat), lng:parseFloat(lng) }));
-              setBadge(true, '💾 저장 중...');
-            }
           },
           () => {  // 취소 → 원위치 복원
             marker.setPosition(originalPos);
@@ -2186,35 +2287,7 @@ window.onload=()=>{
     retryTimer = setTimeout(connect, 3000);
   }
 
-  // ── Ctrl+Z / Ctrl+Y: 마커 이동 되돌리기 / 다시 실행 ──
-  document.addEventListener('keydown', e => {
-    if (!e.ctrlKey) return;
-    const t = e.target.tagName;
-    if (t === 'INPUT' || t === 'TEXTAREA') return;
-    // 그리기 모드는 기존 핸들러가 처리하도록 양보
-    if (typeof drawingMode !== 'undefined' && drawingMode && currentPath && currentPath.length > 0) return;
-
-    const key = e.key.toLowerCase();
-    if (key === 'z' && undoStack.length > 0) {
-      e.preventDefault();
-      const a = undoStack.pop();
-      redoStack.push(a);
-      applyPos(a.path, a.prevLat, a.prevLng);
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type:'update_gps', path: a.path, lat: a.prevLat, lng: a.prevLng }));
-        setBadge(true, '↩ 되돌림: ' + a.path.split('\\').pop());
-      }
-    } else if (key === 'y' && redoStack.length > 0) {
-      e.preventDefault();
-      const a = redoStack.pop();
-      undoStack.push(a);
-      applyPos(a.path, a.newLat, a.newLng);
-      if (ws && ws.readyState === 1) {
-        ws.send(JSON.stringify({ type:'update_gps', path: a.path, lat: a.newLat, lng: a.newLng }));
-        setBadge(true, '↪ 다시 실행: ' + a.path.split('\\').pop());
-      }
-    }
-  });
+  // (Ctrl+Z/Y는 메인 keydown 핸들러의 통합 undo/redo 시스템에서 처리)
 
   // 로컬(http:// 또는 file://)에서만 연결 시도 — GitHub Pages(https://)에서는 숨김
   if (location.protocol !== 'https:') {
