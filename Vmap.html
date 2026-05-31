@@ -1918,26 +1918,90 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
 
     const coords=[];
     items.forEach(({lat,lng,name,path})=>{
+      // 유효 좌표만 처리
+      if (typeof lat !== 'number' || typeof lng !== 'number' ||
+          isNaN(lat) || isNaN(lng)) return;
+
       const coord=toMerc(lng,lat);
       coords.push(coord);
+      const isPhoto = !!path;
       const el=document.createElement('div');
-      el.className='live-pin';
-      el.title='길게 눌러 드래그하면 GPS 위치 수정';
-      el.innerHTML='<div class="live-pin-label">'+name+'</div>'
-                  +'<div class="live-pin-ring"></div>'
-                  +'<div class="live-pin-dot"></div>';
-      const ov=new ol.Overlay({element:el,position:coord,positioning:'center-center',stopEvent:true});
+      el.className = 'live-pin' + (isPhoto ? '' : ' coord-only');
+      el.title = isPhoto ? '길게 눌러 드래그하면 GPS 위치 수정' : (name || '좌표');
+      // 사진(초록) → 펄스 링 + 점 / 좌표(파랑) → 정적 파란 점만
+      if (isPhoto) {
+        el.innerHTML='<div class="live-pin-label">'+name+'</div>'
+                    +'<div class="live-pin-ring"></div>'
+                    +'<div class="live-pin-dot"></div>';
+      } else {
+        el.innerHTML='<div class="live-pin-label">'+name+'</div>'
+                    +'<div class="live-pin-dot" style="background:#2196f3;"></div>';
+      }
+      const ov=new ol.Overlay({element:el,position:coord,positioning:'center-center',stopEvent:isPhoto});
       vmap.addOverlay(ov);
-      makeDraggable(el,ov,path);
       liveOvs.push(ov);
-      pathToOv.set(path, ov);
+      if (isPhoto) {
+        makeDraggable(el,ov,path);
+        pathToOv.set(path, ov);
+      }
     });
 
-    if(items.length===1){
-      panTo(coords[0]);
-    } else {
-      const extent=ol.extent.boundingExtent(coords);
-      vmap.getView().fit(extent,{padding:[70,70,70,70],maxZoom:16,duration:400});
+    if (!coords.length) return;
+
+    // 맵 크기 갱신 (사이드바 토글 등으로 크기 변경되었을 수 있음)
+    try { vmap.updateSize(); } catch (e) {}
+
+    const view = vmap.getView();
+
+    // 모든 좌표의 범위 계산
+    const xs = coords.map(c => c[0]);
+    const ys = coords.map(c => c[1]);
+    const minX = Math.min.apply(null, xs);
+    const maxX = Math.max.apply(null, xs);
+    const minY = Math.min.apply(null, ys);
+    const maxY = Math.max.apply(null, ys);
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    const sameSpot = (minX === maxX && minY === maxY);
+
+    // 단일 좌표 또는 동일 좌표들 → 중심점으로 이동 + 적절한 줌
+    if (coords.length === 1 || sameSpot) {
+      const curZoom = view.getZoom();
+      const targetZoom = (typeof curZoom === 'number' && curZoom >= 14) ? curZoom : 15;
+      if (typeof view.animate === 'function') {
+        view.animate({ center: [cx, cy], zoom: targetZoom, duration: 400 });
+      } else {
+        view.setCenter([cx, cy]);
+        view.setZoom(targetZoom);
+      }
+      return;
+    }
+
+    // 여러 좌표 → 수동으로 줌 계산해서 view.animate
+    // (view.fit이 일부 환경에서 maxZoom으로 튀는 문제 회피)
+    const mapSize = vmap.getSize() || [800, 600];
+    const padW = Math.max(100, mapSize[0] - 140);   // 좌우 70px 여유
+    const padH = Math.max(100, mapSize[1] - 140);   // 상하 70px 여유
+    const extW = maxX - minX;
+    const extH = maxY - minY;
+
+    // Web Mercator 줌 공식: resolution = 156543.04 / 2^zoom
+    // → zoom = log2(156543.04 / resolution)
+    const resX = extW / padW;
+    const resY = extH / padH;
+    const res  = Math.max(resX, resY, 0.1);   // 0 방지
+    let zoom = Math.log2(156543.04 / res);
+    zoom = Math.min(16, Math.max(3, zoom));
+
+    try {
+      if (typeof view.animate === 'function') {
+        view.animate({ center: [cx, cy], zoom: zoom, duration: 400 });
+      } else {
+        view.setCenter([cx, cy]);
+        view.setZoom(zoom);
+      }
+    } catch (e) {
+      try { view.setCenter([cx, cy]); view.setZoom(13); } catch (e2) {}
     }
   }
 
@@ -1951,15 +2015,20 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
       try{
         const d=JSON.parse(data);
         if(d.type==='photos'){
-          const gpsItems=d.items.filter(i=>i.has_gps);
-          const noGps=d.items.length-gpsItems.length;
-          if(gpsItems.length>0){
-            showLiveMulti(gpsItems);
-            const label=gpsItems.length===1?gpsItems[0].name:gpsItems.length+'장 선택';
-            setBadge(true,'🟢 '+label+(noGps?' (GPS없음 '+noGps+'장)':''));
-          } else {
+          if(d.items.length===0){
             removeLive();
-            setBadge(true,'⚠️ GPS 없음 ('+d.items.length+'장)');
+            setBadge(true,'🟢 탐색기 연동 중');
+          } else {
+            const gpsItems=d.items.filter(i=>i.has_gps);
+            const noGps=d.items.length-gpsItems.length;
+            if(gpsItems.length>0){
+              showLiveMulti(gpsItems);
+              const label=gpsItems.length===1?gpsItems[0].name:gpsItems.length+'장 선택';
+              setBadge(true,'🟢 '+label+(noGps?' (GPS없음 '+noGps+'장)':''));
+            } else {
+              removeLive();
+              setBadge(true,'⚠️ GPS 없음 ('+d.items.length+'장)');
+            }
           }
         } else if(d.type==='gps_saved'){
           const name=d.path.split('\\').pop();

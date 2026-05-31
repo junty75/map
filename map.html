@@ -2155,12 +2155,21 @@ window.onload=()=>{
     removeLive();
     if (!map || !items.length) return;
 
-    // 초록 점 + 흰 테두리 (Marker 이미지)
-    const dotSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22">'
-                 + '<circle cx="11" cy="11" r="7" fill="#00e676" stroke="white" stroke-width="2.5"/>'
-                 + '</svg>';
-    const markerImg = new kakao.maps.MarkerImage(
-      'data:image/svg+xml;base64,' + btoa(dotSvg),
+    // 초록 점 (사진: path 있음, 드래그 가능)
+    const greenSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22">'
+                   + '<circle cx="11" cy="11" r="7" fill="#00e676" stroke="white" stroke-width="2.5"/>'
+                   + '</svg>';
+    const greenImg = new kakao.maps.MarkerImage(
+      'data:image/svg+xml;base64,' + btoa(greenSvg),
+      new kakao.maps.Size(22, 22),
+      { offset: new kakao.maps.Point(11, 11) }
+    );
+    // 파란 점 (엑셀 좌표: path 없음, 정적)
+    const blueSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22">'
+                  + '<circle cx="11" cy="11" r="7" fill="#2196f3" stroke="white" stroke-width="2.5"/>'
+                  + '</svg>';
+    const blueImg = new kakao.maps.MarkerImage(
+      'data:image/svg+xml;base64,' + btoa(blueSvg),
       new kakao.maps.Size(22, 22),
       { offset: new kakao.maps.Point(11, 11) }
     );
@@ -2168,23 +2177,34 @@ window.onload=()=>{
     const bounds = new kakao.maps.LatLngBounds();
     items.forEach(({ lat, lng, name, path }) => {
       const pos = new kakao.maps.LatLng(lat, lng);
+      const isPhoto = !!path;
 
-      // ① 펄스 링 + 라벨 (CustomOverlay, pointer-events:none → 드래그 방해 X)
+      // ① 라벨 + (사진이면 펄스 링)
       const ringEl = document.createElement('div');
-      ringEl.className = 'live-pin';
+      ringEl.className = 'live-pin' + (isPhoto ? '' : ' coord-only');
       ringEl.style.pointerEvents = 'none';
       ringEl.innerHTML = `<div class="live-pin-label">${name}</div>`
-                       + `<div class="live-pin-ring"></div>`;
+                       + (isPhoto ? `<div class="live-pin-ring"></div>` : '');
       const ringOv = new kakao.maps.CustomOverlay({
         map, content: ringEl, position: pos,
         xAnchor: 0.5, yAnchor: 0.5, zIndex: 998
       });
 
-      // ② 드래그 가능한 Marker (Kakao 내장 드래그 사용)
+      // ② 마커 — 사진은 드래그 가능 (초록), 좌표는 정적 (파랑)
       const marker = new kakao.maps.Marker({
-        map: map, position: pos, image: markerImg,
-        draggable: true, title: '드래그해서 GPS 위치 수정', zIndex: 999
+        map: map, position: pos,
+        image: isPhoto ? greenImg : blueImg,
+        draggable: isPhoto,
+        title: isPhoto ? '드래그해서 GPS 위치 수정' : (name || '좌표'),
+        zIndex: 999
       });
+
+      // 좌표만 있는 경우 — 드래그 이벤트 없이 마커만 추가하고 종료
+      if (!isPhoto) {
+        liveOvs.push(marker, ringOv);
+        bounds.extend(pos);
+        return;
+      }
 
       let originalPos = pos;
 
@@ -2257,15 +2277,21 @@ window.onload=()=>{
       try {
         const d = JSON.parse(data);
         if (d.type === 'photos') {
-          const gpsItems = d.items.filter(i => i.has_gps);
-          const noGps    = d.items.length - gpsItems.length;
-          if (gpsItems.length > 0) {
-            showLiveMulti(gpsItems);
-            const label = gpsItems.length === 1 ? gpsItems[0].name : `${gpsItems.length}장 선택`;
-            setBadge(true, `🟢 ${label}${noGps ? ` (GPS없음 ${noGps}장)` : ''}`);
-          } else {
+          if (d.items.length === 0) {
+            // 활성 창에서 선택 해제 — 마커 모두 클리어
             removeLive();
-            setBadge(true, `⚠️ GPS 없음 (${d.items.length}장)`);
+            setBadge(true, '🟢 탐색기 연동 중');
+          } else {
+            const gpsItems = d.items.filter(i => i.has_gps);
+            const noGps    = d.items.length - gpsItems.length;
+            if (gpsItems.length > 0) {
+              showLiveMulti(gpsItems);
+              const label = gpsItems.length === 1 ? gpsItems[0].name : `${gpsItems.length}장 선택`;
+              setBadge(true, `🟢 ${label}${noGps ? ` (GPS없음 ${noGps}장)` : ''}`);
+            } else {
+              removeLive();
+              setBadge(true, `⚠️ GPS 없음 (${d.items.length}장)`);
+            }
           }
         } else if (d.type === 'gps_saved') {
           const name = d.path.split('\\').pop();
