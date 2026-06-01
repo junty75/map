@@ -1320,14 +1320,17 @@ async function exportCSV(){
   dlBlob(new Blob([csv],{type:'text/csv;charset=utf-8;'}),fname+'.csv');
 }
 async function exportKMZ(vis=false){
-  const ms=getMks(vis),ls=getLyrs(vis);
+  const ext=vis?vmap.getView().calculateExtent(vmap.getSize()):null;
+  // allItems 사이드바 순서 유지, 가시성 필터
+  const visItems=allItems.filter(item=>{if(item.mkObj)return !ext||ol.extent.containsCoordinate(ext,item.mkObj.feat.getGeometry().getCoordinates());if(item.polyLyr)return !ext||getCoords(item.polyLyr).some(c=>ol.extent.containsCoordinate(ext,c));return false;});
+  const ms=visItems.filter(i=>i.mkObj).map(i=>i.mkObj);
   const fname=prompt('KMZ 파일명',await defName(ms));if(!fname)return;
   const nnm=buildNumNameMap();
-  const zip=new JSZip(),pFiles=new Array(ms.length).fill(null),usedFn=new Set();
-  for(let i=0;i<ms.length;i++){const m=ms[i];if(m.isPhoto&&m.imgSrc){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;usedFn.add(fn);pFiles[i]=fn;const ll=fromMerc(m.feat.getGeometry().getCoordinates());const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);zip.file(`files/${fn}`,img.split(',')[1],{base64:true});}}
+  const zip=new JSZip(),photoFileMap=new Map(),usedFn=new Set();
+  for(const item of visItems){if(!item.mkObj)continue;const m=item.mkObj;if(m.isPhoto&&m.imgSrc){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;usedFn.add(fn);photoFileMap.set(m,fn);const ll=fromMerc(m.feat.getGeometry().getCoordinates());const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);zip.file(`files/${fn}`,img.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(fname)}</name>\n`;
-  ls.forEach((l,i)=>{const coords=getCoords(l).map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');kml+=`<Placemark><name>${esc(nnm?.get(l)||'path'+(i+1))}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
-  ms.forEach((m,i)=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());const nm=nnm?.get(m)||m.name;if(m.isPhoto&&pFiles[i]){kml+=`<Placemark><name>${esc(nm)}</name><description><![CDATA[<img src="files/${pFiles[i]}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${pFiles[i]}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}else{kml+=`<Placemark><name>${esc(nm)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}});
+  // allItems 순서대로 KML 작성
+  for(const item of visItems){if(item.polyLyr){const l=item.polyLyr;const coords=getCoords(l).map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');kml+=`<Placemark><name>${esc(nnm?.get(l)||item.name)}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;}else if(item.mkObj){const m=item.mkObj;const ll=fromMerc(m.feat.getGeometry().getCoordinates());const nm=nnm?.get(m)||m.name;const fn=photoFileMap.get(m);if(fn){kml+=`<Placemark><name>${esc(nm)}</name><description><![CDATA[<img src="files/${fn}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${fn}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}else{kml+=`<Placemark><name>${esc(nm)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}}}
   kml+='</Document></kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   dlBlob(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}),fname+'.kmz');
@@ -1365,15 +1368,17 @@ async function exportSelectedCSV(){
   dlBlob(new Blob([csv],{type:'text/csv;charset=utf-8;'}),fname+'.csv');
 }
 async function exportSelectedKMZ(){
-  const r=getSelectedExportItems();if(!r)return;const{ms,ls}=r;
+  if(selectedItems.size===0){alert('선택된 항목이 없습니다.');return;}
+  const filtered=getFilteredItems();
+  const selSet=new Set([...selectedItems].map(i=>filtered[i]).filter(Boolean));
+  const selItems=allItems.filter(item=>selSet.has(item));
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('선택 객체 KMZ',ds+'_선택');if(!fname)return;
   const nnm=buildNumNameMap();
-  const zip=new JSZip(),pFiles=new Array(ms.length).fill(null),usedFn=new Set();
-  for(let i=0;i<ms.length;i++){const m=ms[i];if(m.isPhoto&&m.imgSrc){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;usedFn.add(fn);pFiles[i]=fn;const ll=fromMerc(m.feat.getGeometry().getCoordinates());const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);zip.file(`files/${fn}`,img.split(',')[1],{base64:true});}}
+  const zip=new JSZip(),photoFileMap=new Map(),usedFn=new Set();
+  for(const item of selItems){if(!item.mkObj)continue;const m=item.mkObj;if(m.isPhoto&&m.imgSrc){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;usedFn.add(fn);photoFileMap.set(m,fn);const ll=fromMerc(m.feat.getGeometry().getCoordinates());const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);zip.file(`files/${fn}`,img.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(fname)}</name>\n`;
-  ls.forEach((l,i)=>{const coords=getCoords(l).map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');kml+=`<Placemark><name>${esc(nnm?.get(l)||'path'+(i+1))}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
-  ms.forEach((m,i)=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());const nm=nnm?.get(m)||m.name;if(m.isPhoto&&pFiles[i]){kml+=`<Placemark><name>${esc(nm)}</name><description><![CDATA[<img src="files/${pFiles[i]}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${pFiles[i]}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}else{kml+=`<Placemark><name>${esc(nm)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}});
+  for(const item of selItems){if(item.polyLyr){const l=item.polyLyr;const coords=getCoords(l).map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');kml+=`<Placemark><name>${esc(nnm?.get(l)||item.name)}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;}else if(item.mkObj){const m=item.mkObj;const ll=fromMerc(m.feat.getGeometry().getCoordinates());const nm=nnm?.get(m)||m.name;const fn=photoFileMap.get(m);if(fn){kml+=`<Placemark><name>${esc(nm)}</name><description><![CDATA[<img src="files/${fn}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${fn}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}else{kml+=`<Placemark><name>${esc(nm)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}}}
   kml+='</Document></kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   dlBlob(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}),fname+'.kmz');

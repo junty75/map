@@ -1726,18 +1726,15 @@ async function exportCSV() {
 }
 
 async function exportKMZ() {
-  const am=markers.filter(m=>m.marker&&m.marker.getMap());
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('파일명',ds+'_지도');if(!fname)return;
   const nnm=buildNumNameMap();
-  const zip=new JSZip(),photoFiles=[],usedNames=new Set();
-  for(const m of am){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
+  const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set();
+  // 사진 파일 먼저 수집 (allItems 사이드바 순서 유지)
+  for(const item of allItems){if(!item.markerObj||!item.markerObj.marker.getMap())continue;const m=item.markerObj;const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||item.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFileMap.set(m,sf);const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
-  polylines.forEach((pl,i)=>{if(!pl||!pl.getMap())return;const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||'path'+(i+1)}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
-  let pi=0;
-  for(const m of am){const p=m.marker.getPosition();const img=m.iw.getContent().querySelector('img');const nm=nnm?.get(m)||m.name||'';
-    if(img&&img.src.startsWith('data:image')){const sf=photoFiles[pi]?.filename||'photo.jpg';pi++;kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
-    else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
+  // allItems 순서대로 KML 작성
+  for(const item of allItems){if(item.polyline){const pl=item.polyline;if(!pl.getMap())continue;const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||item.name}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;}else if(item.markerObj){const m=item.markerObj;if(!m.marker.getMap())continue;const p=m.marker.getPosition();const nm=nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+='</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a');a.href=URL.createObjectURL(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}));a.download=fname+'.kmz';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
@@ -1758,19 +1755,13 @@ function exportVisibleGPX(){
 
 async function exportVisibleKMZ(){
   const bounds=map.getBounds();
-  const vm=markers.filter(m=>m.marker&&m.marker.getMap()&&bounds.contain(m.marker.getPosition()));
-  const vp=polylines.filter(pl=>pl&&pl.getMap()&&pl.getPath().some(p=>bounds.contain(p)));
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('보이는 영역 KMZ',ds+'_지도');if(!fname)return;
   const nnm=buildNumNameMap();
-  const zip=new JSZip(),photoFiles=[],usedNames=new Set();
-  for(const m of vm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}else photoFiles.push(null);}
+  const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set();
+  for(const item of allItems){if(!item.markerObj||!item.markerObj.marker.getMap()||!bounds.contain(item.markerObj.marker.getPosition()))continue;const m=item.markerObj;const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||item.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFileMap.set(m,sf);const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
-  vp.forEach((pl,i)=>{const coords=pl.getPath().filter(p=>bounds.contain(p)).map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||'path'+(i+1)}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
-  let pi=0;
-  for(const m of vm){const p=m.marker.getPosition();const img=m.iw.getContent().querySelector('img');const nm=nnm?.get(m)||m.name||'';
-    if(img&&img.src.startsWith('data:image')){const sf=photoFiles[pi]?.filename||'photo.jpg';pi++;kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
-    else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
+  for(const item of allItems){if(item.polyline){const pl=item.polyline;if(!pl.getMap())continue;const pts=pl.getPath().filter(p=>bounds.contain(p));if(!pts.length)continue;const coords=pts.map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||item.name}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;}else if(item.markerObj){const m=item.markerObj;if(!m.marker.getMap()||!bounds.contain(m.marker.getPosition()))continue;const p=m.marker.getPosition();const nm=nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+='</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a');a.href=URL.createObjectURL(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}));a.download=fname+'.kmz';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
@@ -1817,19 +1808,17 @@ async function exportSelectedCSV(){
 }
 
 async function exportSelectedKMZ(){
-  const r=getSelectedExportItems();if(!r)return;
-  const{sm,sp}=r;
+  if(selectedItems.size===0){alert('선택된 항목이 없습니다.');return;}
+  const filtered=getFilteredItems();
+  const selSet=new Set([...selectedItems].map(i=>filtered[i]).filter(Boolean));
+  const selItems=allItems.filter(item=>selSet.has(item));
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('선택 객체 KMZ',ds+'_선택');if(!fname)return;
   const nnm=buildNumNameMap();
-  const zip=new JSZip(),photoFiles=[],usedNames=new Set();
-  for(const m of sm){const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFiles.push({filename:sf});const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
+  const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set();
+  for(const item of selItems){if(!item.markerObj)continue;const m=item.markerObj;const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||item.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFileMap.set(m,sf);const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
-  sp.forEach((pl,i)=>{const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||'path'+(i+1)}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;});
-  let pi=0;
-  for(const m of sm){const p=m.marker.getPosition();const img=m.iw.getContent().querySelector('img');const nm=nnm?.get(m)||m.name||'';
-    if(img&&img.src.startsWith('data:image')){const sf=photoFiles[pi]?.filename||'photo.jpg';pi++;kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
-    else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}
+  for(const item of selItems){if(item.polyline){const pl=item.polyline;const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||item.name}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;}else if(item.markerObj){const m=item.markerObj;const p=m.marker.getPosition();const nm=nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+='</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   const a=document.createElement('a');a.href=URL.createObjectURL(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}));a.download=fname+'.kmz';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
