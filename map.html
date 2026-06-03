@@ -931,7 +931,9 @@ document.getElementById('copyListBtn').onclick = () => {
 
 // ── 사이드바 토글 ──
 function openSidebar() {
-  document.getElementById('sidebar').style.display = 'flex';
+  const sb = document.getElementById('sidebar');
+  if (getComputedStyle(sb).display !== 'none') return;   // 이미 열려 있으면 그대로 유지
+  sb.style.display = 'flex';
   document.getElementById('sidebarResizer').style.display = 'block';
   document.getElementById('sidebarOpenBtn').textContent = '◀';
   if (map) setTimeout(() => map.relayout(), 50);
@@ -1913,16 +1915,71 @@ async function exportClusteredKMZ(scope) {
     zip.file('doc.kml', kml);
 
     const blob = await zip.generateAsync({ type: 'blob' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new File([blob], clusterName + '.kmz', { type: 'application/vnd.google-earth.kmz' }));
-    a.download = clusterName + '.kmz';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
+    saveBlob(blob, clusterName + '.kmz');   // 각각저장은 클러스터 이름 그대로
     await new Promise(r => setTimeout(r, 400));
   }
 
   setTimeout(() => alert(`✅ ${clusterArr.length}개 파일 저장 완료!`), 500);
+}
+
+// ══════════════════════════════════════════════════
+//  저장 위치 결정 + 공통 저장 (Python 연동)
+// ══════════════════════════════════════════════════
+let loadedDataFiles = [];   // 엑셀에서 올라온 KMZ/GPX/CSV 원본 전체경로 (영구)
+let liveDataFile    = '';   // 단일 셀 임시 KMZ 경로 (셀 이동 시 비움)
+
+function dirOf(p){ return p ? p.replace(/[\\/][^\\/]*$/, '') : ''; }
+function baseName(p){ return p ? p.replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '') : ''; }
+
+// 저장 대상 결정 → {folder, base}
+//  folder: ① 화면 중심 최근접 사진 폴더(최우선) → ② 셀에서 올린 KMZ 폴더
+//  base  : 기준 사진 이름(확장자 없음). 사진이 있을 때만 채워짐
+function resolveSaveTarget(){
+  if (map){
+    const c = map.getCenter();
+    let best = null, bestD = Infinity;
+    allItems.forEach(it => {
+      if (it.type === 'photo' && it.path && it.markerObj){
+        const pos = it.markerObj.marker.getPosition();
+        const d = Math.hypot(pos.getLat() - c.getLat(), pos.getLng() - c.getLng());
+        if (d < bestD){ bestD = d; best = it; }
+      }
+    });
+    if (best) return { folder: dirOf(best.path), base: baseName(best.path) };
+  }
+  // 사진이 없으면 셀에서 올린 KMZ 폴더·이름 사용 (그 KMZ 위에 덮어쓰기 흐름)
+  if (liveDataFile) return { folder: dirOf(liveDataFile), base: baseName(liveDataFile) };
+  for (let i = loadedDataFiles.length - 1; i >= 0; i--)
+    if (loadedDataFiles[i]) return { folder: dirOf(loadedDataFiles[i]), base: baseName(loadedDataFiles[i]) };
+  return { folder: '', base: '' };
+}
+
+// 저장 prompt 기본값: 기준 사진 이름(있으면) → 없으면 fallback
+function defaultSaveName(fallback){
+  const t = resolveSaveTarget();
+  return t.base || fallback;
+}
+
+// 공통 저장 — 폴더가 정해지고 WS 연결되면 Python에 저장, 아니면 다운로드
+function saveBlob(blob, filename){
+  const t = resolveSaveTarget();
+  const folder = t.folder;
+  if (folder && window.__wsReady && window.__wsReady()){
+    const fr = new FileReader();
+    fr.onload = () => window.__saveViaPython(folder, filename, fr.result.split(',')[1]);
+    fr.readAsDataURL(blob);
+  } else {
+    const photos = allItems.filter(i => i.type === 'photo');
+    console.warn('[저장] 작업 폴더 미확정 → 다운로드 폴더로 저장합니다.', {
+      folder, wsReady: !!(window.__wsReady && window.__wsReady()),
+      사진수: photos.length, 경로있는사진: photos.filter(i => i.path).length,
+      데이터파일: loadedDataFiles.length, liveData: liveDataFile
+    });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = filename;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
+  }
 }
 
 // ══════════════════════════════════════════════════
@@ -1940,29 +1997,29 @@ document.getElementById('exportFormat').addEventListener('change',function(){doc
 
 function exportGPX() {
   const am=markers.filter(m=>m.marker&&m.marker.getMap());
-  const fname=prompt('파일명',am.at(-1)?.name?.trim()||'data');if(!fname)return;
+  const fname=prompt('파일명',defaultSaveName(am.at(-1)?.name?.trim()||'data'));if(!fname)return;
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
   polylines.forEach((pl,i)=>{if(pl&&pl.getMap()){const pts=pl.getPath().map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('');gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name><trkseg>\n${pts}</trkseg></trk>\n`;}});
   am.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml'}));a.download=fname+'.gpx';document.body.appendChild(a);a.click();document.body.removeChild(a);
+  saveBlob(new Blob([gpx],{type:'application/gpx+xml'}), fname+'.gpx');
 }
 
 async function exportCSV() {
   const am=markers.filter(m=>m.marker&&m.marker.getMap());
   if(!am.length){alert('내보낼 마커가 없습니다.');return;}
-  const fname=prompt('CSV 파일명',document.getElementById('address-display').innerText.split(' ')[0]||'markers');if(!fname)return;
+  const fname=prompt('CSV 파일명',defaultSaveName(document.getElementById('address-display').innerText.split(' ')[0]||'markers'));if(!fname)return;
   const nnm=buildNumNameMap();
   const getAddr=m=>new Promise(r=>{if(m.addr!==undefined){r(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(res,status)=>{m.addr=status===kakao.maps.services.Status.OK?(res[0].address?.address_name||''):'';r(m.addr);});});
   let csv='﻿이름,위도,경도,주소\n';
   for(const m of am){const pos=m.marker.getPosition?m.marker.getPosition():null;if(!pos)continue;const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));a.download=fname+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  saveBlob(new Blob([csv],{type:'text/csv;charset=utf-8;'}), fname+'.csv');
 }
 
 async function exportKMZ() {
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
-  const fname=prompt('파일명',ds+'_지도');if(!fname)return;
+  const fname=prompt('파일명',defaultSaveName(ds+'_지도'));if(!fname)return;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set();
   // 사진 파일 먼저 수집 (allItems 사이드바 순서 유지)
@@ -1972,26 +2029,26 @@ async function exportKMZ() {
   for(const item of allItems){if(item.polyline){const pl=item.polyline;if(!pl.getMap())continue;const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||item.name}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;}else if(item.markerObj){const m=item.markerObj;if(!m.marker.getMap())continue;const p=m.marker.getPosition();const nm=nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+='</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}));a.download=fname+'.kmz';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
+  saveBlob(blob, fname+'.kmz');
 }
 
 function exportVisibleGPX(){
   const bounds=map.getBounds();
   const vm=markers.filter(m=>m.marker&&m.marker.getMap()&&bounds.contain(m.marker.getPosition()));
   const vp=polylines.filter(pl=>pl&&pl.getMap()&&pl.getPath().some(p=>bounds.contain(p)));
-  const fname=prompt('보이는 영역 GPX',vm.at(-1)?.name||'visible');if(!fname)return;
+  const fname=prompt('보이는 영역 GPX',defaultSaveName(vm.at(-1)?.name||'visible'));if(!fname)return;
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
   vp.forEach((pl,i)=>{gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name><trkseg>\n`+pl.getPath().filter(p=>bounds.contain(p)).map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+'</trkseg></trk>\n';});
   vm.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml'}));a.download=fname+'.gpx';document.body.appendChild(a);a.click();document.body.removeChild(a);
+  saveBlob(new Blob([gpx],{type:'application/gpx+xml'}), fname+'.gpx');
 }
 
 async function exportVisibleKMZ(){
   const bounds=map.getBounds();
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
-  const fname=prompt('보이는 영역 KMZ',ds+'_지도');if(!fname)return;
+  const fname=prompt('보이는 영역 KMZ',defaultSaveName(ds+'_지도'));if(!fname)return;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set();
   for(const item of allItems){if(!item.markerObj||!item.markerObj.marker.getMap()||!bounds.contain(item.markerObj.marker.getPosition()))continue;const m=item.markerObj;const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||item.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFileMap.set(m,sf);const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
@@ -1999,7 +2056,7 @@ async function exportVisibleKMZ(){
   for(const item of allItems){if(item.polyline){const pl=item.polyline;if(!pl.getMap())continue;const pts=pl.getPath().filter(p=>bounds.contain(p));if(!pts.length)continue;const coords=pts.map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||item.name}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;}else if(item.markerObj){const m=item.markerObj;if(!m.marker.getMap()||!bounds.contain(m.marker.getPosition()))continue;const p=m.marker.getPosition();const nm=nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+='</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}));a.download=fname+'.kmz';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
+  saveBlob(blob, fname+'.kmz');
 }
 
 async function downloadAllPhotos(){
@@ -2021,25 +2078,25 @@ function getSelectedExportItems(){
 function exportSelectedGPX(){
   const r=getSelectedExportItems();if(!r)return;
   const{sm,sp}=r;
-  const fname=prompt('선택 객체 GPX',sm.at(-1)?.name||'selected');if(!fname)return;
+  const fname=prompt('선택 객체 GPX',defaultSaveName(sm.at(-1)?.name||'selected'));if(!fname)return;
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
   sp.forEach((pl,i)=>{gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name><trkseg>\n`+pl.getPath().map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+'</trkseg></trk>\n';});
   sm.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([gpx],{type:'application/gpx+xml'}));a.download=fname+'.gpx';document.body.appendChild(a);a.click();document.body.removeChild(a);
+  saveBlob(new Blob([gpx],{type:'application/gpx+xml'}), fname+'.gpx');
 }
 
 async function exportSelectedCSV(){
   const r=getSelectedExportItems();if(!r)return;
   const{sm}=r;
   if(!sm.length){alert('선택된 마커가 없습니다.');return;}
-  const fname=prompt('선택 객체 CSV','selected');if(!fname)return;
+  const fname=prompt('선택 객체 CSV',defaultSaveName('selected'));if(!fname)return;
   const nnm=buildNumNameMap();
   const getAddr=m=>new Promise(res=>{if(m.addr!==undefined){res(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(result,status)=>{m.addr=status===kakao.maps.services.Status.OK?(result[0].address?.address_name||''):'';res(m.addr);});});
   let csv='﻿이름,위도,경도,주소\n';
   for(const m of sm){const pos=m.marker.getPosition();const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
-  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8;'}));a.download=fname+'.csv';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  saveBlob(new Blob([csv],{type:'text/csv;charset=utf-8;'}), fname+'.csv');
 }
 
 async function exportSelectedKMZ(){
@@ -2048,7 +2105,7 @@ async function exportSelectedKMZ(){
   const selSet=new Set([...selectedItems].map(i=>filtered[i]).filter(Boolean));
   const selItems=allItems.filter(item=>selSet.has(item));
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
-  const fname=prompt('선택 객체 KMZ',ds+'_선택');if(!fname)return;
+  const fname=prompt('선택 객체 KMZ',defaultSaveName(ds+'_선택'));if(!fname)return;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set();
   for(const item of selItems){if(!item.markerObj)continue;const m=item.markerObj;const img=m.iw.getContent().querySelector('img');if(img&&img.src.startsWith('data:image')){let base=((nnm?.get(m)||item.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let sf=base+'.jpg';let suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);photoFileMap.set(m,sf);const p=m.marker.getPosition();const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});}}
@@ -2056,7 +2113,7 @@ async function exportSelectedKMZ(){
   for(const item of selItems){if(item.polyline){const pl=item.polyline;const coords=pl.getPath().map(p=>`${p.getLng()},${p.getLat()},0`).join(' ');kml+=`  <Placemark><name>${nnm?.get(pl)||item.name}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;}else if(item.markerObj){const m=item.markerObj;const p=m.marker.getPosition();const nm=nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+='</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(new File([blob],fname+'.kmz',{type:'application/vnd.google-earth.kmz'}));a.download=fname+'.kmz';document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
+  saveBlob(blob, fname+'.kmz');
 }
 
 async function downloadSelectedPhotos(){
@@ -2340,10 +2397,41 @@ window.onload=()=>{
     badge.classList.toggle('connected', ok);
   }
 
+  // ── 저장(saveBlob)에서 사용하는 Python 연동 공개 함수 ──
+  let pendingSave = null;   // 덮어쓰기 확인용 보관 {folder, filename, b64}
+  window.__wsReady = () => ws && ws.readyState === 1;
+  window.__saveViaPython = (folder, filename, b64) => {
+    pendingSave = { folder, filename, b64 };
+    ws.send(JSON.stringify({ type:'save_file', folder, filename, data:b64, overwrite:false }));
+    setBadge(true, '💾 저장 중...');
+  };
+
   function removeLive() {
     liveOvs.forEach(ov => ov.setMap(null));
     liveOvs = [];
     pathToMarker.clear();
+  }
+
+  // Excel 셀 선택으로 임시 삽입된 항목 전부 제거
+  function clearLiveItems() {
+    removeLive();
+    liveDataFile = '';
+    const liveItems = allItems.filter(i => i._live);
+    if (!liveItems.length) return;
+    liveItems.forEach(item => {
+      if (item.markerObj) {
+        item.markerObj.iw.close();
+        item.markerObj.marker.setMap(null);
+        markers = markers.filter(m => m !== item.markerObj);
+      }
+      if (item.polyline) {
+        item.polyline.setMap(null);
+        polylines = polylines.filter(p => p !== item.polyline);
+      }
+    });
+    allItems = allItems.filter(i => !i._live);
+    selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
+    renderList();   // 사이드바 열림/닫힘 상태는 그대로 유지 (닫지 않음)
   }
 
   // path 로 식별되는 마커 위치 갱신 (undo/redo 시 시각 반영)
@@ -2482,11 +2570,15 @@ window.onload=()=>{
       bounds.extend(pos);
     });
 
-    if (items.length === 1) {
-      map.panTo(new kakao.maps.LatLng(items[0].lat, items[0].lng));
-    } else {
-      map.setBounds(bounds, 60);
-    }
+    // 사이드바 자동 열림(relayout 50ms)이 끝난 뒤 보이는 지도 중심으로 이동
+    setTimeout(() => {
+      if (map) map.relayout();
+      if (items.length === 1) {
+        map.panTo(new kakao.maps.LatLng(items[0].lat, items[0].lng));
+      } else {
+        map.setBounds(bounds, 60);
+      }
+    }, 80);
   }
 
   function connect() {
@@ -2522,6 +2614,175 @@ window.onload=()=>{
           const name = d.path.split('\\').pop();
           setBadge(true, d.ok ? `✅ 저장됨: ${name}` : `❌ 저장실패: ${name}`);
           setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
+        } else if (d.type === 'file_saved') {
+          setBadge(true, d.ok ? `✅ 저장됨: ${d.filename}` : `❌ 저장실패: ${d.filename}`);
+          if (d.ok && d.folder) console.log('저장 위치:', d.folder + '\\' + d.filename);
+          pendingSave = null;
+          setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 3000);
+        } else if (d.type === 'file_exists') {
+          if (pendingSave && confirm(`'${d.filename}' 파일이 이미 있습니다.\n덮어쓰시겠습니까?`)) {
+            ws.send(JSON.stringify({ type:'save_file', folder: pendingSave.folder,
+              filename: pendingSave.filename, data: pendingSave.b64, overwrite:true }));
+            setBadge(true, '💾 덮어쓰는 중...');
+          } else {
+            pendingSave = null;
+            setBadge(true, '저장 취소됨');
+            setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2000);
+          }
+        } else if (d.type === 'live_clear') {
+          clearLiveItems();
+        } else if (d.type === 'live_insert_photo') {
+          clearLiveItems();
+          const liveBounds = new kakao.maps.LatLngBounds();
+
+          // 녹색 마커 이미지 (최전면 드래그용)
+          const greenSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22">'
+                         + '<circle cx="11" cy="11" r="7" fill="#00e676" stroke="white" stroke-width="2.5"/></svg>';
+          const greenImg = new kakao.maps.MarkerImage(
+            'data:image/svg+xml;base64,' + btoa(greenSvg),
+            new kakao.maps.Size(22, 22), { offset: new kakao.maps.Point(11, 11) });
+
+          d.items.forEach(item => {
+            const latlng = new kakao.maps.LatLng(item.lat, item.lng);
+            const path = item.path;
+
+            // ① 사진 마커 삽입 (썸네일 포함)
+            addPhotoMarker(latlng, item.imgSrc, item.name, item.takenDate || '');
+            const photoItem = allItems[allItems.length - 1];
+            photoItem._live = true;
+            photoItem.path = item.path;               // 저장 폴더 결정용
+            const photoMarker = photoItem.markerObj ? photoItem.markerObj.marker : null;
+
+            // ② 녹색 깜빡 링 (마커 따라다님)
+            const ringEl = document.createElement('div');
+            ringEl.className = 'live-pin';
+            ringEl.style.pointerEvents = 'none';
+            ringEl.innerHTML = '<div class="live-pin-ring"></div>';
+            const ringOv = new kakao.maps.CustomOverlay({
+              map, content: ringEl, position: latlng,
+              xAnchor: 0.5, yAnchor: 0.5, zIndex: 9999 });
+
+            // ③ 드래그 가능한 녹색 마커 (최전면)
+            const dragMarker = new kakao.maps.Marker({
+              map, position: latlng, image: greenImg, draggable: true,
+              title: '드래그해서 사진 위치(GPS) 수정', zIndex: 10000 });
+
+            liveOvs.push(dragMarker, ringOv);
+
+            let originalPos = latlng;
+            kakao.maps.event.addListener(dragMarker, 'dragstart', () => {
+              originalPos = dragMarker.getPosition();
+              ringEl.classList.add('dragging');
+            });
+            kakao.maps.event.addListener(dragMarker, 'drag', () => {
+              const p = dragMarker.getPosition();
+              ringOv.setPosition(p);
+              if (photoMarker) photoMarker.setPosition(p);   // 사진 마커 동시 이동
+            });
+            kakao.maps.event.addListener(dragMarker, 'dragend', () => {
+              ringEl.classList.remove('dragging');
+              const newPos = dragMarker.getPosition();
+              ringOv.setPosition(newPos);
+              if (photoMarker) photoMarker.setPosition(newPos);
+              const la = newPos.getLat().toFixed(6);
+              const ln = newPos.getLng().toFixed(6);
+              const prevLat = originalPos.getLat(), prevLng = originalPos.getLng();
+              const newLat  = parseFloat(la),       newLng  = parseFloat(ln);
+              const sendGps = (a, b) => {
+                if (ws && ws.readyState === 1) {
+                  ws.send(JSON.stringify({ type:'update_gps', path, lat:a, lng:b }));
+                  setBadge(true, '💾 저장 중...');
+                }
+              };
+              const moveTo = (lat, lng) => {
+                const p = new kakao.maps.LatLng(lat, lng);
+                dragMarker.setPosition(p); ringOv.setPosition(p);
+                if (photoMarker) { photoMarker.setPosition(p); updateMarkerAddr(photoMarker); }
+              };
+              showDragConfirm(item.name, la, ln,
+                () => {   // 저장 + Undo/Redo 기록
+                  sendGps(newLat, newLng);
+                  if (photoMarker) updateMarkerAddr(photoMarker);
+                  pushHistory({
+                    undo() { moveTo(prevLat, prevLng); sendGps(prevLat, prevLng); },
+                    redo() { moveTo(newLat,  newLng);  sendGps(newLat,  newLng);  }
+                  });
+                },
+                () => {   // 취소 → 원위치
+                  dragMarker.setPosition(originalPos);
+                  ringOv.setPosition(originalPos);
+                  if (photoMarker) photoMarker.setPosition(originalPos);
+                });
+            });
+
+            if (path) pathToMarker.set(path, { marker: dragMarker, ringOv });
+            liveBounds.extend(latlng);
+          });
+
+          // 팝업 없이 지도만 이동 (사이드바 자동 열림 relayout 이후)
+          setTimeout(() => {
+            if (map) map.relayout();
+            if (d.items.length === 1)
+              map.panTo(new kakao.maps.LatLng(d.items[0].lat, d.items[0].lng));
+            else if (!liveBounds.isEmpty())
+              map.setBounds(liveBounds, 60);
+          }, 80);
+          if (d.items.length) setBadge(true, `📍 ${d.items[0].name}`);
+        } else if (d.type === 'live_insert_kmz') {
+          clearLiveItems();
+          liveDataFile = d.path || '';                // 저장 폴더 결정용
+          setBadge(true, `📂 ${d.name} 로드 중…`);
+          (async () => {
+            try {
+              const bytes = Uint8Array.from(atob(d.data), c => c.charCodeAt(0));
+              const file = new File([bytes], d.name,
+                { type: 'application/vnd.google-earth.kmz' });
+              const preLen = allItems.length;
+              const bounds = new kakao.maps.LatLngBounds();
+              await loadKMZ(file, bounds);
+              // loadKMZ가 추가한 항목에 live 태그
+              for (let i = preLen; i < allItems.length; i++) allItems[i]._live = true;
+              if (!bounds.isEmpty()) map.setBounds(bounds, 60);
+              setBadge(true, `🟢 탐색기 연동 중`);
+            } catch(e) {
+              console.error('live KMZ 오류', e);
+              setBadge(true, `❌ KMZ 오류: ${d.name}`);
+            }
+          })();
+        } else if (d.type === 'insert_photos') {
+          // Ctrl+Shift+I — 여러 사진 영구 삽입 (셀 이동해도 유지)
+          const bounds = new kakao.maps.LatLngBounds();
+          let added = 0;
+          d.items.forEach(item => {
+            const latlng = new kakao.maps.LatLng(item.lat, item.lng);
+            addPhotoMarker(latlng, item.imgSrc, item.name, item.takenDate || '');
+            allItems[allItems.length - 1].path = item.path;   // 저장 폴더 결정용
+            bounds.extend(latlng);
+            added++;
+          });
+          if (added && !bounds.isEmpty())
+            setTimeout(() => { if (map) map.relayout(); map.setBounds(bounds, 60); }, 80);
+          setBadge(true, added ? `✅ 사진 ${added}장 삽입됨` : '⚠️ GPS 있는 사진 없음');
+          setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
+        } else if (d.type === 'insert_kmz') {
+          // Ctrl+Shift+I — 여러 KMZ 영구 삽입
+          setBadge(true, `📂 KMZ ${d.items.length}개 로드 중…`);
+          loadedDataFiles = [];   // 이번 일괄 삽입분으로 새로 채움 (예전 경로 잔류 방지)
+          (async () => {
+            const bounds = new kakao.maps.LatLngBounds();
+            for (const item of d.items) {
+              try {
+                if (item.path) loadedDataFiles.push(item.path);   // 저장 폴더 결정용
+                const bytes = Uint8Array.from(atob(item.data), c => c.charCodeAt(0));
+                const file = new File([bytes], item.name,
+                  { type: 'application/vnd.google-earth.kmz' });
+                await loadKMZ(file, bounds);
+              } catch(e) { console.error('KMZ 오류', item.name, e); }
+            }
+            if (!bounds.isEmpty()) map.setBounds(bounds, 60);
+            setBadge(true, `✅ KMZ ${d.items.length}개 삽입됨`);
+            setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
+          })();
         }
       } catch(e) {}
     };

@@ -1320,6 +1320,8 @@ async function getAddrPrefix(){
   }catch(e){return'';}
 }
 async function defName(ms){
+  const base=resolveSaveTarget().base;   // 기준 사진 이름 우선
+  if(base)return base;
   const now=new Date(),d=`${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}`;
   const last=([...ms].reverse().find(m=>!m.isPhoto)||ms.at(-1))?.name||'';
   const cleanLast=last.replace(/_\d{8}.*$/,'').replace(/[\\/:*?"<>|]/g,'').trim();
@@ -1383,7 +1385,7 @@ async function exportClusteredKMZ_V(){
     }
     kml+='</Document></kml>';zip.file('doc.kml',kml);
     const blob=await zip.generateAsync({type:'blob'});
-    dlBlob(new File([blob],clusterName+'.kmz',{type:'application/vnd.google-earth.kmz'}),clusterName+'.kmz');
+    dlBlob(new File([blob],clusterName+'.kmz',{type:'application/vnd.google-earth.kmz'}),clusterName+'.kmz');   // 각각저장은 클러스터 이름 그대로
     await new Promise(r=>setTimeout(r,400));
   }
   setTimeout(()=>alert(`✅ ${clusterArr.length}개 파일 저장 완료!`),500);
@@ -1438,7 +1440,7 @@ function getSelectedExportItems(){
 }
 async function exportSelectedGPX(){
   const r=getSelectedExportItems();if(!r)return;const{ms,ls}=r;
-  const fname=prompt('선택 객체 GPX',ms.at(-1)?.name||'selected');if(!fname)return;
+  const fname=prompt('선택 객체 GPX',defaultSaveName(ms.at(-1)?.name||'selected'));if(!fname)return;
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="VWorldMap">\n';
   ls.forEach((l,i)=>{const pts=getCoords(l).map(c=>{const ll=fromMerc(c);return`<trkpt lat="${ll[1]}" lon="${ll[0]}"></trkpt>\n`;}).join('');gpx+=`<trk><name>${nnm?.get(l)||'path'+(i+1)}</name><trkseg>\n${pts}</trkseg></trk>\n`;});
@@ -1448,7 +1450,7 @@ async function exportSelectedGPX(){
 async function exportSelectedCSV(){
   const r=getSelectedExportItems();if(!r)return;const{ms}=r;
   if(!ms.length){alert('선택된 마커가 없습니다.');return;}
-  const fname=prompt('선택 객체 CSV','selected');if(!fname)return;
+  const fname=prompt('선택 객체 CSV',defaultSaveName('selected'));if(!fname)return;
   const nnm=buildNumNameMap();
   let csv='﻿이름,위도,경도,주소\n';
   for(const m of ms){const ll=fromMerc(m.feat.getGeometry().getCoordinates());const addr=m.addr||await new Promise(r=>reverseGeocode(ll[0],ll[1],r));csv+=`"${nnm?.get(m)||m.name}",${ll[1]},${ll[0]},"${addr}"\n`;}
@@ -1460,7 +1462,7 @@ async function exportSelectedKMZ(){
   const selSet=new Set([...selectedItems].map(i=>filtered[i]).filter(Boolean));
   const selItems=allItems.filter(item=>selSet.has(item));
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
-  const fname=prompt('선택 객체 KMZ',ds+'_선택');if(!fname)return;
+  const fname=prompt('선택 객체 KMZ',defaultSaveName(ds+'_선택'));if(!fname)return;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedFn=new Set();
   for(const item of selItems){if(!item.mkObj)continue;const m=item.mkObj;if(m.isPhoto&&m.imgSrc){let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;usedFn.add(fn);photoFileMap.set(m,fn);const ll=fromMerc(m.feat.getGeometry().getCoordinates());const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);zip.file(`files/${fn}`,img.split(',')[1],{base64:true});}}
@@ -1481,7 +1483,9 @@ async function downloadSelectedPhotos(){
    사이드바
 ════════════════════════════════════ */
 function openSidebar(){
-  document.getElementById('sidebar').style.display='flex';
+  const sb=document.getElementById('sidebar');
+  if(getComputedStyle(sb).display!=='none')return;   // 이미 열려 있으면 그대로 유지
+  sb.style.display='flex';
   document.getElementById('sidebarResizer').style.display='block';
   document.getElementById('sidebarOpenBtn').textContent='◀';
   if(vmap)setTimeout(()=>vmap.updateSize(),50);
@@ -1964,7 +1968,54 @@ function fitPts(pts){
   vmap.getView().setZoom(Math.min(Math.max(Math.floor(Math.log2(156543.03392/res)),1),16));
 }
 
+// ── 저장 위치 결정 (① 데이터파일 폴더 → ② 화면 중심 최근접 사진 폴더) ──
+let loadedDataFiles=[];   // 엑셀에서 올라온 KMZ/GPX/CSV 원본 전체경로 (영구)
+let liveDataFile='';      // 단일 셀 임시 KMZ 경로 (셀 이동 시 비움)
+function dirOf(p){return p?p.replace(/[\\/][^\\/]*$/,''):'';}
+function baseName(p){return p?p.replace(/^.*[\\/]/,'').replace(/\.[^.]*$/,''):'';}
+
+// 저장 대상 → {folder, base(기준 사진 이름, 확장자 없음)}
+function resolveSaveTarget(){
+  if(typeof vmap!=='undefined'&&vmap){
+    const c=vmap.getView().getCenter();
+    let best=null,bestD=Infinity;
+    allItems.forEach(it=>{
+      if(it.type==='photo'&&it.path&&it.mkObj){
+        const p=it.mkObj.feat.getGeometry().getCoordinates();
+        const d=Math.hypot(p[0]-c[0],p[1]-c[1]);
+        if(d<bestD){bestD=d;best=it;}
+      }
+    });
+    if(best)return {folder:dirOf(best.path),base:baseName(best.path)};
+  }
+  // ② 사진이 없으면 셀에서 올린 KMZ 폴더·이름 사용 (그 KMZ 위에 덮어쓰기 흐름)
+  if(liveDataFile)return {folder:dirOf(liveDataFile),base:baseName(liveDataFile)};
+  for(let i=loadedDataFiles.length-1;i>=0;i--)if(loadedDataFiles[i])return {folder:dirOf(loadedDataFiles[i]),base:baseName(loadedDataFiles[i])};
+  return {folder:'',base:''};
+}
+
+// 저장 prompt 기본값: 기준 사진 이름(있으면) → 없으면 fallback
+function defaultSaveName(fallback){
+  const t=resolveSaveTarget();
+  return t.base || fallback;
+}
+
 function dlBlob(blob,filename){
+  // 작업 폴더가 정해지고 WS 연결되면 Python에 저장, 아니면 다운로드
+  const t=resolveSaveTarget();
+  const folder=t.folder;
+  if(folder && window.__wsReady && window.__wsReady()){
+    const fr=new FileReader();
+    fr.onload=()=>window.__saveViaPython(folder,filename,fr.result.split(',')[1]);
+    fr.readAsDataURL(blob);
+    return;
+  }
+  const photos=allItems.filter(i=>i.type==='photo');
+  console.warn('[저장] 작업 폴더 미확정 → 다운로드 폴더로 저장합니다.',{
+    folder, wsReady:!!(window.__wsReady&&window.__wsReady()),
+    사진수:photos.length, 경로있는사진:photos.filter(i=>i.path).length,
+    데이터파일:loadedDataFiles.length, liveData:liveDataFile
+  });
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;
   document.body.appendChild(a);a.click();setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(a.href);},1000);
 }
@@ -1977,21 +2028,57 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
   const WS_URL='ws://localhost:8765';
   let ws=null, liveOvs=[], retryTimer=null;
   const badge=document.getElementById('explorerBadge');
-  // path → overlay 매핑 (undo/redo에서 위치 복원에 사용)
+  // path → overlay / 사진마커 매핑 (undo/redo·드래그 위치 복원에 사용)
   const pathToOv=new Map();
+  const pathToMk=new Map();
 
   function setBadge(ok,text){badge.textContent=text;badge.classList.toggle('connected',ok);}
+
+  // ── 저장(dlBlob)에서 사용하는 Python 연동 공개 함수 ──
+  let pendingSave=null;   // 덮어쓰기 확인용 보관 {folder, filename, b64}
+  window.__wsReady=()=>ws&&ws.readyState===1;
+  window.__saveViaPython=(folder,filename,b64)=>{
+    pendingSave={folder,filename,b64};
+    ws.send(JSON.stringify({type:'save_file',folder,filename,data:b64,overwrite:false}));
+    setBadge(true,'💾 저장 중...');
+  };
 
   function removeLive(){
     liveOvs.forEach(ov=>vmap.removeOverlay(ov));
     liveOvs=[];
     pathToOv.clear();
+    pathToMk.clear();
+  }
+
+  // 엑셀 셀 선택으로 임시 삽입된 항목(사진마커·KMZ) 전부 제거
+  function clearLiveItems(){
+    removeLive();
+    liveDataFile='';
+    const live=allItems.filter(i=>i._live);
+    if(!live.length)return;
+    live.forEach(item=>{
+      if(item.mkObj){
+        if(item.mkObj.ov)vmap.removeOverlay(item.mkObj.ov);
+        removeLyr(item.mkObj.lyr);
+        markers=markers.filter(m=>m!==item.mkObj);
+      }
+      if(item.polyLyr){
+        removeLyr(item.polyLyr);
+        polylines=polylines.filter(p=>p!==item.polyLyr);
+      }
+    });
+    allItems=allItems.filter(i=>!i._live);
+    selectedItems.clear();anchorIdx=-1;lastClickedIdx=-1;
+    renderList();
   }
 
   // path 로 식별되는 마커 위치 적용 (undo/redo 시 시각 반영)
   function applyPos(path, lat, lng){
+    const coord=toMerc(lng, lat);
     const ov=pathToOv.get(path);
-    if(ov) ov.setPosition(toMerc(lng, lat));
+    if(ov) ov.setPosition(coord);
+    const mk=pathToMk.get(path);                       // 사진 마커도 함께 이동
+    if(mk) mk.feat.getGeometry().setCoordinates(coord);
   }
 
   // Python 측 GPS 저장 요청
@@ -2003,7 +2090,8 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
   }
 
   // ── 드래그로 마커 이동 + Python에 새 좌표 전송 ──
-  function makeDraggable(el, ov, path){
+  //  mkObj: 함께 움직일 사진 마커(ol.Feature 보유). 없으면 오버레이만 이동.
+  function makeDraggable(el, ov, path, mkObj){
     el.addEventListener('pointerdown', e=>{
       if(e.button!==0)return;
       e.stopPropagation();              // 지도 클릭 이벤트 차단
@@ -2027,7 +2115,10 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
         const rect=mapEl.getBoundingClientRect();
         const pixel=[e.clientX-rect.left, e.clientY-rect.top];
         const coord=vmap.getCoordinateFromPixel(pixel);
-        if(coord) ov.setPosition(coord);
+        if(coord){
+          ov.setPosition(coord);
+          if(mkObj) mkObj.feat.getGeometry().setCoordinates(coord);  // 사진 마커 동시 이동
+        }
       }
 
       function onUp(){
@@ -2044,11 +2135,13 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
 
         if(!confirm(`📍 GPS 위치를 수정하시겠습니까?\n\n파일: ${name}\n위도: ${lat.toFixed(6)}\n경도: ${lng.toFixed(6)}`)){
           ov.setPosition(origCoord);    // 취소 → 원래 위치로 복원
+          if(mkObj) mkObj.feat.getGeometry().setCoordinates(origCoord);
           return;
         }
 
         // 확인 → Python으로 새 좌표 전송 + 글로벌 undo 스택에 기록
         sendGps(path, lat, lng);
+        if(mkObj){const it=allItems.find(i=>i.mkObj===mkObj);if(it)fetchAddrForItem(it);}
         pushHistory({
           undo(){ applyPos(path, prevLat, prevLng); sendGps(path, prevLat, prevLng); },
           redo(){ applyPos(path, lat,     lng);     sendGps(path, lat,     lng);     }
@@ -2186,6 +2279,105 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           const name=d.path.split('\\').pop();
           setBadge(true, d.ok?'✅ 저장됨: '+name:'❌ 저장실패: '+name);
           setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
+        } else if(d.type==='file_saved'){
+          setBadge(true, d.ok?'✅ 저장됨: '+d.filename:'❌ 저장실패: '+d.filename);
+          if(d.ok&&d.folder)console.log('저장 위치:',d.folder+'\\'+d.filename);
+          pendingSave=null;
+          setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),3000);
+        } else if(d.type==='file_exists'){
+          if(pendingSave && confirm("'"+d.filename+"' 파일이 이미 있습니다.\n덮어쓰시겠습니까?")){
+            ws.send(JSON.stringify({type:'save_file',folder:pendingSave.folder,
+              filename:pendingSave.filename,data:pendingSave.b64,overwrite:true}));
+            setBadge(true,'💾 덮어쓰는 중...');
+          } else {
+            pendingSave=null;
+            setBadge(true,'저장 취소됨');
+            setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2000);
+          }
+        } else if(d.type==='live_clear'){
+          clearLiveItems();
+        } else if(d.type==='live_insert_photo'){
+          clearLiveItems();
+          const coords=[];
+          d.items.forEach(item=>{
+            if(typeof item.lat!=='number'||typeof item.lng!=='number'||
+               isNaN(item.lat)||isNaN(item.lng))return;
+            const coord=toMerc(item.lng,item.lat);
+            const path=item.path;
+            // ① 사진 마커 삽입 (썸네일)
+            const mkObj=addPhotoMarker(coord,item.imgSrc,item.name);
+            allItems[allItems.length-1]._live=true;
+            allItems[allItems.length-1].path=item.path;   // 저장 폴더 결정용
+            // ② 녹색 깜빡 드래그 핀 (최전면)
+            const el=document.createElement('div');
+            el.className='live-pin';
+            el.title='길게 눌러 드래그하면 사진 위치(GPS) 수정';
+            el.innerHTML='<div class="live-pin-label">'+item.name+'</div>'
+                        +'<div class="live-pin-ring"></div>'
+                        +'<div class="live-pin-dot"></div>';
+            const ov=new ol.Overlay({element:el,position:coord,positioning:'center-center',stopEvent:true});
+            vmap.addOverlay(ov);liveOvs.push(ov);
+            makeDraggable(el,ov,path,mkObj);   // 핀+사진마커 함께 이동, GPS 저장
+            if(path){pathToOv.set(path,ov);pathToMk.set(path,mkObj);}
+            coords.push(coord);
+          });
+          if(coords.length){
+            // 사이드바 자동 열림(updateSize 50ms) 이후 보이는 지도 중심으로 이동
+            setTimeout(()=>{
+              try{vmap.updateSize();}catch(e){}
+              if(coords.length===1){
+                const v=vmap.getView();const z=v.getZoom();
+                const tz=(typeof z==='number'&&z>=14)?z:16;
+                if(typeof v.animate==='function')v.animate({center:coords[0],zoom:tz,duration:400});
+                else{v.setCenter(coords[0]);v.setZoom(tz);}
+              } else fitPts(coords);
+            },80);
+            setBadge(true,'📍 '+d.items[0].name);
+          }
+        } else if(d.type==='live_insert_kmz'){
+          clearLiveItems();
+          liveDataFile=d.path||'';                       // 저장 폴더 결정용
+          setBadge(true,'📂 '+d.name+' 로드 중…');
+          (async()=>{
+            try{
+              const bytes=Uint8Array.from(atob(d.data),c=>c.charCodeAt(0));
+              const file=new File([bytes],d.name,{type:'application/vnd.google-earth.kmz'});
+              const preLen=allItems.length;
+              await loadKMZ(file);
+              for(let i=preLen;i<allItems.length;i++)allItems[i]._live=true;
+              setBadge(true,'🟢 탐색기 연동 중');
+            }catch(e){console.error('live KMZ 오류',e);setBadge(true,'❌ KMZ 오류: '+d.name);}
+          })();
+        } else if(d.type==='insert_photos'){
+          // Ctrl+Shift+I — 여러 사진 영구 삽입 (셀 이동해도 유지)
+          const coords=[];
+          d.items.forEach(item=>{
+            if(typeof item.lat!=='number'||typeof item.lng!=='number'||
+               isNaN(item.lat)||isNaN(item.lng))return;
+            const coord=toMerc(item.lng,item.lat);
+            addPhotoMarker(coord,item.imgSrc,item.name);
+            allItems[allItems.length-1].path=item.path;   // 저장 폴더 결정용
+            coords.push(coord);
+          });
+          if(coords.length)setTimeout(()=>{try{vmap.updateSize();}catch(e){}fitPts(coords);},80);
+          setBadge(true, coords.length?('✅ 사진 '+coords.length+'장 삽입됨'):'⚠️ GPS 있는 사진 없음');
+          setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
+        } else if(d.type==='insert_kmz'){
+          // Ctrl+Shift+I — 여러 KMZ 영구 삽입
+          setBadge(true,'📂 KMZ '+d.items.length+'개 로드 중…');
+          loadedDataFiles=[];   // 이번 일괄 삽입분으로 새로 채움 (예전 경로 잔류 방지)
+          (async()=>{
+            for(const item of d.items){
+              try{
+                if(item.path)loadedDataFiles.push(item.path);   // 저장 폴더 결정용
+                const bytes=Uint8Array.from(atob(item.data),c=>c.charCodeAt(0));
+                const file=new File([bytes],item.name,{type:'application/vnd.google-earth.kmz'});
+                await loadKMZ(file);
+              }catch(e){console.error('KMZ 오류',item.name,e);}
+            }
+            setBadge(true,'✅ KMZ '+d.items.length+'개 삽입됨');
+            setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
+          })();
         }
       }catch(e){}
     };
