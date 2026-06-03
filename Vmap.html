@@ -34,6 +34,12 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 #numToggleBtn{font-size:11px;padding:3px 8px;cursor:pointer;background:#fff;border:1px solid #2980b9;border-radius:3px;color:#1a5276;white-space:nowrap;}
 #numToggleBtn:hover{background:#d6eaf8;}
 #numToggleBtn.on{background:#1a5276;color:#fff;border-color:#1a5276;}
+#trackNameOrgBtn{font-size:11px;padding:3px 8px;cursor:pointer;background:#fff;border:1px solid #2980b9;border-radius:3px;color:#1a5276;white-space:nowrap;}
+#trackNameOrgBtn:hover{background:#d6eaf8;}
+#trackNameOrgBtn.on{background:#7d3c98;color:#fff;border-color:#7d3c98;}
+.ftab[data-f="track"] span{cursor:pointer;}
+.ftab[data-f="track"] span:hover{text-decoration:underline;}
+.ftab[data-f="track"] span.track-all-on{color:#FF9F43;font-weight:bold;}
 #folderName{font-size:10px;color:#1a5276;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 #photoListWrapper{flex:1;overflow-y:auto;overflow-x:hidden;min-height:0;outline:none;}
 #photoTable{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed;}
@@ -67,7 +73,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 #search-form{position:absolute;top:10px;left:10px;z-index:2000;background:#fff;padding:5px;border-radius:5px;box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;gap:5px;}
 #address-display{position:absolute;bottom:10px;left:10px;z-index:2000;background:rgba(0,0,0,.6);color:#fff;font-size:12px;padding:6px 10px;border-radius:5px;cursor:pointer;white-space:nowrap;max-width:440px;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,.3);}
 #address-display:hover{background:rgba(0,0,0,.82);}
-.controls{position:absolute;top:10px;right:10px;z-index:2000;display:flex;gap:5px;flex-wrap:wrap;max-width:700px;background:#fff;padding:6px 8px;border-radius:5px;box-shadow:0 2px 6px rgba(0,0,0,.3);}
+.controls{position:absolute;top:10px;right:10px;z-index:2000;display:flex;flex-direction:column;align-items:flex-start;gap:4px;background:#fff;padding:6px 8px;border-radius:5px;box-shadow:0 2px 6px rgba(0,0,0,.3);}
 .controls button,.controls select,.controls input{padding:4px 7px;font-size:12px;font-family:inherit;border:1px solid #ccc;border-radius:4px;cursor:pointer;}
 #polyMenu{display:none;position:fixed;z-index:9999;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);min-width:140px;overflow:hidden;}
 #polyMenu.show{display:block;}
@@ -122,6 +128,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
     <button id="folderSelectBtn">📁 폴더 선택</button>
     <button id="copyListBtn" title="목록 클립보드 복사">📋 복사</button>
     <button id="numToggleBtn" title="지도에 번호 표시/숨기기">① 번호</button>
+    <button id="trackNameOrgBtn" title="이름없는 트랙(트랙N)에 가장 가까운 마커 이름 붙이기 / 다시 누르면 원위치">🏷 트랙이름 정리</button>
     <span id="folderName"></span>
   </div>
   <div id="photoListWrapper" tabindex="0">
@@ -165,40 +172,44 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
   </div>
 
   <div class="controls">
-    <input id="latlng-box" readonly style="width:220px;" title="클릭하여 복사" onclick="copyLL(this)">
-    <button onclick="openHelp()" title="도움말 (F1)">❓ 도움말</button>
-    <button id="drawBtn" onclick="toggleDraw()">선 그리기(Alt)</button>
-    <button onclick="resetLines()">선 초기화</button>
-    <button onclick="resetAll()">화면 초기화</button>
-    <select id="exportFmt" onchange="onFmtChange(this.value)">
-      <option value="kmz">KMZ 내보내기</option>
-      <option value="gpx">GPX 내보내기</option>
-      <option value="csv">CSV 내보내기</option>
-      <option value="photos">📸 사진 다운로드</option>
-    </select>
-    <select id="exportArea">
-      <option value="all">전체 영역</option>
-      <option value="visible">현재 영역</option>
-      <option value="selected">선택 객체</option>
-    </select>
-    <select id="photoQuality">
-      <option value="200" selected>200KB↓</option>
-      <option value="300">300KB↓</option>
-      <option value="500">500KB↓</option>
-      <option value="800">800KB↓</option>
-      <option value="1024">1MB↓</option>
-      <option value="0">원본</option>
-    </select>
-    <button onclick="doExport()">💾 저장</button>
-    <br>
-    <select id="mapType" onchange="chgMapType(this.value)" style="margin-top:4px;">
-      <option value="GRAPHIC">일반지도</option>
-      <option value="GRAPHIC_WHITE">백지도</option>
-      <option value="GRAPHIC_NIGHT">야간지도</option>
-      <option value="PHOTO">항공사진</option>
-      <option value="PHOTO_HYBRID" selected>하이브리드</option>
-    </select>
-    <button id="cadastralBtn" onclick="toggleCadastral()" title="지적도 켜기/끄기" style="margin-top:4px;">🗺️ 지적도</button>
+    <div style="display:flex;gap:5px;align-items:center;">
+      <input id="latlng-box" readonly style="width:220px;" title="클릭하여 복사" onclick="copyLL(this)">
+      <button onclick="openHelp()" title="도움말 (F1)">❓ 도움말</button>
+      <button id="drawBtn" onclick="toggleDraw()">선 그리기(Alt)</button>
+      <button onclick="resetLines()">선 초기화</button>
+      <button onclick="resetAll()">화면 초기화</button>
+    </div>
+    <div style="display:flex;gap:5px;align-items:center;">
+      <select id="exportFmt" onchange="onFmtChange(this.value)">
+        <option value="kmz">KMZ 내보내기</option>
+        <option value="gpx">GPX 내보내기</option>
+        <option value="csv">CSV 내보내기</option>
+        <option value="photos">사진</option>
+      </select>
+      <select id="exportArea">
+        <option value="all">전체 영역</option>
+        <option value="visible">현재 영역</option>
+        <option value="selected">선택 객체</option>
+        <option value="clustered">각각저장</option>
+      </select>
+      <select id="photoQuality">
+        <option value="200" selected>200KB↓</option>
+        <option value="300">300KB↓</option>
+        <option value="500">500KB↓</option>
+        <option value="800">800KB↓</option>
+        <option value="1024">1MB↓</option>
+        <option value="0">원본</option>
+      </select>
+      <button onclick="doExport()">💾 저장</button>
+      <select id="mapType" onchange="chgMapType(this.value)">
+        <option value="GRAPHIC">일반지도</option>
+        <option value="GRAPHIC_WHITE">백지도</option>
+        <option value="GRAPHIC_NIGHT">야간지도</option>
+        <option value="PHOTO">항공사진</option>
+        <option value="PHOTO_HYBRID" selected>하이브리드</option>
+      </select>
+      <button id="cadastralBtn" onclick="toggleCadastral()" title="지적도 켜기/끄기">🗺️ 지적도</button>
+    </div>
   </div>
 
   <div id="vmap"></div>
@@ -246,6 +257,11 @@ let lastCX    = 0, lastCY = 0, polyTarget = null;
 let lastAddr  = '주소 없음', lastLL = null;
 let searchMarker = null;
 let trackCounter = 0;
+let trackHighlightLayers = [];
+let trackAllHighlightLayers = [];
+let trackAllColorActive = false;
+let trackNameOrgActive = false;
+const trackOrigNames = new Map();
 
 // 사이드바 / 다중선택 상태
 let allItems = [];
@@ -387,6 +403,13 @@ window.onload = () => {
   document.querySelectorAll('.ftab').forEach(btn => {
     btn.addEventListener('click', e => {
       if (e.target.classList.contains('vis-check')) return;
+      if (btn.dataset.f === 'track' && e.target.tagName === 'SPAN') {
+        e.stopPropagation();
+        trackAllColorActive = !trackAllColorActive;
+        e.target.classList.toggle('track-all-on', trackAllColorActive);
+        updateAllTrackHighlights();
+        return;
+      }
       currentFilter = btn.dataset.f;
       document.querySelectorAll('.ftab').forEach(b => b.classList.toggle('active', b === btn));
       selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
@@ -507,6 +530,7 @@ window.onload = () => {
     if (!e.target.closest('#photoTbody tr')) {
       selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
       document.querySelectorAll('#photoTbody tr').forEach(r => r.classList.remove('selected'));
+      updateTrackHighlights();
     }
   });
   initResizers();
@@ -1262,6 +1286,7 @@ async function loadKMZ(file){
 ════════════════════════════════════ */
 function doExport(){
   const fmt=document.getElementById('exportFmt').value,area=document.getElementById('exportArea').value;
+  if(area==='clustered'){exportClusteredKMZ_V();return;}
   if(fmt==='kmz'){if(area==='visible')exportKMZ(true);else if(area==='selected')exportSelectedKMZ();else exportKMZ(false);}
   else if(fmt==='gpx'){if(area==='visible')exportGPX(true);else if(area==='selected')exportSelectedGPX();else exportGPX(false);}
   else if(fmt==='csv'){if(area==='selected')exportSelectedCSV();else exportCSV();}
@@ -1300,6 +1325,68 @@ async function defName(ms){
   const cleanLast=last.replace(/_\d{8}.*$/,'').replace(/[\\/:*?"<>|]/g,'').trim();
   const prefix=await getAddrPrefix();
   return cleanLast?`${prefix}${d}_${cleanLast}`:`${prefix}${d}_`;
+}
+
+/* ── 거리 기준 클러스터 각각저장 ── */
+function getItemCenterCoordV(item){
+  if(item.mkObj)return item.mkObj.feat.getGeometry().getCoordinates();
+  if(item.polyLyr){const cs=getCoords(item.polyLyr);if(cs.length)return cs[Math.floor(cs.length/2)];}
+  return null;
+}
+async function exportClusteredKMZ_V(){
+  const scopeItems=allItems.filter(i=>i.mkObj||i.polyLyr);
+  if(!scopeItems.length){alert('저장할 항목이 없습니다.');return;}
+  const threshStr=prompt('같은 파일로 묶을 거리 (m)\n이 거리 안에 있는 객체끼리 한 파일로 저장됩니다','100');
+  if(threshStr===null)return;
+  const threshold=Math.max(1,parseFloat(threshStr)||100);
+  const n=scopeItems.length;
+  const parent=Array.from({length:n},(_,i)=>i);
+  function find(x){return parent[x]===x?x:(parent[x]=find(parent[x]));}
+  function union(a,b){parent[find(a)]=find(b);}
+  for(let i=0;i<n;i++){
+    const ci=getItemCenterCoordV(scopeItems[i]);if(!ci)continue;
+    for(let j=i+1;j<n;j++){
+      const cj=getItemCenterCoordV(scopeItems[j]);if(!cj)continue;
+      if(haversine(ci,cj)<=threshold)union(i,j);
+    }
+  }
+  const clustersMap=new Map();
+  for(let i=0;i<n;i++){const root=find(i);if(!clustersMap.has(root))clustersMap.set(root,[]);clustersMap.get(root).push(scopeItems[i]);}
+  const clusterArr=[...clustersMap.values()];
+  if(!confirm(`${clusterArr.length}개 파일로 저장됩니다.\n계속하시겠습니까?`))return;
+  const nnm=buildNumNameMap();
+  for(const clusterItems of clusterArr){
+    const nameItem=clusterItems.find(i=>i.type==='marker')||clusterItems.find(i=>i.type==='photo')||clusterItems[0];
+    const clusterName=(nameItem?.name||'지도').replace(/[\/\\:*?"<>|]/g,'_');
+    const zip=new JSZip(),photoFileMap=new Map(),usedFn=new Set();
+    for(const item of clusterItems){
+      if(!item.mkObj||!item.mkObj.isPhoto||!item.mkObj.imgSrc)continue;
+      const m=item.mkObj;
+      let base=((nnm?.get(m)||m.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'');
+      let fn=base+'.jpg';let sx=1;while(usedFn.has(fn))fn=`${base}_${sx++}.jpg`;
+      usedFn.add(fn);photoFileMap.set(m,fn);
+      const ll=fromMerc(m.feat.getGeometry().getCoordinates());
+      const img=injectGPS(await compressImage(m.imgSrc),ll[1],ll[0]);
+      zip.file(`files/${fn}`,img.split(',')[1],{base64:true});
+    }
+    let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(clusterName)}</name>\n`;
+    for(const item of clusterItems){
+      if(item.polyLyr){
+        const coords=getCoords(item.polyLyr).map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');
+        kml+=`<Placemark><name>${esc(nnm?.get(item.polyLyr)||item.name)}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;
+      }else if(item.mkObj){
+        const m=item.mkObj;const ll=fromMerc(m.feat.getGeometry().getCoordinates());
+        const nm=nnm?.get(m)||m.name;const fn=photoFileMap.get(m);
+        if(fn)kml+=`<Placemark><name>${esc(nm)}</name><description><![CDATA[<img src="files/${fn}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${fn}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;
+        else kml+=`<Placemark><name>${esc(nm)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;
+      }
+    }
+    kml+='</Document></kml>';zip.file('doc.kml',kml);
+    const blob=await zip.generateAsync({type:'blob'});
+    dlBlob(new File([blob],clusterName+'.kmz',{type:'application/vnd.google-earth.kmz'}),clusterName+'.kmz');
+    await new Promise(r=>setTimeout(r,400));
+  }
+  setTimeout(()=>alert(`✅ ${clusterArr.length}개 파일 저장 완료!`),500);
 }
 
 async function exportGPX(vis=false){
@@ -1500,10 +1587,13 @@ function renderList(){
       lastClickedIdx=idx;
       document.querySelectorAll('#photoTbody tr').forEach((r,i)=>r.classList.toggle('selected',selectedItems.has(i)));
       selectFilteredItem(idx);
+      updateTrackHighlights();
     };
     tbody.appendChild(tr);
   });
   renderNumbers();
+  updateTrackHighlights();
+  updateAllTrackHighlights();
 }
 
 /* ── 지도 번호 오버레이 ── */
@@ -1534,7 +1624,64 @@ document.getElementById('numToggleBtn').onclick=()=>{
   showNumbers=!showNumbers;
   document.getElementById('numToggleBtn').classList.toggle('on',showNumbers);
   if(showNumbers) closeAllPopups();
-  renderList(); // renderNumbers()는 renderList() 끝에서 호출됨
+  renderList();
+};
+
+/* ── 트랙 선택 시 빨강 하이라이트 ── */
+function updateTrackHighlights() {
+  trackHighlightLayers.forEach(l=>{try{removeLyr(l);}catch(e){}});
+  trackHighlightLayers=[];
+  if(!vmap)return;
+  const filtered=getFilteredItems();
+  [...selectedItems].forEach(idx=>{
+    const item=filtered[idx];
+    if(item&&item.polyLyr){
+      const coords=getCoords(item.polyLyr);
+      if(coords.length>=2){const hl=mkLineLyr(coords,'#FF0000',7);hl.setZIndex(200);addLyr(hl);trackHighlightLayers.push(hl);}
+    }
+  });
+}
+
+/* ── 전체 트랙 색상 토글 ── */
+function updateAllTrackHighlights() {
+  trackAllHighlightLayers.forEach(l=>{try{removeLyr(l);}catch(e){}});
+  trackAllHighlightLayers=[];
+  if(!trackAllColorActive||!vmap)return;
+  allItems.forEach(item=>{
+    if(item.type==='track'&&item.polyLyr){
+      const coords=getCoords(item.polyLyr);
+      if(coords.length>=2){const hl=mkLineLyr(coords,'#FF0000',7);hl.setZIndex(200);addLyr(hl);trackAllHighlightLayers.push(hl);}
+    }
+  });
+}
+
+/* ── 트랙이름 정리 ── */
+document.getElementById('trackNameOrgBtn').onclick=()=>{
+  const trackItems=allItems.filter(i=>i.type==='track'&&i.polyLyr);
+  const markerItems=allItems.filter(i=>(i.type==='marker'||i.type==='photo')&&i.mkObj);
+  if(!trackNameOrgActive){
+    if(!trackItems.length){alert('트랙이 없습니다.');return;}
+    if(!markerItems.length){alert('가까운 마커가 없습니다.\n마커를 먼저 추가해 주세요.');return;}
+    let renamed=0;
+    trackItems.forEach(track=>{
+      trackOrigNames.set(track,track.name);
+      const coords=getCoords(track.polyLyr);
+      if(!coords.length)return;
+      const mid=coords[Math.floor(coords.length/2)];
+      let nearest=null,minDist=Infinity;
+      markerItems.forEach(m=>{const d=haversine(mid,m.mkObj.feat.getGeometry().getCoordinates());if(d<minDist){minDist=d;nearest=m;}});
+      if(nearest){track.name=nearest.name;renamed++;}
+    });
+    trackNameOrgActive=true;
+    document.getElementById('trackNameOrgBtn').classList.add('on');
+    renderList();
+  }else{
+    trackOrigNames.forEach((origName,track)=>{track.name=origName;});
+    trackOrigNames.clear();
+    trackNameOrgActive=false;
+    document.getElementById('trackNameOrgBtn').classList.remove('on');
+    renderList();
+  }
 };
 
 function selectFilteredItem(idx){
