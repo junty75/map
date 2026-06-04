@@ -46,8 +46,8 @@
     .ftab.hidden-type { opacity:0.55; }
     /* 폴더 선택 바 */
     #folderBar { background:#d6eaf8; padding:4px 6px; flex-shrink:0; display:flex; align-items:center; gap:6px; border-bottom:1px solid #85c1e9; }
-    #folderSelectBtn { font-size:11px; padding:3px 8px; cursor:pointer; background:#fff; border:1px solid #2980b9; border-radius:3px; color:#1a5276; white-space:nowrap; }
-    #folderSelectBtn:hover { background:#d6eaf8; }
+    #excelInsertBtn { font-size:11px; padding:3px 8px; cursor:pointer; background:#fff; border:1px solid #2980b9; border-radius:3px; color:#1a5276; white-space:nowrap; }
+    #excelInsertBtn:hover { background:#d6eaf8; }
     #numToggleBtn { font-size:11px; padding:3px 8px; cursor:pointer; background:#fff; border:1px solid #2980b9; border-radius:3px; color:#1a5276; white-space:nowrap; }
     #numToggleBtn:hover { background:#d6eaf8; }
     #numToggleBtn.on { background:#1a5276; color:#fff; border-color:#1a5276; }
@@ -213,7 +213,7 @@
       </div>
     </div>
     <div id="folderBar">
-      <button id="folderSelectBtn">📁 폴더 선택</button>
+      <button id="excelInsertBtn" title="엑셀에서 선택한 셀(파일경로)의 사진/KMZ를 지도에 삽입 — 단축키 Ctrl+Shift+V">⬇ 엑셀 선택 삽입</button>
       <button id="copyListBtn" title="목록 클립보드 복사">📋 복사</button>
       <button id="numToggleBtn" title="지도에 번호 표시/숨기기">① 번호</button>
       <button id="trackNameOrgBtn" title="이름없는 트랙(경로N)에 가장 가까운 마커 이름 붙이기 / 다시 누르면 원위치">🏷 트랙이름 정리</button>
@@ -637,6 +637,95 @@ function selectFilteredItem(idx) {
   document.getElementById('photoListWrapper').focus();
 }
 
+// ── 저장 결과 토스트 ──
+function showSaveStatus(msg, ok=true) {
+  let el = document.getElementById('_saveToast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = '_saveToast';
+    el.style.cssText = 'position:fixed;bottom:54px;left:50%;transform:translateX(-50%);padding:7px 16px;border-radius:6px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.background = ok ? 'rgba(39,174,96,.93)' : 'rgba(192,57,43,.93)';
+  el.style.color = '#fff';
+  el.style.opacity = '1';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.opacity = '0'; }, ok ? 2200 : 4000);
+}
+
+// ── 사진 이름 → EXIF 저장 (3가지 경로 우선순위) ──
+//   1) 서버 연동 사진(item.path 있음): 서버가 원본 파일 EXIF만 갱신 (고화질 보존)
+//   2) 드래그&드롭 사진(fileHandle 있음): 브라우저가 직접 파일 덮어쓰기
+//   3) 둘 다 없음: 메모리 imgSrc EXIF만 갱신 (내보내기 시 포함)
+async function savePhotoName(item, newName) {
+  // (1) 서버 경로가 있으면 — 서버에 위임 (원본 고화질 그대로, 수정날짜 갱신됨)
+  if (item.path && window.__wsSend) {
+    const sent = window.__wsSend({ type:'update_name', path:item.path, name:newName });
+    if (sent) {
+      showSaveStatus('💾 저장 중… ' + item.path.split(/[\\/]/).pop());
+      return; // 결과는 서버의 name_saved 메시지에서 표시
+    }
+    showSaveStatus('🔴 서버 연결 안됨 — 메타데이터 저장 실패', false);
+    return;
+  }
+
+  // (2)/(3) 메모리 imgSrc(JPEG)에 EXIF 기록
+  if (!(item.imgSrc && item.imgSrc.startsWith('data:image/jpeg'))) {
+    showSaveStatus('ℹ️ JPEG가 아니어서 메타데이터 저장 안 함');
+    return;
+  }
+  let exifBytes;
+  try {
+    let old = null;
+    try { old = piexif.load(item.imgSrc); } catch(e) { console.warn('piexif.load 무시:', e); }
+    const exif = {'0th':{}, 'Exif':{}, 'GPS':{}, '1st':{}, 'thumbnail':null};
+    if (old) {
+      if (old['GPS']) exif['GPS'] = old['GPS'];
+      const ori = old['0th']?.[piexif.ImageIFD.Orientation];
+      if (ori !== undefined) exif['0th'][piexif.ImageIFD.Orientation] = ori;
+      const dto = old['Exif']?.[piexif.ExifIFD.DateTimeOriginal];
+      if (dto !== undefined) exif['Exif'][piexif.ExifIFD.DateTimeOriginal] = dto;
+      const dt = old['0th']?.[piexif.ImageIFD.DateTime];
+      if (dt !== undefined) exif['0th'][piexif.ImageIFD.DateTime] = dt;
+    }
+    exif['0th'][piexif.ImageIFD.ImageDescription] = newName;
+    const utf16le = [];
+    for (let i = 0; i < newName.length; i++) { const c = newName.charCodeAt(i); utf16le.push(c & 0xff, (c >> 8) & 0xff); }
+    utf16le.push(0, 0);
+    exif['0th'][40091] = utf16le; // XPTitle
+    try { exifBytes = piexif.dump(exif); }
+    catch(e) { console.warn('dump 재시도(XPTitle 제외):', e); delete exif['0th'][40091]; exifBytes = piexif.dump(exif); }
+    let base = item.imgSrc;
+    try { base = piexif.remove(item.imgSrc); } catch(e) {}
+    item.imgSrc = piexif.insert(exifBytes, base);
+  } catch(e) {
+    console.error('EXIF 처리 실패 상세:', e);
+    showSaveStatus('❌ EXIF 처리 실패: ' + (e && e.message ? e.message : e), false);
+    return;
+  }
+
+  // 드래그&드롭 파일 핸들이 있으면 원본 파일에 직접 덮어쓰기
+  const fh = item.fileHandle || item.markerObj?.fileHandle;
+  if (fh && fh.kind === 'file') {
+    try {
+      const b64 = item.imgSrc.split(',')[1];
+      const bin = atob(b64);
+      const buf = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      const writable = await fh.createWritable();
+      await writable.write(new Blob([buf], {type:'image/jpeg'}));
+      await writable.close();
+      showSaveStatus('✅ 파일 저장됨 · 수정날짜 갱신됨 — ' + fh.name);
+    } catch(ex) {
+      console.error('파일 직접저장 실패:', ex);
+      showSaveStatus('⚠️ 직접저장 실패: ' + ex.message + ' (내보내기로 저장하세요)', false);
+    }
+  } else {
+    showSaveStatus('💾 메타데이터 반영됨 (파일저장: 내보내기로 저장하세요)');
+  }
+}
+
 function startEditItem(tr, item, idx) {
   const nameSpan = tr.querySelector('.item-name');
   if (!nameSpan || tr.querySelector('.item-name-input')) return;
@@ -647,7 +736,12 @@ function startEditItem(tr, item, idx) {
   nameSpan.appendChild(input);
   input.focus(); input.select();
 
-  const save = () => {
+  // 같은 줄 내부의 빈 공간(번호/주소 칸 등)을 눌러도 편집 유지 (input 포커스 보존)
+  const keepFocus = e => { if (e.target !== input) { e.preventDefault(); input.focus(); } };
+  tr.addEventListener('mousedown', keepFocus);
+
+  const save = async () => {
+    tr.removeEventListener('mousedown', keepFocus);
     const newName = input.value.trim() || item.name;
     item.name = newName;
     if (item.markerObj) {
@@ -658,6 +752,10 @@ function startEditItem(tr, item, idx) {
       if (iwContent) { const t = iwContent.querySelector('span') || iwContent.querySelector('div'); if (t) t.textContent = newName; }
     }
     if (item.polyline) item.polyline._name = newName;
+    // ── 사진: 원본 파일 EXIF에 이름 기록 ──
+    if (item.type === 'photo') {
+      savePhotoName(item, newName);
+    }
     renderList();
     document.getElementById('photoListWrapper').focus();
   };
@@ -949,6 +1047,29 @@ document.getElementById('sidebarOpenBtn').onclick = () => {
   isOpen ? closeSidebar() : openSidebar();
 };
 
+// ── XPTitle (UTF-16LE) → 문자열 변환 ──
+function xpTitleToStr(bytes) {
+  if (!bytes || bytes.length < 2) return '';
+  let s = '';
+  for (let i = 0; i + 1 < bytes.length; i += 2) {
+    const code = bytes[i] | (bytes[i + 1] << 8);
+    if (code === 0) break;
+    s += String.fromCharCode(code);
+  }
+  return s.trim();
+}
+
+// EXIF에서 저장된 이름 읽기 (XPTitle → ImageDescription 순)
+function readMetaName(exifObj) {
+  try {
+    const xpRaw = exifObj['0th']?.[40091]; // XPTitle
+    if (xpRaw && xpRaw.length > 2) { const n = xpTitleToStr(xpRaw); if (n) return n; }
+    const desc = (exifObj['0th']?.[piexif.ImageIFD.ImageDescription] || '').trim();
+    if (desc) return desc;
+  } catch(e) {}
+  return '';
+}
+
 // ── 이미지 파일 판별 ──
 const IMAGE_EXT = /\.(jpe?g|png|heic|heif|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2)$/i;
 const RAW_EXT   = /\.(arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2)$/i;
@@ -996,7 +1117,7 @@ async function processImageFileList(files, statusCb) {
         const reader=new FileReader();
         reader.onload=ev=>{
           const imgSrc=ev.target.result;
-          let latlng=null,takenDate='';
+          let latlng=null,takenDate='',useName=imgName;
           try{
             const exif=piexif.load(imgSrc),gps=exif['GPS'];
             if(gps&&gps[piexif.GPSIFD.GPSLatitude]&&gps[piexif.GPSIFD.GPSLongitude]){
@@ -1007,9 +1128,10 @@ async function processImageFileList(files, statusCb) {
             }
             const rawDate=exif['Exif']?.[piexif.ExifIFD.DateTimeOriginal]||exif['0th']?.[piexif.ImageIFD.DateTime]||'';
             if(rawDate)takenDate=rawDate.substring(0,10).replace(/:/g,'-');
+            const mn=readMetaName(exif); if(mn) useName=mn;
           }catch(ex){}
-          if(latlng){bounds.extend(latlng);addPhotoMarker(latlng,imgSrc,imgName,takenDate);}
-          else{if(noGPSAction===null)noGPSAction=confirm('위치 정보가 없는 사진이 있습니다.\n지도 중심에 마커를 추가하시겠습니까?');if(noGPSAction)addPhotoMarker(map.getCenter(),imgSrc,imgName,takenDate);}
+          if(latlng){bounds.extend(latlng);addPhotoMarker(latlng,imgSrc,useName,takenDate);}
+          else{if(noGPSAction===null)noGPSAction=confirm('위치 정보가 없는 사진이 있습니다.\n지도 중심에 마커를 추가하시겠습니까?');if(noGPSAction)addPhotoMarker(map.getCenter(),imgSrc,useName,takenDate);}
           resolve();
         };
         reader.readAsDataURL(imgFile);
@@ -1019,29 +1141,18 @@ async function processImageFileList(files, statusCb) {
   if (!bounds.isEmpty()) map.setBounds(bounds);
 }
 
-// ── 폴더 선택 (하위폴더 포함 재귀) ──
-document.getElementById('folderSelectBtn').onclick = async () => {
-  if (!window.showDirectoryPicker) {
-    alert('폴더 선택은 Chrome/Edge 브라우저에서 지원됩니다.\n(탐색기에서 이미지를 드래그해서 놓는 방법도 됩니다)');
+// ── 엑셀 선택 삽입 — 서버가 엑셀 선택 셀(파일경로)을 직접 읽어 삽입 ──
+//    (클립보드 복사 불필요, 글로벌 키보드 훅 없음 → IME/클립보드 충돌 없음)
+function insertExcelSelection() {
+  if (!window.__wsReady || !window.__wsReady()) {
+    window.__setBadge && window.__setBadge(false, '🔴 서버 연결 안됨');
+    alert('탐색기 연동 서버(사진위치표시.py)가 실행 중이어야 합니다.');
     return;
   }
-  let dirHandle;
-  try { dirHandle = await window.showDirectoryPicker(); } catch(e) { return; }
-
-  const el = document.getElementById('folderName');
-  el.textContent = '탐색 중…';
-
-  const imageFiles = [];
-  for await (const file of walkDirForImages(dirHandle)) imageFiles.push(file);
-
-  if (!imageFiles.length) { el.textContent = '이미지 없음'; alert('폴더(하위 포함) 안에 이미지 파일이 없습니다.'); return; }
-  el.textContent = `📁 ${dirHandle.name} (${imageFiles.length}장)`;
-
-  await processImageFileList(imageFiles, (done, total) => {
-    el.textContent = `📁 ${dirHandle.name} ${done}/${total}`;
-  });
-  el.textContent = `✅ ${dirHandle.name} (${imageFiles.length}장)`;
-};
+  window.__setBadge(true, '📂 엑셀 선택 읽는 중…');
+  window.__wsSend({ type: 'insert_excel_selection' });
+}
+document.getElementById('excelInsertBtn').onclick = insertExcelSelection;
 
 // ══════════════════════════════════════════════════
 //  지도 전역 변수
@@ -1190,7 +1301,8 @@ function initializeMap(center) {
 
   kakao.maps.event.addListener(map, 'mousemove', updateDistance);
 
-  // Ctrl+V 붙여넣기 이미지
+  // Ctrl+V 붙여넣기 — 클립보드의 이미지 데이터를 마커로 추가
+  //   (엑셀 셀의 파일경로 삽입은 '⬇ 엑셀 선택 삽입' 버튼 / Ctrl+Shift+V 사용)
   document.addEventListener('paste', async e => {
     const item = Array.from(e.clipboardData?.items||[]).find(i=>i.type.startsWith('image/'));
     if (!item) return;
@@ -1273,7 +1385,7 @@ function addMarker(latlng, desc) {
   addItem({type:'marker',name:desc,address:'',markerObj});
 }
 
-function addPhotoMarker(latlng, imgSrc, filename, takenDate) {
+function addPhotoMarker(latlng, imgSrc, filename, takenDate, fileHandle=null) {
   const marker=new kakao.maps.Marker({map,position:latlng,image:MARKER_IMG_BLUE(),draggable:false});
   const div=document.createElement('div');
   div.style='position:relative;width:374px;overflow:hidden;';
@@ -1316,9 +1428,9 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate) {
   kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;const prev=_dragStartPos2;const next=marker.getPosition();_dragStartPos2=null;updateMarkerAddr(marker);if(prev&&(prev.getLat()!==next.getLat()||prev.getLng()!==next.getLng())){pushHistory({undo(){marker.setPosition(prev);updateMarkerAddr(marker);},redo(){marker.setPosition(next);updateMarkerAddr(marker);}});}}});
 
   if (!markers.find(m=>m.marker===marker)) {
-    const markerObj={marker,iw,name:filename};
+    const markerObj={marker,iw,name:filename,fileHandle};
     markers.push(markerObj);
-    addItem({type:'photo',name:filename,address:'',markerObj,imgSrc});
+    addItem({type:'photo',name:filename,address:'',markerObj,imgSrc,fileHandle});
   }
 }
 
@@ -1507,6 +1619,8 @@ document.addEventListener('keydown', e => {
       }
       return;
     }
+    // Ctrl+Shift+V — 엑셀 선택 영역(파일경로) 삽입
+    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase()==='v'){e.preventDefault();insertExcelSelection();return;}
     if (e.key==='F1'){e.preventDefault();window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes');return;}
     if (e.altKey){
       e.preventDefault();
@@ -1616,10 +1730,19 @@ document.addEventListener('dragover',e=>e.preventDefault());
 document.addEventListener('drop',e=>{
   e.preventDefault();
   const files=Array.from(e.dataTransfer.files); if(!files.length)return;
+  // ── 파일 핸들 수집 (이벤트 핸들러 안에서만 getAsFileSystemHandle 호출 가능) ──
+  const _fhPromises=[];
+  if(e.dataTransfer.items){
+    for(let i=0;i<e.dataTransfer.items.length;i++){
+      const it=e.dataTransfer.items[i];
+      _fhPromises[i]=(it.kind==='file'&&typeof it.getAsFileSystemHandle==='function')
+        ?it.getAsFileSystemHandle().catch(()=>null):Promise.resolve(null);
+    }
+  }
   const bounds=new kakao.maps.LatLngBounds();
   let noGPSAction=null;
 
-  files.forEach(file=>{
+  files.forEach((file,_fi)=>{
     const name=file.name.toLowerCase();
 
     if (name.endsWith('.kmz')||name.endsWith('.zip')) {
@@ -1701,29 +1824,27 @@ document.addEventListener('drop',e=>{
           else{if(noGPSAction===null)noGPSAction=confirm(`"${file.name}" 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?`);if(noGPSAction)addPhotoMarker(map.getCenter(),imgSrc,imgName,takenDate);}
           return;
         }
+        const fh=_fhPromises[_fi]?await _fhPromises[_fi]:null;
         const imgFile=await convertHeicIfNeeded(file);
-        const reader=new FileReader();
-        reader.onload=ev=>{
-          const imgSrc=ev.target.result;
-          let latlng=null,takenDate='';
-          try{
-            const exif=piexif.load(imgSrc),gps=exif['GPS'];
-            if(gps&&gps[piexif.GPSIFD.GPSLatitude]&&gps[piexif.GPSIFD.GPSLongitude]){
-              const toDec=(dms,ref)=>{const d=dms[0][0]/dms[0][1],m=dms[1][0]/dms[1][1],s=dms[2][0]/dms[2][1];return(d+m/60+s/3600)*((ref==='S'||ref==='W')?-1:1);};
-              const lat=toDec(gps[piexif.GPSIFD.GPSLatitude],gps[piexif.GPSIFD.GPSLatitudeRef]||'N');
-              const lng=toDec(gps[piexif.GPSIFD.GPSLongitude],gps[piexif.GPSIFD.GPSLongitudeRef]||'E');
-              if(!isNaN(lat)&&!isNaN(lng)&&(lat!==0||lng!==0))latlng=new kakao.maps.LatLng(lat,lng);
-            }
-            const rawDate=exif['Exif']?.[piexif.ExifIFD.DateTimeOriginal]||exif['0th']?.[piexif.ImageIFD.DateTime]||'';
-            if(rawDate)takenDate=rawDate.substring(0,10).replace(/:/g,'-');
-          }catch(ex){}
-          if(latlng){bounds.extend(latlng);addPhotoMarker(latlng,imgSrc,imgName,takenDate);if(!bounds.isEmpty())map.setBounds(bounds);}
-          else{
-            if(noGPSAction===null)noGPSAction=confirm(`"${file.name}" 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번 일괄 업로드에 적용됩니다)`);
-            if(noGPSAction){addPhotoMarker(map.getCenter(),imgSrc,imgName,takenDate);const added=markers.at(-1);if(added){added.marker.setDraggable(true);movingPhotoMarker=added;}}
+        const imgSrc=await new Promise(r=>{const rd=new FileReader();rd.onload=ev=>r(ev.target.result);rd.readAsDataURL(imgFile);});
+        let latlng=null,takenDate='',useName=imgName;
+        try{
+          const exif=piexif.load(imgSrc),gps=exif['GPS'];
+          if(gps&&gps[piexif.GPSIFD.GPSLatitude]&&gps[piexif.GPSIFD.GPSLongitude]){
+            const toDec=(dms,ref)=>{const d=dms[0][0]/dms[0][1],m=dms[1][0]/dms[1][1],s=dms[2][0]/dms[2][1];return(d+m/60+s/3600)*((ref==='S'||ref==='W')?-1:1);};
+            const lat=toDec(gps[piexif.GPSIFD.GPSLatitude],gps[piexif.GPSIFD.GPSLatitudeRef]||'N');
+            const lng=toDec(gps[piexif.GPSIFD.GPSLongitude],gps[piexif.GPSIFD.GPSLongitudeRef]||'E');
+            if(!isNaN(lat)&&!isNaN(lng)&&(lat!==0||lng!==0))latlng=new kakao.maps.LatLng(lat,lng);
           }
-        };
-        reader.readAsDataURL(imgFile);
+          const rawDate=exif['Exif']?.[piexif.ExifIFD.DateTimeOriginal]||exif['0th']?.[piexif.ImageIFD.DateTime]||'';
+          if(rawDate)takenDate=rawDate.substring(0,10).replace(/:/g,'-');
+          const mn=readMetaName(exif); if(mn) useName=mn;
+        }catch(ex){}
+        if(latlng){bounds.extend(latlng);addPhotoMarker(latlng,imgSrc,useName,takenDate,fh);if(!bounds.isEmpty())map.setBounds(bounds);}
+        else{
+          if(noGPSAction===null)noGPSAction=confirm(`"${file.name}" 위치 정보가 없습니다.\n지도 중심에 마커를 추가하시겠습니까?\n(이 선택은 이번 일괄 업로드에 적용됩니다)`);
+          if(noGPSAction){addPhotoMarker(map.getCenter(),imgSrc,useName,takenDate,fh);const added=markers.at(-1);if(added){added.marker.setDraggable(true);movingPhotoMarker=added;}}
+        }
       })();
 
     } else if (name.endsWith('.csv')) {
@@ -2405,6 +2526,12 @@ window.onload=()=>{
     ws.send(JSON.stringify({ type:'save_file', folder, filename, data:b64, overwrite:false }));
     setBadge(true, '💾 저장 중...');
   };
+  // 외부(IIFE 바깥) 함수에서 WebSocket 전송 / 배지 표시할 수 있도록 노출
+  window.__wsSend = (obj) => {
+    if (ws && ws.readyState === 1) { ws.send(JSON.stringify(obj)); return true; }
+    return false;
+  };
+  window.__setBadge = setBadge;
 
   function removeLive() {
     liveOvs.forEach(ov => ov.setMap(null));
@@ -2614,6 +2741,12 @@ window.onload=()=>{
           const name = d.path.split('\\').pop();
           setBadge(true, d.ok ? `✅ 저장됨: ${name}` : `❌ 저장실패: ${name}`);
           setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
+        } else if (d.type === 'name_saved') {
+          const fn = d.path.split(/[\\/]/).pop();
+          if (typeof showSaveStatus === 'function')
+            showSaveStatus(d.ok ? `✅ 이름 저장됨 · 수정날짜 갱신 — ${fn}` : `❌ 이름 저장 실패 — ${fn}`, !!d.ok);
+          setBadge(true, d.ok ? `✅ 이름 저장: ${fn}` : `❌ 이름 저장실패: ${fn}`);
+          setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
         } else if (d.type === 'file_saved') {
           setBadge(true, d.ok ? `✅ 저장됨: ${d.filename}` : `❌ 저장실패: ${d.filename}`);
           if (d.ok && d.folder) console.log('저장 위치:', d.folder + '\\' + d.filename);
@@ -2629,10 +2762,15 @@ window.onload=()=>{
             setBadge(true, '저장 취소됨');
             setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2000);
           }
+        } else if (d.type === 'notice') {
+          setBadge(true, d.msg || '');
+          setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
         } else if (d.type === 'live_clear') {
           clearLiveItems();
         } else if (d.type === 'live_insert_photo') {
           clearLiveItems();
+          // 이미 영구 삽입된 사진은 미리보기 생략 (셀 재선택 시 중복 표시 방지)
+          const permPaths = new Set(allItems.filter(i => i.path).map(i => i.path));
           const liveBounds = new kakao.maps.LatLngBounds();
 
           // 녹색 마커 이미지 (최전면 드래그용)
@@ -2643,6 +2781,7 @@ window.onload=()=>{
             new kakao.maps.Size(22, 22), { offset: new kakao.maps.Point(11, 11) });
 
           d.items.forEach(item => {
+            if (permPaths.has(item.path)) return;   // 이미 영구 삽입됨 → 미리보기 생략
             const latlng = new kakao.maps.LatLng(item.lat, item.lng);
             const path = item.path;
 
@@ -2730,30 +2869,44 @@ window.onload=()=>{
           if (d.items.length) setBadge(true, `📍 ${d.items[0].name}`);
         } else if (d.type === 'live_insert_kmz') {
           clearLiveItems();
-          liveDataFile = d.path || '';                // 저장 폴더 결정용
-          setBadge(true, `📂 ${d.name} 로드 중…`);
+          // 단일(d.data) 또는 배열(d.items) 모두 지원
+          let kmzItems = d.items || [{ name: d.name, path: d.path, data: d.data }];
+          // 이미 영구 삽입된 KMZ는 미리보기 생략 (셀 재선택 시 중복 방지)
+          const permKmz = new Set(allItems.map(i => i._srcKmz).filter(Boolean));
+          kmzItems = kmzItems.filter(it => !permKmz.has(it.path));
+          if (!kmzItems.length) { setBadge(true, '🟢 탐색기 연동 중'); return; }
+          liveDataFile = (kmzItems[0] && kmzItems[0].path) || '';
+          const namesStr = kmzItems.length === 1 ? kmzItems[0].name : `KMZ ${kmzItems.length}개`;
+          setBadge(true, `📂 ${namesStr} 로드 중…`);
           (async () => {
             try {
-              const bytes = Uint8Array.from(atob(d.data), c => c.charCodeAt(0));
-              const file = new File([bytes], d.name,
-                { type: 'application/vnd.google-earth.kmz' });
-              const preLen = allItems.length;
               const bounds = new kakao.maps.LatLngBounds();
-              await loadKMZ(file, bounds);
-              // loadKMZ가 추가한 항목에 live 태그
-              for (let i = preLen; i < allItems.length; i++) allItems[i]._live = true;
+              for (const item of kmzItems) {
+                const bytes = Uint8Array.from(atob(item.data), c => c.charCodeAt(0));
+                const file = new File([bytes], item.name,
+                  { type: 'application/vnd.google-earth.kmz' });
+                const preLen = allItems.length;
+                await loadKMZ(file, bounds);
+                for (let i = preLen; i < allItems.length; i++) allItems[i]._live = true;
+              }
               if (!bounds.isEmpty()) map.setBounds(bounds, 60);
               setBadge(true, `🟢 탐색기 연동 중`);
             } catch(e) {
               console.error('live KMZ 오류', e);
-              setBadge(true, `❌ KMZ 오류: ${d.name}`);
+              setBadge(true, `❌ KMZ 오류: ${namesStr}`);
             }
           })();
         } else if (d.type === 'insert_photos') {
-          // Ctrl+Shift+I — 여러 사진 영구 삽입 (셀 이동해도 유지)
+          // 영구 삽입 — 먼저 live(미리보기) 항목 제거: 활성 셀 사진이 미리보기로만 남아
+          //   선택 해제 시 사라지던 문제 방지. 이후 '영구' 항목 기준으로만 중복 판정.
+          clearLiveItems();
+          const existPaths = new Set(allItems.filter(i => i.path).map(i => i.path));
+          const newItems = d.items.filter(item => !existPaths.has(item.path));
+          const skipped = d.items.length - newItems.length;
+          if (skipped > 0) console.log(`[insert_photos] ${skipped}개 이미 삽입됨 → 건너뜀`);
           const bounds = new kakao.maps.LatLngBounds();
           let added = 0;
-          d.items.forEach(item => {
+          newItems.forEach(item => {
             const latlng = new kakao.maps.LatLng(item.lat, item.lng);
             addPhotoMarker(latlng, item.imgSrc, item.name, item.takenDate || '');
             allItems[allItems.length - 1].path = item.path;   // 저장 폴더 결정용
@@ -2762,27 +2915,40 @@ window.onload=()=>{
           });
           if (added && !bounds.isEmpty())
             setTimeout(() => { if (map) map.relayout(); map.setBounds(bounds, 60); }, 80);
-          setBadge(true, added ? `✅ 사진 ${added}장 삽입됨` : '⚠️ GPS 있는 사진 없음');
+          setBadge(true, added ? `✅ 사진 ${added}장 삽입됨${skipped ? ` (${skipped}개 중복 제외)` : ''}` : '⚠️ GPS 있는 사진 없음 또는 이미 삽입됨');
           setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
         } else if (d.type === 'insert_kmz') {
-          // Ctrl+Shift+I — 여러 KMZ 영구 삽입
-          setBadge(true, `📂 KMZ ${d.items.length}개 로드 중…`);
-          loadedDataFiles = [];   // 이번 일괄 삽입분으로 새로 채움 (예전 경로 잔류 방지)
-          (async () => {
-            const bounds = new kakao.maps.LatLngBounds();
-            for (const item of d.items) {
-              try {
-                if (item.path) loadedDataFiles.push(item.path);   // 저장 폴더 결정용
-                const bytes = Uint8Array.from(atob(item.data), c => c.charCodeAt(0));
-                const file = new File([bytes], item.name,
-                  { type: 'application/vnd.google-earth.kmz' });
-                await loadKMZ(file, bounds);
-              } catch(e) { console.error('KMZ 오류', item.name, e); }
-            }
-            if (!bounds.isEmpty()) map.setBounds(bounds, 60);
-            setBadge(true, `✅ KMZ ${d.items.length}개 삽입됨`);
-            setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
-          })();
+          // KMZ 삽입 — 먼저 live(미리보기) 항목 제거 (영구본과 중복 방지)
+          clearLiveItems();
+          // 사이드바에 현재 남아있는 KMZ만 중복 제외 (삭제 후엔 재삽입 허용)
+          const presentKmz = new Set(allItems.map(i => i._srcKmz).filter(Boolean));
+          const newItems = d.items.filter(item => !presentKmz.has(item.path));
+          const skipped = d.items.length - newItems.length;
+          if (skipped > 0) console.log(`[insert_kmz] ${skipped}개 사이드바에 이미 있음 → 건너뜀`);
+          if (!newItems.length) {
+            setBadge(true, `⚠️ KMZ 이미 모두 삽입됨`);
+            setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2000);
+          } else {
+            setBadge(true, `📂 KMZ ${newItems.length}개 로드 중…`);
+            (async () => {
+              const bounds = new kakao.maps.LatLngBounds();
+              for (const item of newItems) {
+                try {
+                  if (item.path) loadedDataFiles.push(item.path);   // 저장 폴더 결정용
+                  const preLen = allItems.length;
+                  const bytes = Uint8Array.from(atob(item.data), c => c.charCodeAt(0));
+                  const file = new File([bytes], item.name,
+                    { type: 'application/vnd.google-earth.kmz' });
+                  await loadKMZ(file, bounds);
+                  // 이번 KMZ로 새로 생긴 사이드바 항목에 출처경로 태깅 (삭제 후 재삽입 판정용)
+                  for (let i = preLen; i < allItems.length; i++) allItems[i]._srcKmz = item.path;
+                } catch(e) { console.error('KMZ 오류', item.name, e); }
+              }
+              if (!bounds.isEmpty()) map.setBounds(bounds, 60);
+              setBadge(true, `✅ KMZ ${newItems.length}개 삽입됨${skipped ? ` (${skipped}개 중복 제외)` : ''}`);
+              setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
+            })();
+          }
         }
       } catch(e) {}
     };

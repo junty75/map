@@ -29,8 +29,8 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 .vis-check{width:12px;height:12px;cursor:pointer;flex-shrink:0;accent-color:#aef;margin:0;}
 .ftab.hidden-type{opacity:0.55;}
 #folderBar{background:#d6eaf8;padding:4px 6px;flex-shrink:0;display:flex;align-items:center;gap:6px;border-bottom:1px solid #85c1e9;}
-#folderSelectBtn{font-size:11px;padding:3px 8px;cursor:pointer;background:#fff;border:1px solid #2980b9;border-radius:3px;color:#1a5276;white-space:nowrap;}
-#folderSelectBtn:hover{background:#d6eaf8;}
+#excelInsertBtn{font-size:11px;padding:3px 8px;cursor:pointer;background:#fff;border:1px solid #2980b9;border-radius:3px;color:#1a5276;white-space:nowrap;}
+#excelInsertBtn:hover{background:#d6eaf8;}
 #numToggleBtn{font-size:11px;padding:3px 8px;cursor:pointer;background:#fff;border:1px solid #2980b9;border-radius:3px;color:#1a5276;white-space:nowrap;}
 #numToggleBtn:hover{background:#d6eaf8;}
 #numToggleBtn.on{background:#1a5276;color:#fff;border-color:#1a5276;}
@@ -125,7 +125,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
     </div>
   </div>
   <div id="folderBar">
-    <button id="folderSelectBtn">📁 폴더 선택</button>
+    <button id="excelInsertBtn" title="엑셀에서 선택한 셀(파일경로)의 사진/KMZ를 지도에 삽입 — 단축키 Ctrl+Shift+V">⬇ 엑셀 선택 삽입</button>
     <button id="copyListBtn" title="목록 클립보드 복사">📋 복사</button>
     <button id="numToggleBtn" title="지도에 번호 표시/숨기기">① 번호</button>
     <button id="trackNameOrgBtn" title="이름없는 트랙(트랙N)에 가장 가까운 마커 이름 붙이기 / 다시 누르면 원위치">🏷 트랙이름 정리</button>
@@ -445,7 +445,7 @@ window.onload = () => {
       applyVisibility(type);
     });
   });
-  document.getElementById('folderSelectBtn').addEventListener('click', selectFolder);
+  document.getElementById('excelInsertBtn').addEventListener('click', insertExcelSelection);
 
   // ── 컬럼 정렬 ──
   function updateSortIndicators() {
@@ -808,6 +808,7 @@ document.getElementById('polyEditBtn').onclick=()=>{
 /* 단축키 */
 document.addEventListener('keydown', e => {
   if (e.key==='F1'){e.preventDefault();openHelp();return;}
+  if (e.ctrlKey&&e.shiftKey&&e.key.toLowerCase()==='v'){e.preventDefault();insertExcelSelection();return;}
   if (e.key==='Escape'){
     if(movingMk){
       // 이동 취소: ghost 제거, 실제 마커를 원래 위치로 복원
@@ -930,14 +931,14 @@ function addMarker(coord, name, addr) {
   return obj;
 }
 
-function addPhotoMarker(coord, imgSrc, name) {
+function addPhotoMarker(coord, imgSrc, name, fileHandle=null) {
   const feat=new ol.Feature({geometry:new ol.geom.Point(coord)});
   feat.setStyle(mkPhotoStyle());
   const lyr=new ol.layer.Vector({source:new ol.source.Vector({features:[feat]}),zIndex:100});
   addLyr(lyr);
-  const obj={feat,lyr,ov:null,name,addr:'',isPhoto:true,imgSrc};
+  const obj={feat,lyr,ov:null,name,addr:'',isPhoto:true,imgSrc,fileHandle};
   markers.push(obj);
-  const item={type:'photo',name,address:'',mkObj:obj,imgSrc};
+  const item={type:'photo',name,address:'',mkObj:obj,imgSrc,fileHandle};
   allItems.push(item);
   if(allItems.length===1)openSidebar();
   renderList();
@@ -1072,6 +1073,16 @@ document.addEventListener('drop',e=>{
   e.preventDefault();if(!vmap)return;
   let noGPS=null;
   const files=Array.from(e.dataTransfer.files);
+  // 파일 핸들 수집 (드롭 이벤트 내에서만 getAsFileSystemHandle 호출 가능)
+  const fhMap=new Map();
+  if(e.dataTransfer.items){
+    Array.from(e.dataTransfer.items).forEach((it,i)=>{
+      if(it.kind==='file'&&typeof it.getAsFileSystemHandle==='function'){
+        const f=files[i];
+        if(f)fhMap.set(f, it.getAsFileSystemHandle().catch(()=>null));
+      }
+    });
+  }
   const RAW_RE=/\.(arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2)$/i;
   const imageFiles=files.filter(f=>f.type.startsWith('image/')||/\.(jpe?g|png|heic|heif)$/i.test(f.name.toLowerCase())||RAW_RE.test(f.name));
   const otherFiles=files.filter(f=>!imageFiles.includes(f));
@@ -1088,7 +1099,7 @@ document.addEventListener('drop',e=>{
       loadImage(file,()=>noGPS,v=>noGPS=v,coord=>{
         if(coord)photoPts.push(coord);doneCount++;
         if(doneCount===imageFiles.length&&photoPts.length>0)fitPts(photoPts);
-      });
+      },fhMap.get(file)||null);
     });
   }
 });
@@ -1107,7 +1118,19 @@ document.addEventListener('paste',e=>{
   reader.readAsDataURL(item.getAsFile());
 });
 
-/* 폴더 선택 */
+/* 엑셀 선택 삽입 — 서버가 엑셀 선택 셀(파일경로)을 직접 읽어 삽입
+   (클립보드 복사 불필요, 글로벌 키보드 훅 없음 → IME/클립보드 충돌 없음) */
+function insertExcelSelection(){
+  if(!window.__wsReady||!window.__wsReady()){
+    window.__setBadge&&window.__setBadge(false,'🔴 서버 연결 안됨');
+    alert('탐색기 연동 서버(사진위치표시.py)가 실행 중이어야 합니다.');
+    return;
+  }
+  window.__setBadge(true,'📂 엑셀 선택 읽는 중…');
+  window.__wsSend({type:'insert_excel_selection'});
+}
+
+/* 폴더 선택 (현재 미사용 — 버튼은 '엑셀 선택 삽입'으로 교체됨) */
 async function selectFolder(){
   if(!window.showDirectoryPicker){alert('폴더 선택은 Chrome/Edge에서만 지원됩니다.');return;}
   let dirHandle;
@@ -1157,14 +1180,18 @@ async function loadRaw(file,getNG,setNG,onDone){
     else{if(getNG()===null)setNG(confirm(`"${file.name}" 위치 정보 없음.\n지도 중심에 추가할까요?`));if(getNG())addPhotoMarker(vmap.getView().getCenter(),imgSrc,name);if(onDone)onDone(null);}
   }catch(e){console.error('RAW 처리 오류:',e);if(onDone)onDone(null);}
 }
-async function loadImage(file,getNG,setNG,onDone){
+async function loadImage(file,getNG,setNG,onDone,fhPromise=null){
   if(isRawFile(file))return loadRaw(file,getNG,setNG,onDone);
+  const fh=fhPromise?await fhPromise:null;
   const imgFile=await convertHeicIfNeeded(file);
   const r=new FileReader();
   r.onload=ev=>{
-    const src=ev.target.result,name=file.name.replace(/\.[^/.]+$/,''),ll=extractGPS(src);
-    if(ll){const c=toMerc(ll[0],ll[1]);addPhotoMarker(c,src,name);if(onDone)onDone(c);else fitPts([c]);}
-    else{if(getNG()===null)setNG(confirm(`"${file.name}" 위치 정보 없음.\n지도 중심에 추가할까요?`));if(getNG())addPhotoMarker(vmap.getView().getCenter(),src,name);if(onDone)onDone(null);}
+    const src=ev.target.result,ll=extractGPS(src);
+    let name=file.name.replace(/\.[^/.]+$/,'');
+    // EXIF에 저장된 제목(이름)이 있으면 그걸 사용
+    try{const mn=readMetaName(piexif.load(src));if(mn)name=mn;}catch(e){}
+    if(ll){const c=toMerc(ll[0],ll[1]);addPhotoMarker(c,src,name,fh);if(onDone)onDone(c);else fitPts([c]);}
+    else{if(getNG()===null)setNG(confirm(`"${file.name}" 위치 정보 없음.\n지도 중심에 추가할까요?`));if(getNG())addPhotoMarker(vmap.getView().getCenter(),src,name,fh);if(onDone)onDone(null);}
   };
   r.readAsDataURL(imgFile);
 }
@@ -1575,9 +1602,12 @@ function renderList(){
     };
     tr.onclick=e=>{
       if(isDragging){isDragging=false;return;}
-      // 편집 중인 input이 있으면 blur로 커밋 (onblur → setTimeout → commit 순서로 처리됨)
+      // 편집 중인 input이 있을 때
       const activeInp=document.querySelector('#photoTbody .item-name-input');
-      if(activeInp&&!activeInp.contains(e.target)){activeInp.blur();}
+      if(activeInp){
+        if(tr.contains(activeInp))return;       // 같은 줄(편집 중인 줄) 클릭 → 편집 유지
+        activeInp.blur();                        // 다른 줄 클릭 → 커밋 후 선택 진행
+      }
       if(e.shiftKey&&anchorIdx>=0){
         const lo=Math.min(anchorIdx,idx),hi=Math.max(anchorIdx,idx);
         if(!e.ctrlKey)selectedItems.clear();
@@ -1734,6 +1764,66 @@ function showPreview(item){
   document.getElementById('previewHeader').textContent='🖼 '+item.name;
 }
 
+/* ── EXIF 제목(이름) 읽기/쓰기 ── */
+function xpTitleToStr(bytes){
+  if(!bytes||bytes.length<2)return'';
+  let s='';
+  for(let i=0;i+1<bytes.length;i+=2){const code=bytes[i]|(bytes[i+1]<<8);if(code===0)break;s+=String.fromCharCode(code);}
+  return s.trim();
+}
+function readMetaName(exifObj){
+  try{
+    const xpRaw=exifObj['0th']?.[40091]; // XPTitle
+    if(xpRaw&&xpRaw.length>2){const n=xpTitleToStr(xpRaw);if(n)return n;}
+    const desc=(exifObj['0th']?.[piexif.ImageIFD.ImageDescription]||'').trim();
+    if(desc)return desc;
+  }catch(e){}
+  return'';
+}
+/* 저장 결과 토스트 */
+function showSaveStatus(msg,ok=true){
+  let el=document.getElementById('_saveToast');
+  if(!el){el=document.createElement('div');el.id='_saveToast';el.style.cssText='position:fixed;bottom:54px;left:50%;transform:translateX(-50%);padding:7px 16px;border-radius:6px;font-size:13px;z-index:99999;pointer-events:none;opacity:0;transition:opacity .25s;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.3);';document.body.appendChild(el);}
+  el.textContent=msg;el.style.background=ok?'rgba(39,174,96,.93)':'rgba(192,57,43,.93)';el.style.color='#fff';el.style.opacity='1';
+  clearTimeout(el._t);el._t=setTimeout(()=>{el.style.opacity='0';},ok?2200:4000);
+}
+/* 사진 이름 → EXIF 저장: (1)서버경로 위임 (2)드래그&드롭 직접쓰기 (3)메모리만 */
+async function savePhotoName(item,newName){
+  if(item.path&&window.__wsSend){
+    const sent=window.__wsSend({type:'update_name',path:item.path,name:newName});
+    if(sent){showSaveStatus('💾 저장 중… '+item.path.split(/[\\/]/).pop());return;}
+    showSaveStatus('🔴 서버 연결 안됨 — 메타데이터 저장 실패',false);return;
+  }
+  if(!(item.imgSrc&&item.imgSrc.startsWith('data:image/jpeg'))){showSaveStatus('ℹ️ JPEG가 아니어서 메타데이터 저장 안 함');return;}
+  let exifBytes;
+  try{
+    let old=null;try{old=piexif.load(item.imgSrc);}catch(e){}
+    const exif={'0th':{},'Exif':{},'GPS':{},'1st':{},'thumbnail':null};
+    if(old){
+      if(old['GPS'])exif['GPS']=old['GPS'];
+      const ori=old['0th']?.[piexif.ImageIFD.Orientation];if(ori!==undefined)exif['0th'][piexif.ImageIFD.Orientation]=ori;
+      const dto=old['Exif']?.[piexif.ExifIFD.DateTimeOriginal];if(dto!==undefined)exif['Exif'][piexif.ExifIFD.DateTimeOriginal]=dto;
+      const dt=old['0th']?.[piexif.ImageIFD.DateTime];if(dt!==undefined)exif['0th'][piexif.ImageIFD.DateTime]=dt;
+    }
+    exif['0th'][piexif.ImageIFD.ImageDescription]=newName;
+    const u=[];for(let i=0;i<newName.length;i++){const c=newName.charCodeAt(i);u.push(c&0xff,(c>>8)&0xff);}u.push(0,0);
+    exif['0th'][40091]=u; // XPTitle
+    try{exifBytes=piexif.dump(exif);}catch(e){delete exif['0th'][40091];exifBytes=piexif.dump(exif);}
+    let base=item.imgSrc;try{base=piexif.remove(item.imgSrc);}catch(e){}
+    item.imgSrc=piexif.insert(exifBytes,base);
+    if(item.mkObj)item.mkObj.imgSrc=item.imgSrc;
+  }catch(e){console.error('EXIF 처리 실패 상세:',e);showSaveStatus('❌ EXIF 처리 실패: '+(e&&e.message?e.message:e),false);return;}
+  const fh=item.fileHandle||item.mkObj?.fileHandle;
+  if(fh&&fh.kind==='file'){
+    try{
+      const b64=item.imgSrc.split(',')[1],bin=atob(b64),buf=new Uint8Array(bin.length);
+      for(let i=0;i<bin.length;i++)buf[i]=bin.charCodeAt(i);
+      const w=await fh.createWritable();await w.write(new Blob([buf],{type:'image/jpeg'}));await w.close();
+      showSaveStatus('✅ 파일 저장됨 · 수정날짜 갱신됨 — '+fh.name);
+    }catch(ex){console.error('파일 직접저장 실패:',ex);showSaveStatus('⚠️ 직접저장 실패: '+ex.message+' (내보내기로 저장하세요)',false);}
+  }else{showSaveStatus('💾 메타데이터 반영됨 (파일저장: 내보내기로 저장하세요)');}
+}
+
 function startEditItem(tr,item,idx){
   // 이미 편집 중인 input이 있으면 먼저 커밋
   const existing=document.querySelector('#photoTbody .item-name-input');
@@ -1744,11 +1834,17 @@ function startEditItem(tr,item,idx){
   const span=currentTr.querySelector('.item-name');if(!span)return;
   const inp=document.createElement('input');inp.className='item-name-input';inp.value=item.name;
   span.replaceWith(inp);inp.focus();inp.select();
+  // 같은 줄 내부의 빈 공간(번호/주소 칸 등)을 눌러도 편집 유지 (input 포커스 보존)
+  const keepFocus=e=>{if(e.target!==inp){e.preventDefault();inp.focus();}};
+  currentTr.addEventListener('mousedown',keepFocus);
   let committed=false;
   function commit(){
     if(committed)return;committed=true;
+    currentTr.removeEventListener('mousedown',keepFocus);
     const newName=inp.value.trim()||item.name;
-    item.name=newName;if(item.mkObj)item.mkObj.name=newName;renderList();
+    item.name=newName;if(item.mkObj)item.mkObj.name=newName;
+    if(item.type==='photo')savePhotoName(item,newName);
+    renderList();
   }
   inp.onblur=()=>setTimeout(commit,30);
   inp.onkeydown=e=>{
@@ -2042,6 +2138,9 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
     ws.send(JSON.stringify({type:'save_file',folder,filename,data:b64,overwrite:false}));
     setBadge(true,'💾 저장 중...');
   };
+  // 외부(IIFE 바깥) 함수에서 WebSocket 전송 / 배지 표시할 수 있도록 노출
+  window.__wsSend=(obj)=>{ if(ws&&ws.readyState===1){ws.send(JSON.stringify(obj));return true;} return false; };
+  window.__setBadge=setBadge;
 
   function removeLive(){
     liveOvs.forEach(ov=>vmap.removeOverlay(ov));
@@ -2279,6 +2378,12 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           const name=d.path.split('\\').pop();
           setBadge(true, d.ok?'✅ 저장됨: '+name:'❌ 저장실패: '+name);
           setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
+        } else if(d.type==='name_saved'){
+          const fn=d.path.split(/[\\/]/).pop();
+          if(typeof showSaveStatus==='function')
+            showSaveStatus(d.ok?'✅ 이름 저장됨 · 수정날짜 갱신 — '+fn:'❌ 이름 저장 실패 — '+fn, !!d.ok);
+          setBadge(true, d.ok?'✅ 이름 저장: '+fn:'❌ 이름 저장실패: '+fn);
+          setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
         } else if(d.type==='file_saved'){
           setBadge(true, d.ok?'✅ 저장됨: '+d.filename:'❌ 저장실패: '+d.filename);
           if(d.ok&&d.folder)console.log('저장 위치:',d.folder+'\\'+d.filename);
@@ -2298,10 +2403,13 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           clearLiveItems();
         } else if(d.type==='live_insert_photo'){
           clearLiveItems();
+          // 이미 영구 삽입된 사진은 미리보기 생략 (셀 재선택 시 중복 표시 방지)
+          const permPaths=new Set(allItems.filter(i=>i.path).map(i=>i.path));
           const coords=[];
           d.items.forEach(item=>{
             if(typeof item.lat!=='number'||typeof item.lng!=='number'||
                isNaN(item.lat)||isNaN(item.lng))return;
+            if(permPaths.has(item.path))return;   // 이미 영구 삽입됨 → 미리보기 생략
             const coord=toMerc(item.lng,item.lat);
             const path=item.path;
             // ① 사진 마커 삽입 (썸네일)
@@ -2336,22 +2444,37 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           }
         } else if(d.type==='live_insert_kmz'){
           clearLiveItems();
-          liveDataFile=d.path||'';                       // 저장 폴더 결정용
-          setBadge(true,'📂 '+d.name+' 로드 중…');
+          // 단일(d.data) 또는 배열(d.items) 모두 지원
+          let kmzItems=d.items||[{name:d.name,path:d.path,data:d.data}];
+          // 이미 영구 삽입된 KMZ는 미리보기 생략 (셀 재선택 시 중복 방지)
+          const permKmz=new Set(allItems.map(i=>i._srcKmz).filter(Boolean));
+          kmzItems=kmzItems.filter(it=>!permKmz.has(it.path));
+          if(!kmzItems.length){setBadge(true,'🟢 탐색기 연동 중');return;}
+          liveDataFile=(kmzItems[0]&&kmzItems[0].path)||'';
+          const namesStr=kmzItems.length===1?kmzItems[0].name:'KMZ '+kmzItems.length+'개';
+          setBadge(true,'📂 '+namesStr+' 로드 중…');
           (async()=>{
             try{
-              const bytes=Uint8Array.from(atob(d.data),c=>c.charCodeAt(0));
-              const file=new File([bytes],d.name,{type:'application/vnd.google-earth.kmz'});
-              const preLen=allItems.length;
-              await loadKMZ(file);
-              for(let i=preLen;i<allItems.length;i++)allItems[i]._live=true;
+              for(const item of kmzItems){
+                const bytes=Uint8Array.from(atob(item.data),c=>c.charCodeAt(0));
+                const file=new File([bytes],item.name,{type:'application/vnd.google-earth.kmz'});
+                const preLen=allItems.length;
+                await loadKMZ(file);
+                for(let i=preLen;i<allItems.length;i++)allItems[i]._live=true;
+              }
               setBadge(true,'🟢 탐색기 연동 중');
-            }catch(e){console.error('live KMZ 오류',e);setBadge(true,'❌ KMZ 오류: '+d.name);}
+            }catch(e){console.error('live KMZ 오류',e);setBadge(true,'❌ KMZ 오류: '+namesStr);}
           })();
         } else if(d.type==='insert_photos'){
-          // Ctrl+Shift+I — 여러 사진 영구 삽입 (셀 이동해도 유지)
+          // 영구 삽입 — 먼저 live(미리보기) 제거: 활성 셀 사진이 미리보기로만 남아
+          //   선택 해제 시 사라지던 문제 방지. 이후 '영구' 항목 기준으로만 중복 판정.
+          clearLiveItems();
+          const existPaths=new Set(allItems.filter(i=>i.path).map(i=>i.path));
+          const newItems=d.items.filter(item=>!existPaths.has(item.path));
+          const skipped=d.items.length-newItems.length;
+          if(skipped>0)console.log('[insert_photos] '+skipped+'개 이미 삽입됨 → 건너뜀');
           const coords=[];
-          d.items.forEach(item=>{
+          newItems.forEach(item=>{
             if(typeof item.lat!=='number'||typeof item.lng!=='number'||
                isNaN(item.lat)||isNaN(item.lng))return;
             const coord=toMerc(item.lng,item.lat);
@@ -2360,24 +2483,36 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
             coords.push(coord);
           });
           if(coords.length)setTimeout(()=>{try{vmap.updateSize();}catch(e){}fitPts(coords);},80);
-          setBadge(true, coords.length?('✅ 사진 '+coords.length+'장 삽입됨'):'⚠️ GPS 있는 사진 없음');
+          setBadge(true, coords.length?('✅ 사진 '+coords.length+'장 삽입됨'+(skipped?' ('+skipped+'개 중복 제외)':'')):'⚠️ GPS 있는 사진 없음 또는 이미 삽입됨');
           setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
         } else if(d.type==='insert_kmz'){
-          // Ctrl+Shift+I — 여러 KMZ 영구 삽입
-          setBadge(true,'📂 KMZ '+d.items.length+'개 로드 중…');
-          loadedDataFiles=[];   // 이번 일괄 삽입분으로 새로 채움 (예전 경로 잔류 방지)
-          (async()=>{
-            for(const item of d.items){
-              try{
-                if(item.path)loadedDataFiles.push(item.path);   // 저장 폴더 결정용
-                const bytes=Uint8Array.from(atob(item.data),c=>c.charCodeAt(0));
-                const file=new File([bytes],item.name,{type:'application/vnd.google-earth.kmz'});
-                await loadKMZ(file);
-              }catch(e){console.error('KMZ 오류',item.name,e);}
-            }
-            setBadge(true,'✅ KMZ '+d.items.length+'개 삽입됨');
-            setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
-          })();
+          // KMZ 삽입 — 먼저 live(미리보기) 제거, 사이드바에 현재 남아있는 KMZ만 중복 제외
+          clearLiveItems();
+          const presentKmz=new Set(allItems.map(i=>i._srcKmz).filter(Boolean));
+          const newItems=d.items.filter(item=>!presentKmz.has(item.path));
+          const skipped=d.items.length-newItems.length;
+          if(skipped>0)console.log('[insert_kmz] '+skipped+'개 사이드바에 이미 있음 → 건너뜀');
+          if(!newItems.length){
+            setBadge(true,'⚠️ KMZ 이미 모두 삽입됨');
+            setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2000);
+          }else{
+            setBadge(true,'📂 KMZ '+newItems.length+'개 로드 중…');
+            (async()=>{
+              for(const item of newItems){
+                try{
+                  if(item.path)loadedDataFiles.push(item.path);   // 저장 폴더 결정용
+                  const preLen=allItems.length;
+                  const bytes=Uint8Array.from(atob(item.data),c=>c.charCodeAt(0));
+                  const file=new File([bytes],item.name,{type:'application/vnd.google-earth.kmz'});
+                  await loadKMZ(file);
+                  // 이번 KMZ로 새로 생긴 항목에 출처경로 태깅 (삭제 후 재삽입 판정용)
+                  for(let i=preLen;i<allItems.length;i++)allItems[i]._srcKmz=item.path;
+                }catch(e){console.error('KMZ 오류',item.name,e);}
+              }
+              setBadge(true,'✅ KMZ '+newItems.length+'개 삽입됨'+(skipped?' ('+skipped+'개 중복 제외)':''));
+              setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
+            })();
+          }
         }
       }catch(e){}
     };
