@@ -426,6 +426,7 @@ function _hideItemOnMap(item) {
     item.polyline.setMap(null);
     polylines = polylines.filter(p => p !== item.polyline);
   }
+  if ((item._srcKmz || item._live) && window.__wsSend) window.__wsSend({type:'reset_live_broadcast'});
 }
 function _removeItemSilent(item) {
   _hideItemOnMap(item);
@@ -1149,8 +1150,41 @@ function insertExcelSelection() {
     alert('탐색기 연동 서버(사진위치표시.py)가 실행 중이어야 합니다.');
     return;
   }
-  window.__setBadge(true, '📂 엑셀 선택 읽는 중…');
-  window.__wsSend({ type: 'insert_excel_selection' });
+  const doInsert=()=>{window.__setBadge(true,'📂 엑셀 선택 읽는 중…');window.__wsSend({type:'insert_excel_selection'});};
+  if(allItems.length>0){
+    showInsertChoiceDialog(choice=>{
+      if(choice==='cancel')return;
+      if(choice==='clear')resetAll();
+      doInsert();
+    });
+    return;
+  }
+  doInsert();
+}
+
+function showInsertChoiceDialog(callback){
+  document.getElementById('_insertDlg')?.remove();
+  document.getElementById('_insertBdrop')?.remove();
+  const bdrop=document.createElement('div');
+  bdrop.id='_insertBdrop';
+  bdrop.style.cssText='position:fixed;top:0;left:0;width:100%;height:100%;z-index:9998;background:rgba(0,0,0,.32);';
+  const dlg=document.createElement('div');
+  dlg.id='_insertDlg';
+  dlg.style.cssText='position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.35);padding:18px 22px;min-width:270px;font-family:맑은 고딕,sans-serif;font-size:13px;';
+  dlg.innerHTML=`<div style="font-weight:bold;margin-bottom:10px;font-size:14px;">⚠️ 기존 객체가 있습니다</div>`
+    +`<div style="margin-bottom:14px;color:#555;">현재 삽입된 객체(${allItems.length}개)를 어떻게 처리할까요?</div>`
+    +`<div style="display:flex;flex-direction:column;gap:8px;">`
+    +`<button id="_dlgClear" style="padding:8px 10px;border:1px solid #c0392b;border-radius:5px;background:#fdecea;color:#c0392b;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">🗑 기존 삭제 후 삽입</button>`
+    +`<button id="_dlgAdd" style="padding:8px 10px;border:1px solid #2980b9;border-radius:5px;background:#eaf4fc;color:#1a5276;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">➕ 기존 유지하면서 삽입</button>`
+    +`<button id="_dlgCancel" style="padding:8px 10px;border:1px solid #ccc;border-radius:5px;background:#f5f5f5;color:#555;cursor:pointer;font-family:inherit;font-size:13px;text-align:left;">✕ 취소</button>`
+    +`</div>`;
+  document.body.appendChild(bdrop);
+  document.body.appendChild(dlg);
+  function close(choice){dlg.remove();bdrop.remove();callback(choice);}
+  dlg.querySelector('#_dlgClear').onclick=()=>close('clear');
+  dlg.querySelector('#_dlgAdd').onclick=()=>close('add');
+  dlg.querySelector('#_dlgCancel').onclick=()=>close('cancel');
+  bdrop.onclick=()=>close('cancel');
 }
 document.getElementById('excelInsertBtn').onclick = insertExcelSelection;
 
@@ -1258,7 +1292,19 @@ function initializeMap(center) {
       if (currentPath.length >= 2) {
         const tname = currentPolyline._name || `경로 ${++trackCounter}`;
         if (!currentPolyline._name) currentPolyline._name = tname;
-        addItem({ type:'track', name:tname, address:'', polyline:currentPolyline });
+        const newItem = { type:'track', name:tname, address:'', polyline:currentPolyline };
+        addItem(newItem);
+        if(trackNameOrgActive){
+          const markerItems=allItems.filter(i=>(i.type==='marker'||i.type==='photo')&&i.markerObj);
+          if(markerItems.length){
+            const tll=getItemLatLng(newItem);
+            if(tll){
+              let nearest=null,minDist=Infinity;
+              markerItems.forEach(m=>{const mpos=m.markerObj.marker.getPosition();const d=haversineDistance(tll.getLat(),tll.getLng(),mpos.getLat(),mpos.getLng());if(d<minDist){minDist=d;nearest=m;}});
+              if(nearest){trackOrigNames.set(newItem,tname);newItem.name=nearest.name;currentPolyline._name=nearest.name;renderList();}
+            }
+          }
+        }
       } else {
         currentPolyline.setMap(null);
         polylines = polylines.filter(p=>p!==currentPolyline);
@@ -1574,6 +1620,7 @@ const resetPolylines=()=>{
 };
 
 const resetAll=()=>{
+  const hadKmz = allItems.some(i => i._srcKmz || i._live);
   markers.forEach(m=>{m.iw.close();m.marker.setMap(null);}); markers=[];
   polylines.forEach(p=>p.setMap(null)); polylines=[];
   if(moveLine){moveLine.setMap(null);moveLine=null;}
@@ -1582,6 +1629,7 @@ const resetAll=()=>{
   locationMarkerCount=0; trackCounter=0;
   allItems=[]; selectedItems.clear(); anchorIdx=-1; lastClickedIdx=-1;
   renderList(); clearPreview();
+  if(hadKmz && window.__wsSend) window.__wsSend({type:'reset_live_broadcast'});
 };
 
 // ══════════════════════════════════════════════════
@@ -1631,7 +1679,19 @@ document.addEventListener('keydown', e => {
         if (currentPath.length>=2) {
           const tname=currentPolyline._name||`경로 ${++trackCounter}`;
           if(!currentPolyline._name) currentPolyline._name=tname;
-          addItem({type:'track',name:tname,address:'',polyline:currentPolyline});
+          const newItem={type:'track',name:tname,address:'',polyline:currentPolyline};
+          addItem(newItem);
+          if(trackNameOrgActive){
+            const markerItems=allItems.filter(i=>(i.type==='marker'||i.type==='photo')&&i.markerObj);
+            if(markerItems.length){
+              const tll=getItemLatLng(newItem);
+              if(tll){
+                let nearest=null,minDist=Infinity;
+                markerItems.forEach(m=>{const mpos=m.markerObj.marker.getPosition();const d=haversineDistance(tll.getLat(),tll.getLng(),mpos.getLat(),mpos.getLng());if(d<minDist){minDist=d;nearest=m;}});
+                if(nearest){trackOrigNames.set(newItem,tname);newItem.name=nearest.name;currentPolyline._name=nearest.name;renderList();}
+              }
+            }
+          }
         } else { currentPolyline.setMap(null); polylines=polylines.filter(p=>p!==currentPolyline); }
       } else startDrawing();
       return;
