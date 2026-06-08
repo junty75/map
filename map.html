@@ -2808,9 +2808,28 @@ window.onload=()=>{
           setBadge(true, d.ok ? `✅ 이름 저장: ${fn}` : `❌ 이름 저장실패: ${fn}`);
           setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
         } else if (d.type === 'file_saved') {
-          setBadge(true, d.ok ? `✅ 저장됨: ${d.filename}` : `❌ 저장실패: ${d.filename}`);
-          if (d.ok && d.folder) console.log('저장 위치:', d.folder + '\\' + d.filename);
-          pendingSave = null;
+          if (d.ok) {
+            setBadge(true, `✅ 저장됨: ${d.filename}`);
+            if (d.folder) { console.log('저장 위치:', d.folder + '\\' + d.filename); showSaveStatus(`✅ 저장됨: ${d.folder}\\${d.filename}`); }
+            pendingSave = null;
+          } else {
+            // Python 저장 실패 → 브라우저 다운로드로 폴백
+            setBadge(false, `❌ 저장실패: ${d.filename}`);
+            if (pendingSave) {
+              try {
+                const ps = pendingSave; pendingSave = null;
+                const bytes = atob(ps.b64);
+                const arr = new Uint8Array(bytes.length);
+                for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+                const fallbackBlob = new Blob([arr], { type: 'application/octet-stream' });
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(fallbackBlob); a.download = ps.filename;
+                document.body.appendChild(a); a.click();
+                setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
+                showSaveStatus(`⚠️ 폴더 저장 실패 → 다운로드 폴더에 저장됨: ${ps.filename}`, false);
+              } catch(e) { pendingSave = null; showSaveStatus(`❌ 저장 실패: ${e.message}`, false); }
+            } else { pendingSave = null; }
+          }
           setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 3000);
         } else if (d.type === 'file_exists') {
           if (pendingSave && confirm(`'${d.filename}' 파일이 이미 있습니다.\n덮어쓰시겠습니까?`)) {
