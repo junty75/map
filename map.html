@@ -134,6 +134,8 @@
 
     .dotOverlay.distanceInfo { background:white; border:1px solid #db4040; padding:5px; border-radius:3px; font-size:12px; white-space:nowrap; }
     .drawing-cursor * { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><text x="0" y="20" font-size="20" fill="red">&#x3009;</text></svg>') 0 0, auto !important; }
+    /* 선그리기 중: 지도 내부의 마커/오버레이가 마우스 이벤트를 받지 못하게 (클릭은 #drawCatcher가 전담) */
+    .drawing-cursor *:not(#drawCatcher) { pointer-events: none !important; }
 
     #polyMenu { display:none; position:fixed; z-index:9000; background:white; border-radius:10px; box-shadow:0 4px 16px rgba(0,0,0,0.25); overflow:hidden; min-width:140px; }
     #polyMenu.show { display:block; }
@@ -1270,12 +1272,7 @@ function initializeMap(center) {
       updateMarkerAddr(mk);
       return;
     }
-    if (drawingMode) {
-      currentPath.push(e.latLng);
-      currentPolyline.setPath(currentPath);
-      if (currentPath.length===1 && !distanceOverlay)
-        distanceOverlay = new kakao.maps.CustomOverlay({ map, content:`<div class="dotOverlay distanceInfo" style="font-size:.8em;margin-left:4px;margin-bottom:8px;">총거리 0m</div>`, position:e.latLng, xAnchor:0, yAnchor:1, zIndex:3 });
-    }
+    // 그리기 꼭짓점 추가는 #map의 DOM 캡처 핸들러에서 처리 (마커 위 클릭도 동작 — 중복 추가 방지 위해 여기선 생략)
     allItems.forEach(i => { if (i.markerObj) i.markerObj.iw.close(); });
     // 주소검색창 포커스 해제 (포커스 있으면 마커 생성이 막히므로)
     document.getElementById('address-input').blur();
@@ -1300,34 +1297,8 @@ function initializeMap(center) {
   });
 
   kakao.maps.event.addListener(map, 'rightclick', e => {
-    if (drawingMode) {
-      if (moveLine) { moveLine.setMap(null); moveLine=null; }
-      if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay=null; }
-      drawingMode=false;
-      document.getElementById('map').classList.remove('drawing-cursor');
-      // 완성된 트랙을 목록에 추가
-      if (currentPath.length >= 2) {
-        const tname = currentPolyline._name || `경로 ${++trackCounter}`;
-        if (!currentPolyline._name) currentPolyline._name = tname;
-        const newItem = { type:'track', name:tname, address:'', polyline:currentPolyline };
-        addItem(newItem);
-        if(trackNameOrgActive){
-          const markerItems=allItems.filter(i=>(i.type==='marker'||i.type==='photo')&&i.markerObj);
-          if(markerItems.length){
-            const tll=getItemLatLng(newItem);
-            if(tll){
-              let nearest=null,minDist=Infinity;
-              markerItems.forEach(m=>{const mpos=m.markerObj.marker.getPosition();const d=haversineDistance(tll.getLat(),tll.getLng(),mpos.getLat(),mpos.getLng());if(d<minDist){minDist=d;nearest=m;}});
-              if(nearest){trackOrigNames.set(newItem,tname);newItem.name=nearest.name;currentPolyline._name=nearest.name;renderList();}
-            }
-          }
-        }
-      } else {
-        currentPolyline.setMap(null);
-        polylines = polylines.filter(p=>p!==currentPolyline);
-      }
-      return;
-    }
+    if (drawingMode) { finishDrawing(); return; }
+    if (Date.now() - _lastDrawFinishTs < 400) return;   // 그리기 종료 직후 중복 우클릭 무시
     const proj = map.getProjection(), clickPx = proj.pointFromCoords(e.latLng);
     let nearestPoly=null, nearestDist=Infinity;
     polylines.forEach(pl => {
@@ -1430,17 +1401,18 @@ const MARKER_IMG_BLUE = ()=>mkMarkerImg('#2471a3');  // 사진 마커
 
 function addMarker(latlng, desc) {
   const marker=new kakao.maps.Marker({map,position:latlng,image:MARKER_IMG_RED(),draggable:false});
+  if (drawingMode) marker.setClickable(false);   // 선그리기 중 생성 시 클릭 통과
   const div=document.createElement('div');
   div.style='position:relative;display:flex;align-items:center;justify-content:space-between;padding:5px;';
   div.innerHTML=`<span>${desc}</span><div style="cursor:pointer;font-weight:bold;margin-left:8px;">✖</div>`;
   const [label,btn]=div.querySelectorAll('span,div');
   const iw=new kakao.maps.InfoWindow({content:div});
-  kakao.maps.event.addListener(marker,'click',()=>{blockMapClick();if(!showNumbers)iw.open(map,marker);selectItemByMarker(marker);});
-  kakao.maps.event.addListener(marker,'rightclick',()=>showEditInput({marker,iw,name:desc},label));
+  kakao.maps.event.addListener(marker,'click',()=>{if(drawingMode)return;blockMapClick();if(!showNumbers)iw.open(map,marker);selectItemByMarker(marker);});
+  kakao.maps.event.addListener(marker,'rightclick',()=>{if(drawingMode||Date.now()-_lastDrawFinishTs<400)return;showEditInput({marker,iw,name:desc},label);});
   btn.onclick=()=>iw.close();
   let holdTimer=null;
   let _dragStartPos = null;
-  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);_dragStartPos=marker.getPosition();movingPhotoMarker={marker,iw,name:desc};},300);});
+  kakao.maps.event.addListener(marker,'mousedown',()=>{if(drawingMode)return;map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);_dragStartPos=marker.getPosition();movingPhotoMarker={marker,iw,name:desc};},300);});
   ['mouseup','mouseout'].forEach(evt=>kakao.maps.event.addListener(marker,evt,()=>{clearTimeout(holdTimer);map.setDraggable(true);}));
   kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;const prev=_dragStartPos;const next=marker.getPosition();_dragStartPos=null;updateMarkerAddr(marker);if(prev&&(prev.getLat()!==next.getLat()||prev.getLng()!==next.getLng())){pushHistory({undo(){marker.setPosition(prev);updateMarkerAddr(marker);},redo(){marker.setPosition(next);updateMarkerAddr(marker);}});}}});
   const markerObj={marker,iw,name:desc};
@@ -1450,6 +1422,7 @@ function addMarker(latlng, desc) {
 
 function addPhotoMarker(latlng, imgSrc, filename, takenDate, fileHandle=null) {
   const marker=new kakao.maps.Marker({map,position:latlng,image:MARKER_IMG_BLUE(),draggable:false});
+  if (drawingMode) marker.setClickable(false);   // 선그리기 중 생성 시 클릭 통과
   const div=document.createElement('div');
   div.style='position:relative;width:374px;overflow:hidden;';
   div.innerHTML=`<div style="font-weight:bold;font-size:13px;padding:4px 6px 2px;">${filename}</div><div style="position:relative;"><img src="${imgSrc}" style="display:block;width:100%;max-height:281px;object-fit:cover;"><div style="position:absolute;top:4px;right:4px;display:flex;gap:3px;"><span class="dl-btn" style="cursor:pointer;font-size:13px;background:rgba(0,0,0,0.5);color:#fff;border-radius:3px;padding:1px 5px;" title="다운로드">💾</span><span class="cl-btn" style="cursor:pointer;font-size:13px;font-weight:bold;background:rgba(0,0,0,0.5);color:#fff;border-radius:3px;padding:1px 5px;">✖</span></div></div>`;
@@ -1470,6 +1443,7 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate, fileHandle=null) {
   // 타이머로 단일클릭/더블클릭 구분 (Kakao dblclick 이벤트는 지도 줌과 충돌)
   let _clickTimer=null;
   kakao.maps.event.addListener(marker,'click',()=>{
+    if(drawingMode)return;
     if(_clickTimer){clearTimeout(_clickTimer);_clickTimer=null;
       // 더블클릭: 수정창 열기
       iw.open(map,marker);
@@ -1479,14 +1453,14 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate, fileHandle=null) {
       _clickTimer=setTimeout(()=>{_clickTimer=null;blockMapClick();if(!showNumbers)iw.open(map,marker);selectItemByMarker(marker);},280);
     }
   });
-  kakao.maps.event.addListener(marker,'rightclick',()=>{const e=allItems.find(i=>i.markerObj?.marker===marker);showEditInput(e?e.markerObj:{marker,iw,name:filename},title);});
+  kakao.maps.event.addListener(marker,'rightclick',()=>{if(drawingMode||Date.now()-_lastDrawFinishTs<400)return;const e=allItems.find(i=>i.markerObj?.marker===marker);showEditInput(e?e.markerObj:{marker,iw,name:filename},title);});
   // InfoWindow 제목 더블클릭으로도 수정 가능
   title.ondblclick=e=>{e.stopPropagation();const entry=allItems.find(i=>i.markerObj?.marker===marker);showEditInput(entry?entry.markerObj:{marker,iw,name:filename},title);};
   clBtn.onclick=()=>iw.close();
 
   let holdTimer=null;
   let _dragStartPos2 = null;
-  kakao.maps.event.addListener(marker,'mousedown',()=>{map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);_dragStartPos2=marker.getPosition();movingPhotoMarker={marker,iw,name:filename};},300);});
+  kakao.maps.event.addListener(marker,'mousedown',()=>{if(drawingMode)return;map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);_dragStartPos2=marker.getPosition();movingPhotoMarker={marker,iw,name:filename};},300);});
   ['mouseup','mouseout'].forEach(evt=>kakao.maps.event.addListener(marker,evt,()=>{clearTimeout(holdTimer);map.setDraggable(true);}));
   kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;const prev=_dragStartPos2;const next=marker.getPosition();_dragStartPos2=null;updateMarkerAddr(marker);if(prev&&(prev.getLat()!==next.getLat()||prev.getLng()!==next.getLng())){pushHistory({undo(){marker.setPosition(prev);updateMarkerAddr(marker);},redo(){marker.setPosition(next);updateMarkerAddr(marker);}});}}});
 
@@ -1613,8 +1587,131 @@ document.getElementById('polyEditBtn').onclick=()=>{
   currentPolyline._name=oldName;
   polylines.push(currentPolyline); attachPolylineRightClick(currentPolyline);
   document.getElementById('map').classList.add('drawing-cursor');
+  setMarkersClickThrough(true);
+  showDrawCatcher();
   if (currentPath.length>0) updateDistanceOverlay(currentPath[currentPath.length-1]);
 };
+
+// ── 선그리기 중 마커 클릭 통과 + 반투명 (마커 위에도 선을 찍을 수 있게) ──
+function setMarkersClickThrough(drawing) {
+  const on = !drawing;
+  const op = drawing ? 0.35 : 1;
+  markers.forEach(m => { try { m.marker.setClickable(on); m.marker.setOpacity(op); } catch(e){} });
+  const _liveOvs = (typeof window.__getLiveOvs === 'function') ? window.__getLiveOvs() : [];
+  _liveOvs.forEach(o => {
+    if (o && typeof o.setClickable === 'function') {
+      try { o.setClickable(on); o.setDraggable(on); o.setOpacity(op); } catch(e){}
+    }
+  });
+  if (typeof searchMarker !== 'undefined' && searchMarker)
+    try { searchMarker.setClickable(on); searchMarker.setOpacity(op); } catch(e){}
+}
+
+// ── 그리기 꼭짓점 추가 (지도 클릭/마커 위 클릭 공통) ──
+function addDrawPoint(latlng) {
+  currentPath.push(latlng);
+  currentPolyline.setPath(currentPath);
+  if (currentPath.length===1 && !distanceOverlay)
+    distanceOverlay = new kakao.maps.CustomOverlay({ map, content:`<div class="dotOverlay distanceInfo" style="font-size:.8em;margin-left:4px;margin-bottom:8px;">총거리 0m</div>`, position:latlng, xAnchor:0, yAnchor:1, zIndex:3 });
+}
+
+// ── 그리기 종료 (우클릭 / Alt 공통) ──
+let _lastDrawFinishTs = 0;
+function finishDrawing() {
+  if (!drawingMode) return;
+  _lastDrawFinishTs = Date.now();
+  if (moveLine) { moveLine.setMap(null); moveLine=null; }
+  if (distanceOverlay) { distanceOverlay.setMap(null); distanceOverlay=null; }
+  drawingMode=false;
+  document.getElementById('map').classList.remove('drawing-cursor');
+  setMarkersClickThrough(false);
+  hideDrawCatcher();
+  // 완성된 트랙을 목록에 추가
+  if (currentPath.length >= 2) {
+    const tname = currentPolyline._name || `경로 ${++trackCounter}`;
+    if (!currentPolyline._name) currentPolyline._name = tname;
+    const newItem = { type:'track', name:tname, address:'', polyline:currentPolyline };
+    addItem(newItem);
+    if(trackNameOrgActive){
+      const markerItems=allItems.filter(i=>(i.type==='marker'||i.type==='photo')&&i.markerObj);
+      if(markerItems.length){
+        const tll=getItemLatLng(newItem);
+        if(tll){
+          let nearest=null,minDist=Infinity;
+          markerItems.forEach(m=>{const mpos=m.markerObj.marker.getPosition();const d=haversineDistance(tll.getLat(),tll.getLng(),mpos.getLat(),mpos.getLng());if(d<minDist){minDist=d;nearest=m;}});
+          if(nearest){trackOrigNames.set(newItem,tname);newItem.name=nearest.name;currentPolyline._name=nearest.name;renderList();}
+        }
+      }
+    }
+  } else {
+    currentPolyline.setMap(null);
+    polylines = polylines.filter(p=>p!==currentPolyline);
+  }
+}
+
+// ── 선그리기 클릭 수신 레이어 ──
+// 그리기 중에만 지도 전체를 덮는 투명 레이어. 마커/오버레이가 클릭을 가로채지 못하므로
+// 마커 위에서도 꼭짓점이 찍힌다. 클릭=꼭짓점, 우클릭=종료, 드래그=지도 이동, 휠=확대/축소.
+let drawCatcher = null;
+
+function _catcherLatLng(e) {
+  const rect = document.getElementById('map').getBoundingClientRect();
+  const pt = new kakao.maps.Point(e.clientX - rect.left, e.clientY - rect.top);
+  const proj = map.getProjection();
+  // 컨테이너(화면) 픽셀 → 지도 좌표. 구버전 호환 위해 두 가지 메서드 모두 시도.
+  if (typeof proj.coordsFromContainerPoint === 'function')
+    return proj.coordsFromContainerPoint(pt);
+  return proj.coordsFromPoint(pt);
+}
+
+function showDrawCatcher() {
+  if (drawCatcher) return;
+  const el = document.createElement('div');
+  el.id = 'drawCatcher';
+  el.style.cssText = 'position:absolute;left:0;top:0;right:0;bottom:0;z-index:2147483647;cursor:crosshair;background:transparent;pointer-events:auto;';
+  document.getElementById('map').appendChild(el);
+  drawCatcher = el;
+
+  let down = null, panning = false;
+  el.addEventListener('mousedown', e => {
+    if (e.button !== 0) return;
+    down = [e.clientX, e.clientY]; panning = false;
+  });
+  el.addEventListener('mousemove', e => {
+    if (down) {
+      const dx = e.clientX - down[0], dy = e.clientY - down[1];
+      if (panning || Math.hypot(dx, dy) > 4) {
+        panning = true;
+        map.panBy(down[0] - e.clientX, down[1] - e.clientY);   // 드래그로 지도 이동
+        down = [e.clientX, e.clientY];
+      }
+      return;
+    }
+    if (drawingMode && currentPath.length) updateDistance({ latLng: _catcherLatLng(e) });
+  });
+  el.addEventListener('mouseup', e => {
+    if (e.button !== 0) { down = null; return; }
+    const wasPanning = panning;
+    down = null; panning = false;
+    if (wasPanning || !drawingMode) return;
+    try { addDrawPoint(_catcherLatLng(e)); }   // 마커 위든 어디든 꼭짓점 추가
+    catch(err) { console.error('[선그리기] 좌표 변환 실패', err); }
+  });
+  el.addEventListener('mouseleave', () => { down = null; panning = false; });
+  el.addEventListener('contextmenu', e => {
+    e.preventDefault(); e.stopPropagation();
+    finishDrawing();
+  });
+  el.addEventListener('wheel', e => {
+    e.preventDefault();
+    map.setLevel(map.getLevel() + (e.deltaY > 0 ? 1 : -1), { anchor: _catcherLatLng(e) });
+  }, { passive: false });
+  el.addEventListener('dblclick', e => e.preventDefault());
+}
+
+function hideDrawCatcher() {
+  if (drawCatcher) { drawCatcher.remove(); drawCatcher = null; }
+}
 
 function startDrawing() {
   if (drawingMode) return;
@@ -1624,10 +1721,14 @@ function startDrawing() {
   currentPolyline=new kakao.maps.Polyline({map,path:currentPath,strokeWeight:3,strokeColor:'#FF0000',strokeOpacity:0.8});
   polylines.push(currentPolyline); attachPolylineRightClick(currentPolyline);
   document.getElementById('map').classList.add('drawing-cursor');
+  setMarkersClickThrough(true);
+  showDrawCatcher();
 }
 
 const resetPolylines=()=>{
   polylines.forEach(p=>p.setMap(null)); polylines=[]; drawingMode=false;
+  setMarkersClickThrough(false);
+  hideDrawCatcher();
   if(moveLine){moveLine.setMap(null);moveLine=null;}
   if(distanceOverlay){distanceOverlay.setMap(null);distanceOverlay=null;}
   document.getElementById('map').classList.remove('drawing-cursor');
@@ -1643,6 +1744,7 @@ const resetAll=()=>{
   if(moveLine){moveLine.setMap(null);moveLine=null;}
   if(distanceOverlay){distanceOverlay.setMap(null);distanceOverlay=null;}
   drawingMode=false; document.getElementById('map').classList.remove('drawing-cursor');
+  setMarkersClickThrough(false); hideDrawCatcher();
   locationMarkerCount=0; trackCounter=0;
   allItems=[]; selectedItems.clear(); anchorIdx=-1; lastClickedIdx=-1;
   renderList(); clearPreview();
@@ -1689,28 +1791,8 @@ document.addEventListener('keydown', e => {
     if (e.key==='F1'){e.preventDefault();window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes');return;}
     if (e.altKey){
       e.preventDefault();
-      if (drawingMode) {
-        if(moveLine){moveLine.setMap(null);moveLine=null;}
-        if(distanceOverlay){distanceOverlay.setMap(null);distanceOverlay=null;}
-        drawingMode=false; document.getElementById('map').classList.remove('drawing-cursor');
-        if (currentPath.length>=2) {
-          const tname=currentPolyline._name||`경로 ${++trackCounter}`;
-          if(!currentPolyline._name) currentPolyline._name=tname;
-          const newItem={type:'track',name:tname,address:'',polyline:currentPolyline};
-          addItem(newItem);
-          if(trackNameOrgActive){
-            const markerItems=allItems.filter(i=>(i.type==='marker'||i.type==='photo')&&i.markerObj);
-            if(markerItems.length){
-              const tll=getItemLatLng(newItem);
-              if(tll){
-                let nearest=null,minDist=Infinity;
-                markerItems.forEach(m=>{const mpos=m.markerObj.marker.getPosition();const d=haversineDistance(tll.getLat(),tll.getLng(),mpos.getLat(),mpos.getLng());if(d<minDist){minDist=d;nearest=m;}});
-                if(nearest){trackOrigNames.set(newItem,tname);newItem.name=nearest.name;currentPolyline._name=nearest.name;renderList();}
-              }
-            }
-          }
-        } else { currentPolyline.setMap(null); polylines=polylines.filter(p=>p!==currentPolyline); }
-      } else startDrawing();
+      if (drawingMode) finishDrawing();
+      else startDrawing();
       return;
     }
   }
@@ -2586,6 +2668,7 @@ window.onload=()=>{
 (function(){
   const WS_URL = 'ws://localhost:8765';
   let ws = null, liveOvs = [], retryTimer = null;
+  window.__getLiveOvs = () => liveOvs;   // 선그리기(setMarkersClickThrough)에서 접근용
   let lastExcelRow = null;   // 엑셀 활성 셀 행 추적 (객체리셋 모드: 행 변경 시 기존 객체 제거)
   const badge = document.getElementById('explorerBadge');
 
@@ -2714,7 +2797,8 @@ window.onload=()=>{
       const marker = new kakao.maps.Marker({
         map: map, position: pos,
         image: isPhoto ? greenImg : blueImg,
-        draggable: isPhoto,
+        clickable: !drawingMode,   // 선그리기 중 생성 시 클릭 통과
+        draggable: isPhoto && !drawingMode,
         title: isPhoto ? '드래그해서 GPS 위치 수정' : (name || '좌표'),
         zIndex: 999
       });
@@ -2921,6 +3005,7 @@ window.onload=()=>{
             const dragMarker = new kakao.maps.Marker({
               map, position: latlng, image: greenImg, draggable: true,
               title: '드래그해서 사진 위치(GPS) 수정', zIndex: 10000 });
+            if (drawingMode) { dragMarker.setClickable(false); dragMarker.setDraggable(false); }
 
             liveOvs.push(dragMarker, ringOv);
 

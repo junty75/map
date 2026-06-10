@@ -95,6 +95,8 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 .mpopup .inp{width:100%;box-sizing:border-box;padding:4px;font-size:13px;border:1px solid #ccc;border-radius:4px;font-family:inherit;margin-bottom:5px;}
 .dist-tip{background:#fff;border:1px solid #db4040;border-radius:3px;padding:3px 7px;font-size:12px;white-space:nowrap;pointer-events:none;}
 .draw-mode,.draw-mode *{cursor:crosshair !important;}
+/* 선그리기 중 마커 라벨/팝업/핀 등 오버레이가 클릭을 가로채지 않게 + 옅게 (마커 위에도 꼭짓점 찍기) */
+#vmap.draw-mode .ol-overlay-container{pointer-events:none !important;opacity:.35;}
 #cadastralBtn.active{background:#e8f5e9;border-color:#43a047;color:#2e7d32;font-weight:bold;}
 
 /* ── 탐색기 연동 배지 ── */
@@ -713,18 +715,24 @@ function mapRightClick(e) {
    선 그리기
 ════════════════════════════════════ */
 function toggleDraw() { drawing ? endDraw() : startDraw(); }
+function setMarkersDimmed(dim){
+  // 선그리기 중 마커를 옅게 표시 (영역 차지 안 하는 느낌 + 선이 잘 보이게)
+  markers.forEach(m=>{try{m.lyr.setOpacity(dim?0.35:1);}catch(e){}});
+}
 function startDraw() {
   if (drawing) return;
   drawing=true; drawCoords=[];
   drawLayer=mkLineLyr([],'#FF0000',3); addLyr(drawLayer);
   document.getElementById('vmap').classList.add('draw-mode');
   document.getElementById('drawBtn').textContent='선 그리기 중지';
+  setMarkersDimmed(true);
 }
 function endDraw() {
   if (!drawing) return;
   drawing=false; clearGuide();
   document.getElementById('vmap').classList.remove('draw-mode');
   document.getElementById('drawBtn').textContent='선 그리기(Alt)';
+  setMarkersDimmed(false);
   if (drawCoords.length>=2 && drawLayer) {
     polylines.push(drawLayer);
     const name = `트랙${++trackCounter}`;
@@ -819,6 +827,7 @@ document.getElementById('polyEditBtn').onclick=()=>{
   drawLayer=mkLineLyr(drawCoords,'#FF0000',3);addLyr(drawLayer);
   document.getElementById('vmap').classList.add('draw-mode');
   document.getElementById('drawBtn').textContent='선 그리기 중지';
+  setMarkersDimmed(true);
   renderList();
 };
 
