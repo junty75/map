@@ -197,6 +197,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
         <option value="clustered">각각저장</option>
       </select>
       <select id="photoQuality">
+        <option value="100">100KB↓</option>
         <option value="200" selected>200KB↓</option>
         <option value="300">300KB↓</option>
         <option value="500">500KB↓</option>
@@ -1556,6 +1557,22 @@ function closeSidebar(){
   if(vmap)setTimeout(()=>vmap.updateSize(),50);
 }
 
+// ── 라이브 미리보기 (엑셀/탐색기 사진 선택 → 사이드바 하단 미리보기 창) ──
+let _livePreviewOn=false;
+function setLivePreview(imgSrc){
+  openSidebar();
+  const img=document.getElementById('previewImg'),ph=document.getElementById('previewPlaceholder');
+  img.src=imgSrc;img.style.display='block';ph.style.display='none';
+  _livePreviewOn=true;
+}
+function clearLivePreview(){
+  if(!_livePreviewOn)return;
+  _livePreviewOn=false;
+  const img=document.getElementById('previewImg'),ph=document.getElementById('previewPlaceholder');
+  img.style.display='none';img.src='';
+  ph.style.display='';ph.textContent='항목을 선택하세요';
+}
+
 function getFilteredItems(){
   const base = currentFilter==='all' ? allItems : allItems.filter(i=>i.type===currentFilter);
   return base.filter(i=>visibility[i.type]!==false);
@@ -2196,6 +2213,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
 
   // 엑셀 셀 선택으로 임시 삽입된 항목(사진마커·KMZ) 전부 제거
   function clearLiveItems(){
+    clearLivePreview();
     removeLive();
     liveDataFile='';
     const live=allItems.filter(i=>i._live);
@@ -2471,13 +2489,21 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           clearLiveItems();
         } else if(d.type==='live_insert_photo'){
           clearLiveItems();
-          // 이미 영구 삽입된 사진은 미리보기 생략 (셀 재선택 시 중복 표시 방지)
-          const permPaths=new Set(allItems.filter(i=>i.path).map(i=>i.path));
+          // 객체리셋 모드: 새 파일 선택 시에만 이전 삽입 객체 제거
+          // (이미 영구 삽입된 같은 파일의 재선택이면 유지 — 삽입 직후 셀 재선택으로 지워지는 것 방지)
+          let permPaths=new Set(allItems.filter(i=>i.path).map(i=>i.path));
+          if(objectMode==='reset'&&d.items.some(it=>!permPaths.has(it.path))){
+            resetAll();
+            permPaths=new Set();
+          }
+          // 사진은 사이드바 하단 미리보기 창에 표시 (지도 마커에는 사진 미표시)
+          if(d.items.length&&d.items[0].imgSrc)setLivePreview(d.items[0].imgSrc);
+          // 이미 영구 삽입된 사진은 위치 핀 생략 (셀 재선택 시 중복 표시 방지)
           const coords=[];
           d.items.forEach(item=>{
             if(typeof item.lat!=='number'||typeof item.lng!=='number'||
-               isNaN(item.lat)||isNaN(item.lng))return;
-            if(permPaths.has(item.path))return;   // 이미 영구 삽입됨 → 미리보기 생략
+               isNaN(item.lat)||isNaN(item.lng))return;   // GPS 없음 → 미리보기만
+            if(permPaths.has(item.path))return;   // 이미 영구 삽입됨 → 위치 핀 생략
             const coord=toMerc(item.lng,item.lat);
             const path=item.path;
             // ① 사진 마커 삽입 (썸네일)
@@ -2514,8 +2540,14 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           clearLiveItems();
           // 단일(d.data) 또는 배열(d.items) 모두 지원
           let kmzItems=d.items||[{name:d.name,path:d.path,data:d.data}];
+          // 객체리셋 모드: 새 파일 선택 시에만 이전 삽입 객체 제거
+          // (이미 영구 삽입된 같은 파일의 재선택이면 유지 — 삽입 직후 셀 재선택으로 지워지는 것 방지)
+          let permKmz=new Set(allItems.map(i=>i._srcKmz).filter(Boolean));
+          if(objectMode==='reset'&&kmzItems.some(it=>!permKmz.has(it.path))){
+            resetAll();
+            permKmz=new Set();
+          }
           // 이미 영구 삽입된 KMZ는 미리보기 생략 (셀 재선택 시 중복 방지)
-          const permKmz=new Set(allItems.map(i=>i._srcKmz).filter(Boolean));
           kmzItems=kmzItems.filter(it=>!permKmz.has(it.path));
           if(!kmzItems.length){setBadge(true,'🟢 탐색기 연동 중');return;}
           liveDataFile=(kmzItems[0]&&kmzItems[0].path)||'';

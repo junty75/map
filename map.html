@@ -293,6 +293,7 @@
           <option value="clustered">각각저장</option>
         </select>
         <select id="photoQuality" style="padding:5px;">
+          <option value="100">100KB↓</option>
           <option value="200" selected>200KB↓</option>
           <option value="300">300KB↓</option>
           <option value="500">500KB↓</option>
@@ -1063,6 +1064,24 @@ document.getElementById('sidebarOpenBtn').onclick = () => {
   const isOpen = getComputedStyle(document.getElementById('sidebar')).display !== 'none';
   isOpen ? closeSidebar() : openSidebar();
 };
+
+// ── 라이브 미리보기 (엑셀/탐색기 사진 선택 → 사이드바 하단 미리보기 창) ──
+let _livePreviewOn = false;
+function setLivePreview(imgSrc) {
+  openSidebar();
+  const img = document.getElementById('previewImg');
+  const ph  = document.getElementById('previewPlaceholder');
+  img.src = imgSrc; img.style.display = 'block'; ph.style.display = 'none';
+  _livePreviewOn = true;
+}
+function clearLivePreview() {
+  if (!_livePreviewOn) return;
+  _livePreviewOn = false;
+  const img = document.getElementById('previewImg');
+  const ph  = document.getElementById('previewPlaceholder');
+  img.style.display = 'none'; img.src = '';
+  ph.style.display = ''; ph.textContent = '항목을 선택하세요';
+}
 
 // ── XPTitle (UTF-16LE) → 문자열 변환 ──
 function xpTitleToStr(bytes) {
@@ -2601,6 +2620,7 @@ window.onload=()=>{
 
   // Excel 셀 선택으로 임시 삽입된 항목 전부 제거
   function clearLiveItems() {
+    clearLivePreview();
     removeLive();
     liveDataFile = '';
     const liveItems = allItems.filter(i => i._live);
@@ -2854,9 +2874,18 @@ window.onload=()=>{
           clearLiveItems();
         } else if (d.type === 'live_insert_photo') {
           clearLiveItems();
-          // 이미 영구 삽입된 사진은 미리보기 생략 (셀 재선택 시 중복 표시 방지)
-          const permPaths = new Set(allItems.filter(i => i.path).map(i => i.path));
+          // 객체리셋 모드: 새 파일 선택 시에만 이전 삽입 객체 제거
+          // (이미 영구 삽입된 같은 파일의 재선택이면 유지 — 삽입 직후 셀 재선택으로 지워지는 것 방지)
+          let permPaths = new Set(allItems.filter(i => i.path).map(i => i.path));
+          if (objectMode === 'reset' && d.items.some(it => !permPaths.has(it.path))) {
+            resetAll();
+            permPaths = new Set();
+          }
+          // 사진은 사이드바 하단 미리보기 창에 표시 (지도 마커에는 사진 미표시)
+          if (d.items.length && d.items[0].imgSrc) setLivePreview(d.items[0].imgSrc);
+          // 이미 영구 삽입된 사진은 위치 핀 생략 (셀 재선택 시 중복 표시 방지)
           const liveBounds = new kakao.maps.LatLngBounds();
+          const liveCoords = [];
 
           // 녹색 마커 이미지 (최전면 드래그용)
           const greenSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22">'
@@ -2866,7 +2895,9 @@ window.onload=()=>{
             new kakao.maps.Size(22, 22), { offset: new kakao.maps.Point(11, 11) });
 
           d.items.forEach(item => {
-            if (permPaths.has(item.path)) return;   // 이미 영구 삽입됨 → 미리보기 생략
+            if (typeof item.lat !== 'number' || typeof item.lng !== 'number' ||
+                isNaN(item.lat) || isNaN(item.lng)) return;   // GPS 없음 → 미리보기만
+            if (permPaths.has(item.path)) return;   // 이미 영구 삽입됨 → 위치 핀 생략
             const latlng = new kakao.maps.LatLng(item.lat, item.lng);
             const path = item.path;
 
@@ -2941,13 +2972,14 @@ window.onload=()=>{
 
             if (path) pathToMarker.set(path, { marker: dragMarker, ringOv });
             liveBounds.extend(latlng);
+            liveCoords.push(latlng);
           });
 
-          // 팝업 없이 지도만 이동 (사이드바 자동 열림 relayout 이후)
-          setTimeout(() => {
+          // 팝업 없이 지도만 이동 (사이드바 자동 열림 relayout 이후, GPS 있는 항목만)
+          if (liveCoords.length) setTimeout(() => {
             if (map) map.relayout();
-            if (d.items.length === 1)
-              map.panTo(new kakao.maps.LatLng(d.items[0].lat, d.items[0].lng));
+            if (liveCoords.length === 1)
+              map.panTo(liveCoords[0]);
             else if (!liveBounds.isEmpty())
               map.setBounds(liveBounds, 60);
           }, 80);
@@ -2956,8 +2988,14 @@ window.onload=()=>{
           clearLiveItems();
           // 단일(d.data) 또는 배열(d.items) 모두 지원
           let kmzItems = d.items || [{ name: d.name, path: d.path, data: d.data }];
+          // 객체리셋 모드: 새 파일 선택 시에만 이전 삽입 객체 제거
+          // (이미 영구 삽입된 같은 파일의 재선택이면 유지 — 삽입 직후 셀 재선택으로 지워지는 것 방지)
+          let permKmz = new Set(allItems.map(i => i._srcKmz).filter(Boolean));
+          if (objectMode === 'reset' && kmzItems.some(it => !permKmz.has(it.path))) {
+            resetAll();
+            permKmz = new Set();
+          }
           // 이미 영구 삽입된 KMZ는 미리보기 생략 (셀 재선택 시 중복 방지)
-          const permKmz = new Set(allItems.map(i => i._srcKmz).filter(Boolean));
           kmzItems = kmzItems.filter(it => !permKmz.has(it.path));
           if (!kmzItems.length) { setBadge(true, '🟢 탐색기 연동 중'); return; }
           liveDataFile = (kmzItems[0] && kmzItems[0].path) || '';
