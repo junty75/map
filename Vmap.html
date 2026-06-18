@@ -8,6 +8,8 @@
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/exifr@7/dist/full.umd.cjs"></script>
+<!-- 카카오 역지오코딩 폴백용 (VWORLD가 NOT_FOUND일 때) -->
+<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=94bf4516825c146467eb2318cd55b782&libraries=services&autoload=false"></script>
 <style>
 html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-serif;}
 #app{display:flex;width:100%;height:100%;overflow:hidden;}
@@ -70,6 +72,10 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 /* ── 지도 영역 ── */
 #mapWrap{flex:1;position:relative;overflow:hidden;}
 #vmap{width:100%;height:100%;}
+/* 줌 버튼 (최대 줌 이후 CSS scale 화면 확대) */
+#zoomBtns{position:absolute;right:14px;bottom:30px;z-index:1001;display:flex;flex-direction:column;gap:4px;}
+#zoomBtns button{width:40px;height:40px;background:white;border:none;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.3);font-size:24px;font-weight:300;cursor:pointer;display:flex;align-items:center;justify-content:center;color:#333;}
+#zoomBtns button:hover{background:#f1f3f4;}
 #sidebarOpenBtn{position:absolute;left:0;top:50%;transform:translateY(-50%);z-index:1001;display:flex;align-items:center;justify-content:center;background:#fff;color:#2980b9;border:2px solid #2980b9;border-left:none;cursor:pointer;border-radius:0 6px 6px 0;padding:10px 2px;font-size:13px;writing-mode:vertical-rl;box-shadow:2px 0 8px rgba(0,0,0,.15);transition:background .15s;}
 #sidebarOpenBtn:hover{background:#ebf5fb;}
 
@@ -220,6 +226,10 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
   </div>
 
   <div id="vmap"></div>
+  <div id="zoomBtns">
+    <button id="zoomInBtn" title="확대 (최대 줌 이후 화면 확대)">+</button>
+    <button id="zoomOutBtn" title="축소">−</button>
+  </div>
 </div><!-- #mapWrap -->
 </div><!-- #app -->
 
@@ -238,6 +248,25 @@ let movingMk  = null, movingGhost = null, inputOv = null, locCount = 0;
 let showNumbers = false, numberOverlays = [];
 let isDraggingMk = false;
 let vp = null;
+let cssScale = 1;   // 최대 줌 이후 CSS scale 화면 확대 (+,- 버튼 전용)
+
+const MAX_CSS_SCALE = 8;
+function applyScale(s) {
+  cssScale = Math.max(1, Math.min(MAX_CSS_SCALE, s));
+  const el = document.getElementById('vmap');
+  el.style.transformOrigin = '50% 50%';
+  el.style.transform = cssScale === 1 ? '' : `scale(${cssScale})`;
+}
+
+// CSS scale 상태에서도 정확한 지도 픽셀 좌표 (scale 1이면 기존과 동일)
+// OL3 getEventPixel은 transform을 보정하지 않으므로 직접 계산
+function evtScaledPixel(e) {
+  const rect = vp.getBoundingClientRect();
+  return [
+    (e.clientX - rect.left) * (vp.offsetWidth / rect.width),
+    (e.clientY - rect.top) * (vp.offsetHeight / rect.height)
+  ];
+}
 
 /* ── Undo / Redo ── */
 const undoStack = [], redoStack = [];
@@ -303,12 +332,28 @@ function initMap(lat, lng) {
     if (i instanceof ol.interaction.DoubleClickZoom) i.setActive(false);
   });
 
+  // 줌 버튼 (최대 줌 이후에는 CSS scale로 화면 확대)
+  document.getElementById('zoomInBtn').onclick = () => {
+    if (cssScale > 1) { applyScale(cssScale * 2); return; }
+    const v = vmap.getView();
+    const z = v.getZoom() || 14;
+    v.setZoom(z + 1);
+    // 줌이 더 안 올라가면(최대 줌 도달) CSS scale로 추가 확대
+    if (Math.abs((v.getZoom() || z) - z) < 0.01) applyScale(cssScale * 2);
+  };
+  document.getElementById('zoomOutBtn').onclick = () => {
+    if (cssScale > 1) { applyScale(cssScale / 2); return; }
+    vmap.getView().setZoom((vmap.getView().getZoom() || 14) - 1);
+  };
+  // 휠/더블클릭 등으로 실제 줌이 바뀌면 CSS scale 리셋 (좌표 어긋남 방지)
+  vmap.getView().on('change:resolution', () => { if (cssScale > 1) applyScale(1); });
+
   let holdTimer = null, holdTarget = null, holdStartX = 0, holdStartY = 0;
   vp = vmap.getViewport();
 
   vp.addEventListener('pointerdown', e => {
     if (e.button !== 0 || drawing || movingMk) return;
-    const px = vmap.getEventPixel(e);
+    const px = evtScaledPixel(e);
     let target = null;
     vmap.forEachFeatureAtPixel(px, feat => {
       if (target) return;
@@ -468,7 +513,7 @@ window.onload = () => {
   });
   document.getElementById('addrColTh').addEventListener('click', () => {
     sortDir = sortCol === 'address' ? -sortDir : 1; sortCol = 'address';
-    allItems.sort((a, b) => addrCompare(a.address, b.address) * sortDir);
+    allItems.sort((a, b) => pnuCompare(a.address, b.address) * sortDir);
     selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
     updateSortIndicators(); renderList();
   });
@@ -513,7 +558,7 @@ window.onload = () => {
       // 번호 모드면 번호_이름 형태로 복사
       const baseName = item.name.replace(/^\d+_/,'');
       const exportName = showNumbers ? String(rowNum).padStart(digits,'0')+'_'+baseName : item.name;
-      const photo = item.type === 'photo' ? exportName + imgExt : '';
+      const photo = item.type === 'photo' ? (item.path || exportName + imgExt) : '';
       const vals = [rowNum, exportName, eup, ri, bunji, lat, lng, photo];
       rows.push(vals.join('\t'));
       hRows.push(`<tr>${vals.map(v=>`<td style="mso-number-format:'@'">${String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;')}</td>`).join('')}</tr>`);
@@ -591,20 +636,73 @@ function jsonp(url) {
   });
 }
 
-async function reverseGeocode(lng, lat, cb) {
+// ── 카카오 역지오코딩 (VWORLD NOT_FOUND 폴백) ──
+let kakaoGeocoder = null;
+if (window.kakao && kakao.maps && typeof kakao.maps.load === 'function') {
+  try { kakao.maps.load(() => { try { kakaoGeocoder = new kakao.maps.services.Geocoder(); } catch(e){} }); } catch(e){}
+}
+async function kakaoReverse(lng, lat) {
+  // SDK 비동기 로드 — 아직 준비 안 됐으면 잠깐 대기 (폴백은 VWORLD 실패 후에만 호출됨)
+  for (let i = 0; i < 20 && !kakaoGeocoder; i++) await new Promise(r => setTimeout(r, 100));
+  return new Promise(resolve => {
+    if (!kakaoGeocoder) { resolve(''); return; }
+    try {
+      kakaoGeocoder.coord2Address(lng, lat, (res, status) => {
+        if (status === kakao.maps.services.Status.OK && res && res[0]) {
+          const parcel = res[0].address?.address_name || '';
+          const road   = res[0].road_address?.address_name || '';
+          resolve(parcel || road || '');
+        } else resolve('');
+      });
+    } catch(e) { resolve(''); }
+  });
+}
+
+// ── 역지오코딩 동시요청 제한 큐 (VWORLD 레이트리밋 회피) ──
+const _geoQueue = []; let _geoActive = 0; const GEO_MAX = 3;
+function _geoPump() {
+  while (_geoActive < GEO_MAX && _geoQueue.length) {
+    const job = _geoQueue.shift(); _geoActive++;
+    job().finally(() => { _geoActive--; _geoPump(); });
+  }
+}
+function _enqueueGeo(fn) {
+  return new Promise(res => { _geoQueue.push(() => fn().then(res, () => res(''))); _geoPump(); });
+}
+
+// VWORLD 1회 시도 — 성공 시 주소 문자열, 결과 없으면 '' 반환 (실패는 throw)
+async function _vworldReverse(lng, lat) {
   const url = `https://api.vworld.kr/req/address?service=address&request=getAddress&version=2.0&crs=epsg:4326&point=${lng},${lat}&type=both&format=json&key=${VWORLD_KEY}`;
-  try {
-    const d = await jsonp(url);
-    if (d?.response?.status === 'OK' && d.response.result?.length) {
-      const res = d.response.result;
-      let parcel = '', road = '';
-      for (const r of res) { if (r.type==='parcel') parcel=r.text||''; else if (r.type==='road') road=r.text||''; }
-      if (!parcel && !road) { parcel=res[0]?.text||''; road=res[1]?.text||''; }
-      if (road) { road=road.replace(/\s*\([^)]*\)/g,'').trim(); const parts=road.split(' '); if(parts.length>1) road=parts.slice(1).join(' '); }
-      cb((parcel && road) ? `${parcel} / ${road}` : (parcel || road || '주소 없음')); return;
+  const d = await jsonp(url);
+  if (d?.response?.status === 'OK' && d.response.result?.length) {
+    const res = d.response.result;
+    let parcel = '', road = '';
+    for (const r of res) { if (r.type==='parcel') parcel=r.text||''; else if (r.type==='road') road=r.text||''; }
+    if (!parcel && !road) { parcel=res[0]?.text||''; road=res[1]?.text||''; }
+    if (road) { road=road.replace(/\s*\([^)]*\)/g,'').trim(); const parts=road.split(' '); if(parts.length>1) road=parts.slice(1).join(' '); }
+    return (parcel && road) ? `${parcel} / ${road}` : (parcel || road || '');
+  }
+  return '';   // status OK인데 결과 없음(NOT_FOUND) 등
+}
+
+// VWORLD 재시도(에러 시) → 그래도 안 되면 카카오 폴백
+async function _reverseGeocodeOnce(lng, lat) {
+  let notFound = false;
+  for (let t = 0; t < 2 && !notFound; t++) {
+    try {
+      const a = await _vworldReverse(lng, lat);
+      if (a) return a;
+      notFound = true;                              // OK 응답인데 결과 없음 → 재시도 무의미
+    } catch(e) {
+      await new Promise(r => setTimeout(r, 400));    // 타임아웃/스로틀 → 잠시 후 재시도
     }
-  } catch(e) {}
-  cb('주소 없음');
+  }
+  return await kakaoReverse(lng, lat);              // VWORLD가 못 찾으면 카카오로
+}
+
+async function reverseGeocode(lng, lat, cb) {
+  const addr = await _enqueueGeo(() => _reverseGeocodeOnce(lng, lat));
+  cb(addr || '주소 없음');
 }
 
 async function geocodeExact(address, type) {
@@ -651,9 +749,12 @@ document.getElementById('search-form').addEventListener('submit', async e => {
 ════════════════════════════════════ */
 function mapClick(evt) {
   if (inputOv) closeInputOv();
-  if (drawing) { drawCoords.push(evt.coordinate); refreshDraw(); return; }
+  // CSS scale 확대 중엔 OL이 주는 픽셀/좌표가 어긋나므로 직접 보정
+  let pixel = evt.pixel, coord = evt.coordinate;
+  if (cssScale > 1 && evt.originalEvent) { pixel = evtScaledPixel(evt.originalEvent); coord = vmap.getCoordinateFromPixel(pixel); }
+  if (drawing) { drawCoords.push(coord); refreshDraw(); return; }
   let hit = false;
-  vmap.forEachFeatureAtPixel(evt.pixel, feat => {
+  vmap.forEachFeatureAtPixel(pixel, feat => {
     if (hit) return;
     const m = markers.find(mk => mk.feat === feat);
     if (m) {
@@ -682,18 +783,23 @@ function mapClick(evt) {
     document.querySelectorAll('#photoTbody tr').forEach(r=>r.classList.remove('selected'));
     if (showNumbers) renderNumbers();
   }
-  const ll = fromMerc(evt.coordinate); lastLL = ll;
+  const ll = fromMerc(coord); lastLL = ll;
   document.getElementById('latlng-box').value = `${ll[1].toFixed(6)}, ${ll[0].toFixed(6)}`;
   document.getElementById('address-display').innerText = '주소 조회 중…';
   reverseGeocode(ll[0], ll[1], addr => { lastAddr=addr; document.getElementById('address-display').innerText=addr; });
 }
 
-function mapMove(evt) { if (!drawing || !drawCoords.length) { clearGuide(); return; } updateGuide(drawCoords[drawCoords.length-1], evt.coordinate); }
+function mapMove(evt) {
+  if (!drawing || !drawCoords.length) { clearGuide(); return; }
+  let coord = evt.coordinate;
+  if (cssScale > 1 && evt.originalEvent) coord = vmap.getCoordinateFromPixel(evtScaledPixel(evt.originalEvent));
+  updateGuide(drawCoords[drawCoords.length-1], coord);
+}
 document.addEventListener('mousemove', e => { lastCX=e.clientX; lastCY=e.clientY; }, { passive:true });
 
 function mapRightClick(e) {
   e.preventDefault(); if (!vmap) return;
-  const px = vmap.getEventPixel(e), coord = vmap.getCoordinateFromPixel(px);
+  const px = evtScaledPixel(e), coord = vmap.getCoordinateFromPixel(px);
   if (drawing) { endDraw(); return; }
   if (searchMarker) {
     const hit = vmap.forEachFeatureAtPixel(px, feat => feat===searchMarker.feat, { hitTolerance:14 });
@@ -714,10 +820,35 @@ function mapRightClick(e) {
 /* ════════════════════════════════════
    선 그리기
 ════════════════════════════════════ */
+// ── Ctrl+C: 선택 항목의 실제 파일을 클립보드로 복사 (서버 경유, 파일 없는 객체 제외) ──
+function copySelectedFiles(){
+  const filtered=getFilteredItems();
+  const paths=[...new Set(
+    [...selectedItems].sort((a,b)=>a-b)
+      .map(i=>filtered[i]).filter(Boolean)
+      .map(it=>it.path||it._srcKmz).filter(Boolean)
+  )];
+  if(!paths.length){                         // 파일이 있는 항목 없음 → 기존 목록 복사로 폴백
+    document.getElementById('copyListBtn').click();
+    return;
+  }
+  if(window.__wsReady&&window.__wsReady()){
+    window.__wsSend({type:'copy_files',paths});
+    if(window.__setBadge)window.__setBadge(true,'📎 파일 복사 중…');
+  }else{
+    alert('파일 복사는 연동 서버(사진위치표시.py)가 실행 중일 때만 가능합니다.');
+  }
+}
+
 function toggleDraw() { drawing ? endDraw() : startDraw(); }
 function setMarkersDimmed(dim){
   // 선그리기 중 마커를 옅게 표시 (영역 차지 안 하는 느낌 + 선이 잘 보이게)
-  markers.forEach(m=>{try{m.lyr.setOpacity(dim?0.35:1);}catch(e){}});
+  // 레이어 opacity가 안 먹는 OL 빌드(VWorld 번들)도 있어 마커 스타일 자체에도 알파 적용
+  const a=dim?0.35:1;
+  markers.forEach(m=>{try{
+    m.lyr.setOpacity(a);
+    m.feat.setStyle(m.isPhoto?mkPhotoStyle(a):mkNormalStyle(a));
+  }catch(e){}});
 }
 function startDraw() {
   if (drawing) return;
@@ -852,7 +983,7 @@ document.addEventListener('keydown', e => {
   if (e.ctrlKey&&e.key.toLowerCase()==='c'&&!getSelection().toString()){
     e.preventDefault();
     if (selectedItems.size > 0) {
-      document.getElementById('copyListBtn').click();
+      copySelectedFiles();   // Ctrl+C: 실제 파일 복사 (복사버튼은 목록 복사 유지)
     } else {
       copyAndMark();
     }
@@ -935,8 +1066,8 @@ function openHelp(){
 /* ════════════════════════════════════
    마커 생성
 ════════════════════════════════════ */
-function mkNormalStyle(){return new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:'#e53935'}),stroke:new ol.style.Stroke({color:'white',width:1.5})})});}
-function mkPhotoStyle(){return new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:'#1565C0'}),stroke:new ol.style.Stroke({color:'white',width:1.5})})});}
+function mkNormalStyle(alpha=1){return new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:`rgba(229,57,53,${alpha})`}),stroke:new ol.style.Stroke({color:`rgba(255,255,255,${alpha})`,width:1.5})})});}
+function mkPhotoStyle(alpha=1){return new ol.style.Style({image:new ol.style.Circle({radius:8,fill:new ol.style.Fill({color:`rgba(21,101,192,${alpha})`}),stroke:new ol.style.Stroke({color:`rgba(255,255,255,${alpha})`,width:1.5})})});}
 
 function addMarker(coord, name, addr) {
   const feat=new ol.Feature({geometry:new ol.geom.Point(coord)});
@@ -2028,6 +2159,41 @@ function addrCompare(x,y){
   return (x||'').localeCompare(y||'','ko');
 }
 
+// 장수군 법정동코드(읍면동3+리2) — PNU 기준 정렬용. 값은 b_code[5:10].
+const BJD_JANGSU={"장수읍":"25000","장수읍 장수리":"25021","장수읍 노하리":"25022","장수읍 선창리":"25023","장수읍 노곡리":"25024","장수읍 동촌리":"25025","장수읍 덕산리":"25026","장수읍 두산리":"25027","장수읍 개정리":"25028","장수읍 수분리":"25029","장수읍 송천리":"25030","장수읍 용계리":"25031","장수읍 대성리":"25032","장수읍 식천리":"25033","산서면":"31000","산서면 오성리":"31021","산서면 쌍계리":"31022","산서면 사계리":"31023","산서면 봉서리":"31024","산서면 하월리":"31025","산서면 사상리":"31026","산서면 이룡리":"31027","산서면 신창리":"31028","산서면 오산리":"31029","산서면 건지리":"31030","산서면 마하리":"31031","산서면 백운리":"31032","산서면 학선리":"31033","산서면 동화리":"31034","번암면":"32000","번암면 교동리":"32021","번암면 국포리":"32022","번암면 죽산리":"32023","번암면 사암리":"32024","번암면 지지리":"32025","번암면 동화리":"32026","번암면 죽림리":"32027","번암면 노단리":"32028","번암면 논곡리":"32029","번암면 대론리":"32030","번암면 유정리":"32031","장계면":"33500","장계면 장계리":"33521","장계면 금곡리":"33522","장계면 무농리":"33523","장계면 금덕리":"33524","장계면 송천리":"33525","장계면 월강리":"33526","장계면 삼봉리":"33527","장계면 명덕리":"33528","장계면 오동리":"33529","장계면 대곡리":"33530","천천면":"34000","천천면 장판리":"34021","천천면 월곡리":"34022","천천면 남양리":"34024","천천면 삼고리":"34025","천천면 봉덕리":"34026","천천면 춘송리":"34027","천천면 용광리":"34028","천천면 오봉리":"34029","천천면 연평리":"34030","천천면 비룡리":"34031","계남면":"35000","계남면 침곡리":"35021","계남면 화양리":"35022","계남면 신전리":"35023","계남면 호덕리":"35024","계남면 화음리":"35025","계남면 가곡리":"35026","계남면 궁양리":"35027","계남면 장안리":"35028","계북면":"36000","계북면 월현리":"36021","계북면 매계리":"36022","계북면 농소리":"36023","계북면 어전리":"36024","계북면 임평리":"36025","계북면 원촌리":"36026","계북면 양악리":"36027"};
+
+// 주소 → [읍면, 리, 번지]
+function parseAddr3V(addr){
+  if(!addr||addr==='…'||addr==='주소 없음')return['','',''];
+  const parts=addr.trim().replace(/산\s+(\d)/g,'산$1').split(/\s+/);
+  let lotIdx=-1;
+  for(let i=0;i<parts.length;i++){
+    if(/^\d/.test(parts[i])||/^산\d/.test(parts[i])){lotIdx=i;break;}
+    if(parts[i]==='산'&&i+1<parts.length&&/^\d/.test(parts[i+1])){lotIdx=i;break;}
+  }
+  if(lotIdx<0)lotIdx=parts.length;
+  const bunji=parts.slice(lotIdx).join(' ');
+  const ap=parts.slice(0,lotIdx);
+  return[ap[0]||'',ap.slice(1).join(' ')||'',bunji];
+}
+
+// 주소 → PNU 정렬키: 읍면동(3)+리(2)+산구분(1)+본번(5)+부번(5). 미매칭은 맨 뒤.
+function addrPnuKey(addr){
+  // Vmap의 item.address는 시도·시군구 포함 전체 주소 → shortAddr로 읍면·리·번지만 추출
+  const [eup,ri,bunji]=parseAddr3V(shortAddr(addr));
+  let suf=(eup&&ri&&BJD_JANGSU[eup+' '+ri])||(eup&&BJD_JANGSU[eup])||null;
+  if(!suf)return '9'+String(jangsuRank(addr)).padStart(3,'0')+(addr||'');
+  let b=(bunji||'').trim(),san='1',main=0,sub=0;
+  if(/^산/.test(b)){san='2';b=b.replace(/^산\s*/,'');}
+  const mm=b.match(/(\d+)(?:-(\d+))?/);
+  if(mm){main=+mm[1];sub=mm[2]?+mm[2]:0;}
+  return '0'+suf+san+String(main).padStart(5,'0')+String(sub).padStart(5,'0');
+}
+function pnuCompare(x,y){
+  const a=addrPnuKey(x),b=addrPnuKey(y);
+  return a<b?-1:a>b?1:0;
+}
+
 function shortAddr(addr){
   if(!addr||addr==='주소 없음'||addr==='…')return addr||'';
   // "지번 / 도로명" 형식이면 지번만 사용
@@ -2145,14 +2311,17 @@ function resolveSaveTarget(){
   if(typeof vmap!=='undefined'&&vmap){
     const c=vmap.getView().getCenter();
     let best=null,bestD=Infinity;
+    const folders=new Set();
     allItems.forEach(it=>{
       if(it.type==='photo'&&it.path&&it.mkObj){
+        folders.add(dirOf(it.path));
         const p=it.mkObj.feat.getGeometry().getCoordinates();
         const d=Math.hypot(p[0]-c[0],p[1]-c[1]);
         if(d<bestD){bestD=d;best=it;}
       }
     });
-    if(best)return {folder:dirOf(best.path),base:baseName(best.path)};
+    // 사진이 모두 같은 폴더면 그 폴더에 저장, 서로 다른 폴더면 다운로드 폴더(folder 비움)
+    if(best)return {folder:(folders.size>1)?'':dirOf(best.path),base:baseName(best.path)};
   }
   // ② 사진이 없으면 셀에서 올린 KMZ 폴더·이름 사용 (그 KMZ 위에 덮어쓰기 흐름)
   if(liveDataFile)return {folder:dirOf(liveDataFile),base:baseName(liveDataFile)};
@@ -2593,6 +2762,20 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           });
           if(coords.length)setTimeout(()=>{try{vmap.updateSize();}catch(e){}fitPts(coords);},80);
           setBadge(true, coords.length?('✅ 사진 '+coords.length+'장 삽입됨'+(skipped?' ('+skipped+'개 중복 제외)':'')):'⚠️ GPS 있는 사진 없음 또는 이미 삽입됨');
+          setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
+        } else if(d.type==='insert_markers'){
+          // 엑셀 위경도 좌표 셀 → 마커 영구 삽입
+          clearLiveItems();
+          const coords=[];
+          (d.items||[]).forEach(item=>{
+            if(typeof item.lat!=='number'||typeof item.lng!=='number'||
+               isNaN(item.lat)||isNaN(item.lng))return;
+            const coord=toMerc(item.lng,item.lat);
+            addMarker(coord,item.name||(item.lat+', '+item.lng));
+            coords.push(coord);
+          });
+          if(coords.length)setTimeout(()=>{try{vmap.updateSize();}catch(e){}fitPts(coords);},80);
+          setBadge(true, coords.length?('✅ 좌표 마커 '+coords.length+'개 삽입됨'):'⚠️ 좌표 없음');
           setTimeout(()=>setBadge(true,'🟢 탐색기 연동 중'),2500);
         } else if(d.type==='insert_kmz'){
           // KMZ 삽입 — 먼저 live(미리보기) 제거, 사이드바에 현재 남아있는 KMZ만 중복 제외
