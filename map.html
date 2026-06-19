@@ -381,53 +381,51 @@ function buildNumNameMap(){
   return m;
 }
 
-// 장수군 읍/면 정렬 우선순위 (그 외 주소는 가나다순으로 뒤에)
-const JANGSU_EUPMYEON = ['장수읍','산서면','번암면','장계면','천천면','계남면','계북면'];
-function jangsuRank(addr) {
-  if (!addr) return 999;
-  for (let i = 0; i < JANGSU_EUPMYEON.length; i++) if (addr.includes(JANGSU_EUPMYEON[i])) return i;
-  return 999;
-}
-function addrCompare(x, y) {
-  const rx = jangsuRank(x), ry = jangsuRank(y);
-  if (rx !== ry) return rx - ry;
-  return (x||'').localeCompare(y||'', 'ko');
+// PNU 정렬키 — 법정동코드(10)+산구분(1)+본번(5)+부번(5). 키가 없으면 정렬 시 맨 뒤로.
+// 카카오 coord2Address엔 b_code가 없어 법정동코드는 coord2RegionCode로 따로 받아 넘김.
+function buildPnu(bcode, adr) {
+  if (!bcode) return '';
+  const san = adr && adr.mountain_yn === 'Y' ? '2' : '1';
+  const main = String(parseInt((adr && adr.main_address_no) || '0', 10) || 0).padStart(5, '0');
+  const sub = String(parseInt((adr && adr.sub_address_no) || '0', 10) || 0).padStart(5, '0');
+  return String(bcode).slice(0, 10) + san + main + sub;
 }
 
-// 장수군 법정동코드(읍면동3+리2) — PNU 기준 정렬용. 값은 b_code[5:10].
-const BJD_JANGSU = {"장수읍":"25000","장수읍 장수리":"25021","장수읍 노하리":"25022","장수읍 선창리":"25023","장수읍 노곡리":"25024","장수읍 동촌리":"25025","장수읍 덕산리":"25026","장수읍 두산리":"25027","장수읍 개정리":"25028","장수읍 수분리":"25029","장수읍 송천리":"25030","장수읍 용계리":"25031","장수읍 대성리":"25032","장수읍 식천리":"25033","산서면":"31000","산서면 오성리":"31021","산서면 쌍계리":"31022","산서면 사계리":"31023","산서면 봉서리":"31024","산서면 하월리":"31025","산서면 사상리":"31026","산서면 이룡리":"31027","산서면 신창리":"31028","산서면 오산리":"31029","산서면 건지리":"31030","산서면 마하리":"31031","산서면 백운리":"31032","산서면 학선리":"31033","산서면 동화리":"31034","번암면":"32000","번암면 교동리":"32021","번암면 국포리":"32022","번암면 죽산리":"32023","번암면 사암리":"32024","번암면 지지리":"32025","번암면 동화리":"32026","번암면 죽림리":"32027","번암면 노단리":"32028","번암면 논곡리":"32029","번암면 대론리":"32030","번암면 유정리":"32031","장계면":"33500","장계면 장계리":"33521","장계면 금곡리":"33522","장계면 무농리":"33523","장계면 금덕리":"33524","장계면 송천리":"33525","장계면 월강리":"33526","장계면 삼봉리":"33527","장계면 명덕리":"33528","장계면 오동리":"33529","장계면 대곡리":"33530","천천면":"34000","천천면 장판리":"34021","천천면 월곡리":"34022","천천면 남양리":"34024","천천면 삼고리":"34025","천천면 봉덕리":"34026","천천면 춘송리":"34027","천천면 용광리":"34028","천천면 오봉리":"34029","천천면 연평리":"34030","천천면 비룡리":"34031","계남면":"35000","계남면 침곡리":"35021","계남면 화양리":"35022","계남면 신전리":"35023","계남면 호덕리":"35024","계남면 화음리":"35025","계남면 가곡리":"35026","계남면 궁양리":"35027","계남면 장안리":"35028","계북면":"36000","계북면 월현리":"36021","계북면 매계리":"36022","계북면 농소리":"36023","계북면 어전리":"36024","계북면 임평리":"36025","계북면 원촌리":"36026","계북면 양악리":"36027"};
-
-// 주소 → PNU 정렬키: 읍면동(3)+리(2)+산구분(1)+본번(5)+부번(5). 미매칭은 맨 뒤.
-function addrPnuKey(addr) {
-  const [eup, ri, bunji] = parseAddr3(addr);
-  let suf = (eup && ri && BJD_JANGSU[eup + ' ' + ri]) || (eup && BJD_JANGSU[eup]) || null;
-  if (!suf) return '9' + String(jangsuRank(addr)).padStart(3, '0') + (addr || '');
-  let b = (bunji || '').trim(), san = '1', main = 0, sub = 0;
-  if (/^산/.test(b)) { san = '2'; b = b.replace(/^산\s*/, ''); }
-  const mm = b.match(/(\d+)(?:-(\d+))?/);
-  if (mm) { main = +mm[1]; sub = mm[2] ? +mm[2] : 0; }
-  return '0' + suf + san + String(main).padStart(5, '0') + String(sub).padStart(5, '0');
+// 상위 행정구역 제거. 단 (광역시 아닌) 시·군 명칭은 유지.
+//  · 도 → 제거, 그 아래 시·군은 유지
+//  · 특별시/광역시/특별자치시 → 제거하고 그 아래 구도 제거
+function trimRegion(parts) {
+  let i = 0;
+  if (/도$/.test(parts[0] || '')) {
+    i++;
+  } else if (/(특별시|광역시|특별자치시)$/.test(parts[0] || '')) {
+    i++;
+    if (/구$/.test(parts[i] || '')) i++;
+  }
+  return parts.slice(i);
 }
-function pnuCompare(x, y) {
-  const a = addrPnuKey(x), b = addrPnuKey(y);
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
 function shortAddr(fullAddr) {
   if (!fullAddr) return '';
-  const parts = fullAddr.split(' ');
-  // 도/특별시/광역시 + 시/군/구 제거 → 읍면동리번지
-  let start = 0;
-  if (parts.length > 0 && /[도시]$/.test(parts[0])) start = 1;
-  if (parts.length > 1 && /[시군구]$/.test(parts[start])) start++;
-  return parts.slice(start).join(' ') || fullAddr;
+  const out = trimRegion(fullAddr.trim().split(/\s+/));
+  return out.join(' ') || fullAddr;
 }
 
 function fetchAddr(latlng, callback) {
-  if (!geocoder) { callback(''); return; }
-  geocoder.coord2Address(latlng.getLng(), latlng.getLat(), (res, status) => {
-    if (status === kakao.maps.services.Status.OK) callback(shortAddr(res[0].address?.address_name || ''));
-    else callback('');
+  if (!geocoder) { callback('', ''); return; }
+  const lng = latlng.getLng(), lat = latlng.getLat();
+  geocoder.coord2Address(lng, lat, (res, status) => {
+    if (status !== kakao.maps.services.Status.OK || !res[0]) { callback('', ''); return; }
+    const adr = res[0].address;
+    const addrStr = shortAddr(adr?.address_name || '');
+    // 법정동코드는 coord2Address에 없으므로 coord2RegionCode로 별도 조회 → PNU 정렬키 생성
+    geocoder.coord2RegionCode(lng, lat, (rres, rstatus) => {
+      let bcode = '';
+      if (rstatus === kakao.maps.services.Status.OK && rres && rres.length) {
+        const b = rres.find(r => r.region_type === 'B') || rres[0];
+        bcode = (b && b.code) || '';
+      }
+      callback(addrStr, buildPnu(bcode, adr));
+    });
   });
 }
 
@@ -437,7 +435,7 @@ function addItem(item) {
   if (allItems.length === 1) openSidebar();
   renderList();
   const ll = getItemLatLng(item);
-  if (ll) fetchAddr(ll, addr => { item.address = addr; renderList(); });
+  if (ll) fetchAddr(ll, (addr, pnu) => { item.address = addr; item.pnu = pnu; renderList(); });
   pushHistory({
     undo() { _removeItemSilent(item); },
     redo() { _readdItemSilent(item); }
@@ -497,7 +495,7 @@ function updateMarkerAddr(marker) {
   if (!item) return;
   item.address = '…';
   renderList();
-  fetchAddr(marker.getPosition(), addr => { item.address = addr; renderList(); });
+  fetchAddr(marker.getPosition(), (addr, pnu) => { item.address = addr; item.pnu = pnu; renderList(); });
 }
 
 function removeItem(predicate) {
@@ -979,7 +977,10 @@ document.getElementById('nameColTh').onclick = e => {
 };
 document.getElementById('addrColTh').onclick = () => {
   sortDir = sortCol === 'address' ? -sortDir : 1; sortCol = 'address';
-  allItems.sort((a, b) => pnuCompare(a.address, b.address) * sortDir);
+  allItems.sort((a, b) => {
+    const ka = a.pnu || '￿', kb = b.pnu || '￿';  // 키 없으면 맨 뒤
+    return (ka < kb ? -1 : ka > kb ? 1 : 0) * sortDir;
+  });
   selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
   updateSortIndicators(); renderList();
 };
