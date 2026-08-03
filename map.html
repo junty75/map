@@ -4,11 +4,100 @@
   <meta charset="utf-8">
   <title>전태영의 사진지도 (v4.0)</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
-  <!-- ── API 키: 고정(하드코딩). 이 폴더 파일들은 아래 카카오 JavaScript 키로 동작 ── -->
+  <!-- ── API 키: 사용자별 키를 최초 1회 입력받아 localStorage에 저장 ──
+       키 재입력: 주소 뒤에 ?resetkey 를 붙여 열기 -->
   <script>
-  var KAKAO_JS_KEY = '94bf4516825c146467eb2318cd55b782';
+  if (location.search.indexOf('resetkey') >= 0) {
+    localStorage.removeItem('kakao_js_key');
+    try { sessionStorage.setItem('badkey_kakao_js_key', '1'); } catch(e){}
+  }
+  // 데스크톱 키 입력창 연동: URL 해시(#kakao_js_key=..)로 받은 키를 localStorage 에 저장
+  try { (location.hash||'').replace(/^#/,'').split('&').forEach(function(kv){var p=kv.split('=');if(p.length===2&&p[1]){var k=decodeURIComponent(p[0]);if(k==='kakao_js_key'||k==='vworld_key'||k==='kakao_rest_key')localStorage.setItem(k,decodeURIComponent(p[1]));}}); } catch(e){}
+
+  /* ══ GitHub Pages 배포용 고정 키 (원본: htm/map_kmz/map.html 에서 생성) ══
+     저장소에는 api_keys.js 를 올리지 않는다(kakao_rest_key 는 서버용 비밀키라 공개 금지).
+     방문자에게 키를 묻지 않도록 localStorage 에도 덮어써 항상 이 키를 쓰게 한다.
+     ※ 키가 동작하려면 각 콘솔에 배포 도메인이 등록돼 있어야 한다:
+        카카오   developers.kakao.com -> 앱 설정 -> 플랫폼 -> Web : https://junty75.github.io
+        브이월드 vworld.kr -> 인증키 관리 -> 활용 URL : https://junty75.github.io/map/
+     키를 바꿀 땐 아래 두 줄만 고치면 된다. */
+  window.JTY_API_KEYS = {
+    kakao_js_key: '94bf4516825c146467eb2318cd55b782',
+    vworld_key  : '55FD7275-A6F5-3B69-9966-CD4BFA2FD35F'
+  };
+  try {
+    localStorage.setItem('kakao_js_key', window.JTY_API_KEYS.kakao_js_key);
+    localStorage.setItem('vworld_key',   window.JTY_API_KEYS.vworld_key);
+    ['kakao_js_key', 'vworld_key'].forEach(function(k){
+      sessionStorage.removeItem('badkey_' + k);
+      localStorage.removeItem('badfilekey_' + k);
+    });
+  } catch(e){}
+  function _askApiKey(storeKey, name, guide){
+    // 1순위: 이 기기에 저장된 키 (사용자가 직접 입력했거나 URL 해시로 받은 키).
+    //   api_keys.js 파일 키를 1순위로 쓰면 파일 키가 죽은 키일 때 정상 키를 입력해도
+    //   매번 파일 키로 덮어써 계속 실패했음 -> 저장된 키 우선. (재입력: ?resetkey)
+    var k = '';
+    try { k = (localStorage.getItem(storeKey) || '').trim(); } catch(e){}
+    if (k) return k;
+    // 2순위: api_keys.js 의 키 (로딩 실패 이력이 있으면 건너뜀)
+    try {
+      if (window.JTY_API_KEYS && window.JTY_API_KEYS[storeKey]
+          && !sessionStorage.getItem('badkey_' + storeKey)) {
+        var fk = String(window.JTY_API_KEYS[storeKey]).trim();
+        if (fk && fk !== localStorage.getItem('badfilekey_' + storeKey)) {
+          try { localStorage.setItem(storeKey, fk); } catch(e){} return fk;
+        }
+      }
+    } catch(e){}
+    // 3순위: 직접 입력
+    while (!k || !k.trim()) {
+      k = prompt(name + ' API 키를 입력하세요. (최초 1회, 이 기기에 저장됨)\n\n' + guide);
+      if (k === null) alert(name + ' 키가 없으면 지도를 표시할 수 없습니다.');
+    }
+    k = k.trim();
+    localStorage.setItem(storeKey, k);
+    return k;
+  }
+  function _apiKeyError(storeKey, name){
+    // 일시적 네트워크/차단 문제일 수 있으니 한 번은 조용히 재시도.
+    // 그래도 실패하면 물어보되, [취소]하면 저장된 키를 지우지 않는다
+    // (키가 정상인데도 실행할 때마다 키를 다시 입력하게 되던 문제 방지).
+    try {
+      if (!sessionStorage.getItem('sdkretry_' + storeKey)) {
+        sessionStorage.setItem('sdkretry_' + storeKey, '1');
+        location.reload();
+        return;
+      }
+    } catch(e){}
+    if (confirm(name + ' 로딩 실패 — 인터넷 연결 또는 키 문제일 수 있습니다.\n\n'
+        + '[확인] 키를 다시 입력    [취소] 저장된 키 유지(그대로 진행)')) {
+      try {
+        var bad = localStorage.getItem(storeKey);
+        if (bad) localStorage.setItem('badfilekey_' + storeKey, bad);  // 이 키는 다음 실행부터 자동사용 안 함
+        sessionStorage.setItem('badkey_' + storeKey, '1');
+      } catch(e){}
+      localStorage.removeItem(storeKey);
+      location.reload();
+    }
+  }
+
+  /* 배포본은 고정 키를 쓰므로 SDK 로딩 실패 시 방문자에게 키를 묻지 않는다.
+     (함수 선언은 호이스팅되므로 아래 재할당이 원래 _apiKeyError 를 덮어쓴다.)
+     키가 안 먹으면 대개 도메인 미등록이니 콘솔 안내만 남긴다. */
+  _apiKeyError = function(storeKey, name){
+    console.warn(name + ' 로딩 실패 - 배포 도메인(' + location.origin
+      + ')이 해당 API 콘솔에 등록돼 있는지 확인하세요.');
+  };
+  var KAKAO_GUIDE = '[카카오 JavaScript 키 발급]\n'
+    + '1. https://developers.kakao.com 로그인\n'
+    + '2. 내 애플리케이션 → 애플리케이션 추가하기\n'
+    + '3. 앱 설정 → 앱 키 → "JavaScript 키" 복사\n'
+    + '4. 앱 설정 → 플랫폼 → Web 플랫폼(사이트 도메인) 등록\n'
+    + '5. 제품 설정 → 카카오맵 → 활성화 ON';
+  var KAKAO_JS_KEY = _askApiKey('kakao_js_key', '카카오맵', KAKAO_GUIDE);
   document.write('<script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=' + KAKAO_JS_KEY
-    + '&libraries=services&autoload=false"><\/script>');
+    + '&libraries=services&autoload=false" onerror="_apiKeyError(\'kakao_js_key\',\'카카오맵 SDK\')"><\/script>');
   </script>
   <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/exifr@7/dist/full.umd.js"></script>
@@ -306,7 +395,7 @@
     </div>
     <div id="folderBar">
       <div class="fbar-row">
-        <button id="metaSearchBtn" title="색인에서 메타정보를 즉시 검색 — JPG 사진(EXIF 제목·설명·촬영일시), KMZ(엑셀메타), KMZ 안에 든 사진까지. 예: 제목:정자나무 주소:강남, 공백=AND">🔎 메타검색</button>
+        <button id="metaSearchBtn" title="색인에서 파일명·메타정보를 즉시 검색 — 파일명, JPG 사진(EXIF 제목·설명·촬영일시), KMZ(엑셀메타), KMZ 안에 든 사진까지. 예: 제목:정자나무 주소:강남 / 파일명:IMG_2024, 공백=AND">🔎 메타검색</button>
         <button id="metaIndexBtn" title="폴더를 지정해 그 안 JPG·KMZ의 메타정보를 색인에 등록 — 디스크 사진/KMZ 안 사진은 EXIF(제목·설명·촬영일시), KMZ는 엑셀메타 (기존 파일까지 검색되게)">🗂 메타색인</button>
       </div>
       <div class="fbar-row">
@@ -446,7 +535,7 @@
           <option value="1024">1MB↓</option>
           <option value="0">원본</option>
         </select>
-        <label id="photoNumWrap" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="체크하면 사진명을 변경합니다 — KMZ 안에 저장되는 사진과 디스크의 원본 사진 파일명 뒤에 _000 순서번호를 붙여 이름을 바꿉니다 (원본 파일명 변경은 서버 연동 필요)">
+        <label id="photoNumWrap" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="체크하면 사진명을 변경합니다 — KMZ 안에 저장되는 사진과 디스크의 원본 사진을 [KMZ 파일명]_000, _001 ... 로 바꿉니다 (원본 파일명 변경은 서버 연동 필요)">
           <input type="checkbox" id="addPhotoNum"> 사진명 변경
         </label>
         <button type="button" onclick="exportByFormat()">💾 저장</button>
@@ -457,6 +546,7 @@
           <option value="TERRAIN">🏔️ 지형도</option>
           <option value="USE_DISTRICT">🗺️ 지적도</option>
         </select>
+        <button type="button" id="areaBtn" onclick="toggleAreaMeasure()" title="클릭으로 꼭짓점 찍기 · 더블클릭/우클릭으로 확정 · 버튼 다시 누르면 지우고 종료">면적재기</button>
       </div>
     </div>
     <div id="map"></div>
@@ -1852,12 +1942,12 @@ document.getElementById('reindexCancelBtn').onclick = () => {
   document.getElementById('reindexMsg').textContent = '⏹ 중단 중…';
 };
 
-// #7 메타검색 — 엑셀로 KMZ에 넣은 메타정보를 색인에서 즉시 검색 (필드:값, 공백=AND)
+// #7 메타검색 — 파일명 + 엑셀로 KMZ에 넣은 메타정보를 색인에서 즉시 검색 (필드:값, 공백=AND)
 document.getElementById('metaSearchBtn').onclick = () => {
   if (!(window.__wsReady && window.__wsReady())) {
     alert('탐색기 연동 서버(사진위치표시.py)가 실행 중이어야 합니다.'); return;
   }
-  const q = prompt('메타 검색 (JPG 사진 EXIF + KMZ 엑셀메타) — 예) 제목:정자나무 촬영일시:2024\n공백=AND, 필드 없이 입력하면 모든 값에서 검색', '');
+  const q = prompt('메타 검색 (파일명 + JPG 사진 EXIF + KMZ 엑셀메타) — 예) 제목:정자나무 촬영일시:2024\n파일명만 찾으려면 파일명:IMG_1234\n공백=AND, 필드 없이 입력하면 파일명과 모든 값에서 검색', '');
   if (q === null || !q.trim()) return;
   window.__wsSend({ type: 'search_kmz_meta', query: q.trim() });
   window.__setBadge && window.__setBadge(true, `🔎 "${q.trim()}" 검색 중…`);
@@ -2174,10 +2264,12 @@ function initializeMap(center) {
 
   // 줌/이동이 끝날 때마다 묶음선을 화면 교차 구간만 다시 반영 (줌인 느림 해결)
   kakao.maps.event.addListener(map, 'idle', scheduleBundleCull);
+  kakao.maps.event.addListener(map, 'zoom_changed', updateTextLabelSizes); // CAD 문자 라벨 줌 연동 크기
   kakao.maps.event.addListener(map, 'idle', refreshViewFilterList);   // '필터' 켜짐 시 화면이동마다 목록 갱신
 
   kakao.maps.event.addListener(map, 'click', e => {
     if (_blockMapClick) return;
+    if (areaMode) { areaAddPoint(e.latLng); return; }   // 면적재기 꼭짓점 추가
     // 로드뷰 지점 선택 모드 — 클릭한 지점의 카카오 로드뷰를 새 창으로 연다
     if (roadviewPickMode) {
       stopRoadviewPick();
@@ -2243,6 +2335,7 @@ function initializeMap(center) {
   });
 
   kakao.maps.event.addListener(map, 'rightclick', e => {
+    if (areaMode) { finishAreaMeasure(); return; }      // 면적재기 확정
     if (drawingMode) { finishDrawing(); return; }
     if (Date.now() - _lastDrawFinishTs < 400) return;   // 그리기 종료 직후 중복 우클릭 무시
     const proj = map.getProjection(), clickPx = proj.pointFromCoords(e.latLng);
@@ -2493,25 +2586,157 @@ function addMarker(latlng, desc) {
 //    KMZ Placemark 의 ExtendedData(kind=text, rot, color)로 들어온 문자를
 //    지도 위에 CustomOverlay 글자 라벨로 그린다. (항목 목록엔 넣지 않음)
 let textLabels = [], textLabelsVisible = true;
-function addTextLabel(latlng, text, rot, color) {
+// 현재 지도 1픽셀당 미터(m/px) — 지도 중심에서 가로 100px 실거리로 계산
+function _mapMetersPerPixel() {
+  try {
+    const proj = map.getProjection();
+    const c = map.getCenter();
+    const p = proj.containerPointFromCoords(c);
+    const c2 = proj.coordsFromContainerPoint(new kakao.maps.Point(p.x + 100, p.y));
+    const d = haversineDistance(c.getLat(), c.getLng(), c2.getLat(), c2.getLng());
+    return d > 0 ? d / 100 : 0;
+  } catch (e) { return 0; }
+}
+function addTextLabel(latlng, text, rot, color, h, ax, ay) {
   const safe = String(text == null ? '' : text)
     .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const col = /^#[0-9a-fA-F]{6}$/.test(color || '') ? color : '#FFEB00';
-  // CAD 회전(반시계, 도) -> 화면 CSS 회전(시계 양수)이라 부호 반전
-  const content =
-    '<div style="transform:rotate(' + (-(Number(rot) || 0)) + 'deg);' +
-    'transform-origin:center center;white-space:nowrap;font-size:13px;' +
-    'font-weight:bold;line-height:1;color:' + col + ';pointer-events:none;' +
-    'text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 0 2px #000;">' +
-    safe + '</div>';
+  h = Number(h) || 0;
+  // 앵커(CAD 정렬): ax 0=왼쪽 0.5=중앙 1=오른쪽 / ay 0=아래(베이스라인) 0.5=중간 1=위
+  // 화면 yAnchor는 0=위 1=아래라 1-ay 로 반전. h 없는 옛 KMZ는 중심 정렬 13px 고정.
+  ax = isFinite(Number(ax)) ? Number(ax) : 0;
+  ay = isFinite(Number(ay)) ? Number(ay) : 0;
+  const xa = h > 0 ? ax : 0.5;
+  // ay=0(베이스라인)은 글상자 맨아래(1.0)가 아니라 밑선 위치(0.8)에 앵커 — CAD 기준점과 일치
+  const ya = h > 0 ? (ay < 0.25 ? 0.8 : 1 - ay) : 0.5;
+  // CAD 회전(반시계, 도) -> 화면 CSS 회전(시계 양수)이라 부호 반전 (앵커점 중심 회전)
+  const el = document.createElement('div');
+  el.style.cssText =
+    // 좌표점 고정 + CSS 정렬(dmap 방식): translate%는 요소 크기 비례라
+    // 줌으로 글자 px가 바뀌어도 기준점이 절대 안 움직임
+    'transform:translate(' + (-xa * 100) + '%,' + (-ya * 100) + '%) rotate(' + (-(Number(rot) || 0)) + 'deg);' +
+    'transform-origin:' + (xa * 100) + '% ' + (ya * 100) + '%;' +
+    'white-space:nowrap;font-weight:bold;line-height:1;color:' + col + ';' +
+    'pointer-events:none;font-size:13px;' +
+    'text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 0 2px #000;';
+  el.innerHTML = safe;
   const ov = new kakao.maps.CustomOverlay({
-    map: textLabelsVisible ? map : null, content, position: latlng,
-    xAnchor: 0.5, yAnchor: 0.5, zIndex: 6 });
-  textLabels.push(ov);
+    map: textLabelsVisible ? map : null, content: el, position: latlng,
+    xAnchor: 0, yAnchor: 0, zIndex: 6 });
+  textLabels.push({ ov, el, h });
+  if (h > 0) _applyTextLabelSize({ el, h }, _mapMetersPerPixel());
+}
+// 줌 변경 시 h 있는 라벨의 px 크기 재계산 (h[m] / m/px = 화면 px)
+function _applyTextLabelSize(o, mpp) {
+  if (!(o.h > 0) || !(mpp > 0)) return;
+  const px = o.h * 1.1 / mpp;   // 크기 보정 x1.1 (사용자 체감 확정값 — 여기 숫자만 바꾸면 됨)
+  if (px < 2) { o.el.style.display = 'none'; return; }   // 너무 작으면 숨김
+  o.el.style.display = '';
+  o.el.style.fontSize = Math.min(px, 400) + 'px';
+}
+function updateTextLabelSizes() {
+  if (!textLabels.some(o => o.h > 0)) return;
+  const mpp = _mapMetersPerPixel();
+  textLabels.forEach(o => _applyTextLabelSize(o, mpp));
 }
 function clearTextLabels() {
-  textLabels.forEach(o => o.setMap(null));
+  textLabels.forEach(o => o.ov.setMap(null));
   textLabels = [];
+}
+
+// ── 면적재기 (기본지도.htm 이식) ──
+//    클릭=꼭짓점 추가, 더블클릭/우클릭=확정, 버튼 재클릭=지우고 종료.
+//    확정 후 다시 클릭하면 새 측정 시작(이전 그림 삭제).
+let areaMode = false, areaDrawing = false, areaPath = [], areaLine = null,
+    areaMoveLine = null, areaPoly = null, areaDots = [], areaTotalOverlay = null,
+    _areaEvtReady = false;
+function toggleAreaMeasure() {
+  if (areaMode) { stopAreaMeasure(); return; }
+  if (typeof drawingMode !== 'undefined' && drawingMode) finishDrawing();   // 선그리기와 동시 사용 방지
+  areaMode = true;
+  const b = document.getElementById('areaBtn');
+  if (b) { b.style.background = '#fb8c00'; b.style.color = '#fff'; }
+  map.setCursor('crosshair');
+  if (!_areaEvtReady) {   // 리스너는 최초 1회만 등록
+    _areaEvtReady = true;
+    kakao.maps.event.addListener(map, 'mousemove', e => {
+      if (!areaMode || !areaDrawing) return;
+      const last = areaPath[areaPath.length - 1];
+      if (!areaMoveLine)
+        areaMoveLine = new kakao.maps.Polyline({ map, path: [last, e.latLng], strokeWeight: 3,
+          strokeColor: '#fb8c00', strokeOpacity: 0.5, strokeStyle: 'dash' });
+      else areaMoveLine.setPath([last, e.latLng]);
+    });
+    kakao.maps.event.addListener(map, 'dblclick', () => { if (areaMode) finishAreaMeasure(); });
+  }
+}
+function areaAddPoint(pos) {
+  if (!areaDrawing) {           // 새 측정 시작 (이전 그림 삭제)
+    _clearAreaShapes();
+    areaDrawing = true;
+    areaPath = [pos];
+    areaLine = new kakao.maps.Polyline({ map, path: [pos], strokeWeight: 3,
+      strokeColor: '#fb8c00', strokeOpacity: 0.9, strokeStyle: 'solid' });
+    areaPoly = new kakao.maps.Polygon({ map, path: [pos], strokeWeight: 0,
+      fillColor: '#fb8c00', fillOpacity: 0.25 });
+  } else {
+    areaPath.push(pos);
+    areaLine.setPath(areaPath.slice());
+    areaPoly.setPath(areaPath.slice());
+  }
+  areaDots.push(new kakao.maps.CustomOverlay({ map, position: pos, xAnchor: 0.5, yAnchor: 0.5, zIndex: 7,
+    content: '<div style="width:8px;height:8px;background:#fff;border:2px solid #fb8c00;border-radius:50%;"></div>' }));
+  _updateAreaTotal(pos, false);
+}
+function _updateAreaTotal(pos, finalize) {
+  if (areaTotalOverlay) { areaTotalOverlay.setMap(null); areaTotalOverlay = null; }
+  if (areaPath.length < 3) return;
+  areaTotalOverlay = new kakao.maps.CustomOverlay({ map, position: pos, xAnchor: 0,
+    yAnchor: finalize ? 1.4 : 0, zIndex: 8,
+    content: '<div style="padding:4px 8px;background:#fb8c00;color:#fff;font-size:13px;font-weight:bold;' +
+      'border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;">면적 ' +
+      _fmtArea(_calcArea(areaPath)) + '</div>' });
+}
+function finishAreaMeasure() {
+  if (!areaDrawing) return;
+  areaDrawing = false;
+  if (areaMoveLine) { areaMoveLine.setMap(null); areaMoveLine = null; }
+  _updateAreaTotal(areaPath[areaPath.length - 1], true);
+}
+// 구면 다각형 면적(m²)
+function _calcArea(path) {
+  const R = 6378137, toR = d => d * Math.PI / 180;
+  let a = 0; const n = path.length;
+  for (let i = 0; i < n; i++) {
+    const p1 = path[i], p2 = path[(i + 1) % n];
+    a += (toR(p2.getLng()) - toR(p1.getLng())) *
+         (2 + Math.sin(toR(p1.getLat())) + Math.sin(toR(p2.getLat())));
+  }
+  return Math.abs(a * R * R / 2);
+}
+// 면적 포맷 (m² + 평 / 큰 경우 ha·km²)
+function _fmtArea(m2) {
+  const py = m2 / 3.305785;
+  let main;
+  if (m2 >= 1e6) main = (m2 / 1e6).toFixed(3) + ' km²';
+  else if (m2 >= 1e4) main = (m2 / 1e4).toFixed(2) + ' ha';
+  else main = Math.round(m2).toLocaleString() + ' m²';
+  return main + ' (' + Math.round(py).toLocaleString() + '평)';
+}
+function _clearAreaShapes() {
+  if (areaLine) { areaLine.setMap(null); areaLine = null; }
+  if (areaMoveLine) { areaMoveLine.setMap(null); areaMoveLine = null; }
+  if (areaPoly) { areaPoly.setMap(null); areaPoly = null; }
+  areaDots.forEach(d => d.setMap(null)); areaDots = [];
+  if (areaTotalOverlay) { areaTotalOverlay.setMap(null); areaTotalOverlay = null; }
+  areaPath = [];
+}
+function stopAreaMeasure() {
+  areaMode = false; areaDrawing = false;
+  _clearAreaShapes();
+  const b = document.getElementById('areaBtn');
+  if (b) { b.style.background = ''; b.style.color = ''; }
+  map.setCursor('');
 }
 
 function addPhotoMarker(latlng, imgSrc, filename, takenDate, fileHandle=null) {
@@ -2775,10 +3000,21 @@ document.getElementById('drawColorBtn').onclick = function(e){
 function _recreatePoly(old, color, weight){
   const c=color||old._origColor||'#FF0000';
   const w=weight||old._origWeight||3;
-  const np=new kakao.maps.Polyline({map:old.getMap()||map, path:old._parts||old.getPath(),
-    strokeWeight:w, strokeColor:c, strokeOpacity:1});
-  if(old._parts){np._parts=old._parts;np._pnum=old._pnum;}   // 멀티파트(htm 색상묶음) 경로·좌표캐시 유지
-  np._origColor=c; np._origWeight=w; np._name=old._name;
+  const op=(old._opacity!=null)?old._opacity:1;
+  let np;
+  if(old._isPoly){   // KMZ 폴리곤(면) — 채움색·채움투명도를 유지한 채 재생성
+    const rings=old._rings||old.getPath();
+    np=new kakao.maps.Polygon({map:old.getMap()||map, path:rings,
+      strokeWeight:w, strokeColor:c, strokeOpacity:op, strokeStyle:'solid',
+      fillColor:old._fillColor||'#ffff00', fillOpacity:(old._fillOpacity!=null)?old._fillOpacity:0.3});
+    np._isPoly=true; np._fillColor=old._fillColor; np._fillOpacity=old._fillOpacity;
+    np._rings=old._rings; np._polys=old._polys;
+  } else {
+    np=new kakao.maps.Polyline({map:old.getMap()||map, path:old._parts||old.getPath(),
+      strokeWeight:w, strokeColor:c, strokeOpacity:op});
+    if(old._parts){np._parts=old._parts;np._pnum=old._pnum;}   // 멀티파트(htm 색상묶음) 경로·좌표캐시 유지
+  }
+  np._origColor=c; np._origWeight=w; np._opacity=op; np._name=old._name;
   old.setMap(null);
   const i=polylines.indexOf(old); if(i>=0)polylines[i]=np; else polylines.push(np);
   attachPolylineRightClick(np);
@@ -3124,6 +3360,92 @@ function changeMapType(value){
 }
 
 // ══════════════════════════════════════════════════
+//  KMZ→HTM 변환본(내보내기 htm) 읽기
+//  이 프로그램이 만든 단독 실행 htm 은 데이터가 JSON 배열로 박혀 있다:
+//    var LINES=[{c,o,w,p:[[[lat,lng],..],..],z}]   선(멀티파트)
+//    var POLYS=[{c,o,w,fc,fo,p:[링..],z}]          면(첫 링=외곽, 나머지=구멍)
+//    var TEXTS=[[lat,lng,글자,회전,색,높이m,ax,ay]] CAD 문자
+//    var MARKERS=[[lat,lng,이름]] / var PHOTOS=[[lat,lng,이름,dataURI]]
+//  dmap/캐드 htm(linePathN 방식)과 형식이 다르므로 이쪽을 먼저 시도한다.
+// ══════════════════════════════════════════════════
+// var NAME=[ ... ]; 배열을 통째로 떼어내 JSON 으로 파싱 (문자열 안의 대괄호 무시)
+function _htmGrabArray(src,name){
+  const m=new RegExp('var\\s+'+name+'\\s*=\\s*\\[').exec(src);
+  if(!m)return null;
+  const start=m.index+m[0].length-1;   // '[' 위치
+  let depth=0,inStr=false,q='';
+  for(let j=start;j<src.length;j++){
+    const ch=src[j];
+    if(inStr){ if(ch==='\\'){j++;continue;} if(ch===q)inStr=false; continue; }
+    if(ch==='"'||ch==="'"){inStr=true;q=ch;continue;}
+    if(ch==='[')depth++;
+    else if(ch===']'){ depth--; if(depth===0){ try{return JSON.parse(src.slice(start,j+1));}catch(e){return null;} } }
+  }
+  return null;
+}
+// 성공하면 true (기존 dmap/캐드 파서로 넘어가지 않음)
+function _loadExportedHtm(html,bounds){
+  const LINES=_htmGrabArray(html,'LINES'), POLYS=_htmGrabArray(html,'POLYS');
+  const TEXTS=_htmGrabArray(html,'TEXTS'), MARKERS=_htmGrabArray(html,'MARKERS');
+  const PHOTOS=_htmGrabArray(html,'PHOTOS');
+  if(!LINES&&!POLYS&&!TEXTS&&!MARKERS&&!PHOTOS)return false;
+  const LL=a=>{const l=new kakao.maps.LatLng(a[0],a[1]);bounds.extend(l);return l;};
+  const _defer=[];   // setBounds 뒤에 한 번만 setMap (이중 렌더 방지 — loadKMZ 와 동일)
+
+  // ── 선: 스타일(색·굵기·투명도)이 같은 것끼리 멀티파트 Polyline 1개로 묶음.
+  //    도형 수천 개짜리 도면을 개별 오버레이로 만들면 pan/zoom 이 버벅임.
+  const lgrp={};
+  (LINES||[]).forEach(g=>{
+    const parts=(g.p||[]).map(pt=>pt.map(LL)).filter(p=>p.length>=2);
+    if(!parts.length)return;
+    const k=[g.c,g.w,g.o].join('|');
+    (lgrp[k]=lgrp[k]||{c:g.c||'#ff0000',w:(g.w!=null)?g.w:3,o:(g.o!=null)?g.o:1,z:g.z||0,parts:[]}).parts.push(...parts);
+  });
+  Object.values(lgrp).forEach(s=>{
+    const poly=new kakao.maps.Polyline({path:s.parts.length===1?s.parts[0]:s.parts,
+      strokeWeight:s.w,strokeColor:s.c,strokeOpacity:s.o,strokeStyle:'solid',zIndex:s.z});
+    if(s.parts.length>1)poly._parts=s.parts;   // getPath()는 멀티파트를 유실 — 내보내기/연장계산용 원본 보관
+    poly._origWeight=s.w;poly._origColor=s.c;poly._opacity=s.o;
+    const tn=`경로 ${++trackCounter}`;poly._name=tn;
+    polylines.push(poly);attachPolylineRightClick(poly);_defer.push(poly);
+    addItem({type:'track',name:tn,address:'',polyline:poly,_origColor:s.c});
+  });
+
+  // ── 면: 같은 스타일끼리 Polygon 1개로 (카카오는 even-odd 채움이라 링을 다 넘겨도 됨)
+  const pgrp={};
+  (POLYS||[]).forEach(g=>{
+    const rings=(g.p||[]).map(pt=>pt.map(LL)).filter(r=>r.length>=3);
+    if(!rings.length)return;
+    const k=[g.c,g.w,g.o,g.fc,g.fo].join('|');
+    (pgrp[k]=pgrp[k]||{c:g.c||'#ff0000',w:(g.w!=null)?g.w:2,o:(g.o!=null)?g.o:1,
+                       fc:g.fc||'#ffff00',fo:(g.fo!=null)?g.fo:0.3,z:g.z||0,rings:[],polys:[]});
+    pgrp[k].rings.push(...rings);pgrp[k].polys.push(rings);
+  });
+  Object.values(pgrp).forEach(s=>{
+    const pgo=new kakao.maps.Polygon({path:s.rings.length===1?s.rings[0]:s.rings,
+      strokeWeight:s.w,strokeColor:s.c,strokeOpacity:s.o,strokeStyle:'solid',
+      fillColor:s.fc,fillOpacity:s.fo,zIndex:s.z});
+    pgo._origWeight=s.w;pgo._origColor=s.c;pgo._opacity=s.o;
+    pgo._isPoly=true;pgo._fillColor=s.fc;pgo._fillOpacity=s.fo;
+    pgo._rings=s.rings;pgo._polys=s.polys;
+    const pn=`면 ${++trackCounter}`;pgo._name=pn;
+    polylines.push(pgo);attachPolylineRightClick(pgo);_defer.push(pgo);
+    addItem({type:'track',name:pn,address:'',polyline:pgo,_origColor:s.c});
+  });
+
+  // ── CAD 문자 / 마커 / 사진 (KMZ 로딩과 같은 헬퍼 재사용)
+  (TEXTS||[]).forEach(t=>{ if(String(t[2]||'').length) addTextLabel(LL(t),t[2],t[3],t[4],t[5],t[6],t[7]); });
+  (MARKERS||[]).forEach(m=>addMarker(LL(m),m[2]||'마커'));
+  (PHOTOS||[]).forEach(p=>{ if(p[3]) addPhotoMarker(LL(p),p[3],p[2]||'사진',''); });
+
+  if(!bounds.isEmpty())map.setBounds(bounds);
+  _defer.forEach(p=>{if(!p._parts)p.setMap(map);});   // 묶음선(_parts)은 컬링이 화면 교차 구간만 붙임
+  cullBundlePolys();
+  updateTextLabelSizes();
+  return true;
+}
+
+// ══════════════════════════════════════════════════
 //  파일 드롭
 // ══════════════════════════════════════════════════
 document.addEventListener('dragover',e=>e.preventDefault());
@@ -3152,6 +3474,8 @@ document.addEventListener('drop',e=>{
       const reader=new FileReader();
       reader.onload=ev=>{
         const html=ev.target.result;
+        // 이 프로그램이 내보낸 htm(LINES/POLYS/TEXTS/MARKERS/PHOTOS)이면 그쪽으로 처리
+        if(_loadExportedHtm(html,bounds))return;
         // dmap/캐드 htm: 각 linePathN 의 색을 바로 뒤 Polyline 선언(strokeColor)에서 추출.
         // rgb(r,g,b) -> #RRGGBB 로 정규화(카카오 strokeColor 는 hex 기대).
         const rgb2hex=c=>{c=(c||'').trim();const m=c.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i);
@@ -3328,61 +3652,102 @@ async function loadKMZ(file,bounds,kmzDiskPath) {
     const _bulkStart=allItems.length;
     bulkLoading=true;
 
-    // KML 스타일 색상 맵 (styleUrl -> #RRGGBB). KML 색은 aabbggrr 순서.
-    const styleColors={}, styleWidths={}, styleOpac={};
-    const kmlC2Hex=c=>{c=(c||'').trim();if(c.length<8)return null;return '#'+c.slice(6,8)+c.slice(4,6)+c.slice(2,4);};
+    // ── KML 스타일 (styleUrl -> {line:{c,o,w}, poly:{c,o,on}}) ──
+    //    캐드 변환기(Vector_Convert.py) htm 과 같은 규칙으로 읽는다. KML 색은 aabbggrr.
+    //    LineStyle=선(색·불투명도·굵기), PolyStyle=면(채움색·불투명도·fill on/off) 를 따로 본다.
+    const kmlStyles={};
+    const kmlC2Hex=c=>{c=(c||'').trim();if(c.length<8)return null;const h=('#'+c.slice(6,8)+c.slice(4,6)+c.slice(2,4)).toLowerCase();return /^#[0-9a-f]{6}$/.test(h)?h:null;};
     const kmlAlpha=c=>{c=(c||'').trim();if(c.length<8)return null;const a=parseInt(c.slice(0,2),16);return isNaN(a)?null:a/255;};
     for (const st of Array.from(xml.getElementsByTagName('Style'))) {
       const id=st.getAttribute('id'); if(!id) continue;
-      const cs=(st.getElementsByTagName('LineStyle')[0]||st.getElementsByTagName('PolyStyle')[0]);
-      const colTxt=cs?.getElementsByTagName('color')[0]?.textContent;
-      const h=kmlC2Hex(colTxt);
-      if(h) styleColors['#'+id]=h;
-      // KMZ 의 <width>(선 굵기) / 색상 alpha(불투명도)를 읽어 그대로 반영
-      const w=parseFloat(cs?.getElementsByTagName('width')[0]?.textContent);
-      if(!isNaN(w)) styleWidths['#'+id]=w;
-      const op=kmlAlpha(colTxt);
-      if(op!=null) styleOpac['#'+id]=op;
+      const d={}, ls=st.getElementsByTagName('LineStyle')[0], ps=st.getElementsByTagName('PolyStyle')[0];
+      if(ls){
+        const ct=ls.getElementsByTagName('color')[0]?.textContent;
+        const w=parseFloat(ls.getElementsByTagName('width')[0]?.textContent);
+        d.line={c:kmlC2Hex(ct), o:kmlAlpha(ct), w:isNaN(w)?null:w};
+      }
+      if(ps){
+        const ct=ps.getElementsByTagName('color')[0]?.textContent;
+        d.poly={c:kmlC2Hex(ct), o:kmlAlpha(ct),
+                on:((ps.getElementsByTagName('fill')[0]?.textContent)||'1').trim()!=='0'};
+      }
+      kmlStyles['#'+id]=d;
+    }
+    // StyleMap(구글어스 KMZ): normal 항목이 가리키는 Style 을 그대로 사용
+    for (const sm of Array.from(xml.getElementsByTagName('StyleMap'))) {
+      const id=sm.getAttribute('id'); if(!id) continue;
+      for (const pr of Array.from(sm.getElementsByTagName('Pair'))) {
+        if(((pr.getElementsByTagName('key')[0]?.textContent)||'').trim()!=='normal') continue;
+        const tg=((pr.getElementsByTagName('styleUrl')[0]?.textContent)||'').trim();
+        if(kmlStyles[tg]) kmlStyles['#'+id]=kmlStyles[tg];
+        break;
+      }
     }
 
     for (const pm of placemarks) {
       const pmName=pm.getElementsByTagName('name')[0]?.textContent?.trim()||'설명 없음';
 
-      // ── 선/폴리곤 도형 전부 수집 (MultiGeometry 안의 모든 LineString + Polygon 링) ──
-      const coordEls=[];
-      for(const ls of Array.from(pm.getElementsByTagName('LineString')))
-        coordEls.push(ls.getElementsByTagName('coordinates')[0]);
-      for(const pg of Array.from(pm.getElementsByTagName('Polygon')))
-        for(const lr of Array.from(pg.getElementsByTagName('LinearRing')))
-          coordEls.push(lr.getElementsByTagName('coordinates')[0]);
-
-      if (coordEls.length) {
-        const su=pm.getElementsByTagName('styleUrl')[0]?.textContent?.trim();
-        const color=(su&&styleColors[su])||getRandomColor();
-        // KMZ 스타일의 선 굵기/불투명도 반영(없으면 기본 3 / 0.9).
-        // Kakao는 선 굵기를 정수 px로 렌더 → 0.6·1.2 같은 소수가 같은 1px로 뭉개짐.
-        // 올림(ceil)으로 구분: 치수 0.6→1, 글씨 1.2→2, 일반선 2.5→3 (값이 다르면 굵기도 달라짐).
-        const sw=(su&&styleWidths[su]!=null)?Math.max(1,Math.ceil(styleWidths[su])):3;
-        const so=1;   // Vmap처럼 색을 선명하게(전체 불투명). KMZ 색 alpha(텍스트 0.7 등)는 화면에선 무시
-        // Placemark 하나(MultiGeometry 포함)의 모든 선을 멀티파트 Polyline 1개로 —
-        // 선별 개별 Polyline 은 수천 개 KMZ 에서 pan/zoom 버벅임(htm 로딩과 동일 경량화).
-        // 원본 경로는 _parts 에 보관(getPath()가 멀티파트를 유실하므로 내보내기용).
-        const parts=[];
-        for(const ce of coordEls){
-          const coordsText=ce?.textContent||'';
-          const pts=coordsText.trim().split(/\s+/).map(c=>{const[lng,lat]=c.split(',').map(Number);return new kakao.maps.LatLng(lat,lng);}).filter(ll=>!isNaN(ll.getLat())&&!isNaN(ll.getLng()));
-          if(pts.length<2)continue;
-          pts.forEach(p=>bounds.extend(p));
-          parts.push(pts);
+      // ── 선/폴리곤 도형 전부 수집 (MultiGeometry 안의 모든 LineString + Polygon) ──
+      //    캐드 htm 과 동일: LineString 은 선, Polygon 은 '채움 있는 면'으로 그린다.
+      const _toPts=el=>{
+        const t=el?.textContent||'';
+        return t.trim().split(/\s+/).map(c=>{const[lng,lat]=c.split(',').map(Number);return new kakao.maps.LatLng(lat,lng);})
+                .filter(ll=>!isNaN(ll.getLat())&&!isNaN(ll.getLng()));
+      };
+      const lineParts=[];
+      for(const ls of Array.from(pm.getElementsByTagName('LineString'))){
+        const pts=_toPts(ls.getElementsByTagName('coordinates')[0]);
+        if(pts.length>=2){pts.forEach(p=>bounds.extend(p));lineParts.push(pts);}
+      }
+      const polyRings=[];   // Polygon 하나 = 링 배열(첫 링=외곽, 나머지=구멍)
+      for(const pg of Array.from(pm.getElementsByTagName('Polygon'))){
+        const rings=[];
+        for(const lr of Array.from(pg.getElementsByTagName('LinearRing'))){
+          const pts=_toPts(lr.getElementsByTagName('coordinates')[0]);
+          if(pts.length>=3){pts.forEach(p=>bounds.extend(p));rings.push(pts);}
         }
-        if(parts.length){
-          const poly=new kakao.maps.Polyline({path:parts.length===1?parts[0]:parts,strokeWeight:sw,strokeColor:color,strokeOpacity:so});
-          if(parts.length>1)poly._parts=parts;   // 단일 경로는 점 편집 가능 — getPath()로 최신 경로 사용
-          poly._origWeight=sw;
-          poly._origColor=color; poly._name=pmName;
-          _deferPolys.push(poly);   // setBounds 후 한 번에 setMap
-          polylines.push(poly); attachPolylineRightClick(poly);
-          addItem({type:'track',name:pmName,address:'',polyline:poly,_origColor:color});
+        if(rings.length)polyRings.push(rings);
+      }
+
+      if (lineParts.length||polyRings.length) {
+        const su=pm.getElementsByTagName('styleUrl')[0]?.textContent?.trim();
+        const stl=(su&&kmlStyles[su])||{}, lnS=stl.line||{}, pgS=stl.poly||{};
+        // 캐드 htm 과 같은 기본값: 선 #ff0000·3px, 면 테두리 2px + 노랑 30% 채움.
+        // 굵기는 KMZ 값 그대로(소수 유지) — 카카오 strokeWeight 는 소수 px 를 반올림 없이 그린다.
+        const color=lnS.c||'#ff0000';
+        const so=(lnS.o!=null)?lnS.o:1;
+        const ovs=[];
+        if(lineParts.length){
+          // Placemark 하나(MultiGeometry 포함)의 모든 선을 멀티파트 Polyline 1개로 —
+          // 선별 개별 Polyline 은 수천 개 KMZ 에서 pan/zoom 버벅임(htm 로딩과 동일 경량화).
+          // 원본 경로는 _parts 에 보관(getPath()가 멀티파트를 유실하므로 내보내기용).
+          const sw=(lnS.w!=null)?lnS.w:3;
+          const poly=new kakao.maps.Polyline({path:lineParts.length===1?lineParts[0]:lineParts,strokeWeight:sw,strokeColor:color,strokeOpacity:so});
+          if(lineParts.length>1)poly._parts=lineParts;   // 단일 경로는 점 편집 가능 — getPath()로 최신 경로 사용
+          poly._origWeight=sw; poly._origColor=color; poly._opacity=so;
+          ovs.push(poly);
+        }
+        if(polyRings.length){
+          const pw=(lnS.w!=null)?lnS.w:2;
+          const fc=pgS.c||'#ffff00';
+          const fo=(pgS.on===false)?0:((pgS.o!=null)?pgS.o:0.3);
+          // Placemark 하나의 폴리곤 전부를 Polygon 오버레이 1개로 (링을 모두 넘김).
+          // 카카오는 even-odd 채움이라 떨어진 외곽링은 각각, 안쪽 링은 구멍으로 그려진다.
+          // → 수천 개 폴리곤 KMZ 에서도 오버레이가 1개라 pan/zoom 이 무겁지 않다.
+          // 원본 폴리곤 구분(_polys)은 내보내기에서 Polygon 단위로 되살리려고 따로 보관.
+          const flat=[]; for(const rings of polyRings) for(const r of rings) flat.push(r);
+          const pgo=new kakao.maps.Polygon({path:flat.length===1?flat[0]:flat,
+            strokeWeight:pw,strokeColor:color,strokeOpacity:so,strokeStyle:'solid',
+            fillColor:fc,fillOpacity:fo});
+          pgo._origWeight=pw; pgo._origColor=color; pgo._opacity=so;
+          pgo._isPoly=true; pgo._fillColor=fc; pgo._fillOpacity=fo;
+          pgo._rings=flat; pgo._polys=polyRings;
+          ovs.push(pgo);
+        }
+        if(ovs.length){
+          ovs.forEach(o=>{o._name=pmName; polylines.push(o); attachPolylineRightClick(o); _deferPolys.push(o);});
+          addItem({type:'track',name:pmName,address:'',polyline:ovs[0],
+                   extraOverlays:ovs.length>1?ovs.slice(1):undefined,_origColor:color});
         }
         continue;
       }
@@ -3399,12 +3764,14 @@ async function loadKMZ(file,bounds,kmzDiskPath) {
           const ct=point.getElementsByTagName('coordinates')[0]?.textContent||'';
           const[lng,lat]=ct.trim().split(',').map(Number);
           if(!isNaN(lat)&&!isNaN(lng)){
-            let _rot=0,_col='';
+            let _rot=0,_col='',_h=0,_ax=0,_ay=0;
             for(const d of Array.from(pm.getElementsByTagName('Data'))){
               const nm=d.getAttribute('name'); const v=d.getElementsByTagName('value')[0]?.textContent||'';
-              if(nm==='rot')_rot=parseFloat(v)||0; else if(nm==='color')_col=v.trim();}
+              if(nm==='rot')_rot=parseFloat(v)||0; else if(nm==='color')_col=v.trim();
+              else if(nm==='h')_h=parseFloat(v)||0;
+              else if(nm==='ax')_ax=parseFloat(v)||0; else if(nm==='ay')_ay=parseFloat(v)||0;}
             const ll=new kakao.maps.LatLng(lat,lng); bounds.extend(ll);
-            addTextLabel(ll,pmName,_rot,_col);
+            addTextLabel(ll,pmName,_rot,_col,_h,_ax,_ay);
           }
           continue;
         }
@@ -3527,6 +3894,7 @@ async function exportClusteredKMZ(scope) {
 
   const nnm = buildNumNameMap();
   const clusterRenames = [];   // 디스크 원본 rename 누적 (마지막에 1회 전송)
+  const clusterNewNames = new Map();   // '사진명 변경'으로 바뀐 이름 누적
 
   for (const clusterItems of clusterArr) {
     // 클러스터 이름: marker → photo → track 순으로 우선
@@ -3540,29 +3908,25 @@ async function exportClusteredKMZ(scope) {
     for (const item of clusterItems) {
       if (!item.markerObj) continue;
       const m = item.markerObj;
-      const sf = await _zipPhoto(zip, m, item, nnm, usedNames, seqRef, clusterRenames);
+      const sf = await _zipPhoto(zip, m, item, nnm, usedNames, seqRef, clusterRenames, clusterNewNames, clusterName);
       if (sf) photoFileMap.set(m, sf);
     }
 
     let kml = `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${clusterName}</name>\n`;
+    const lnStyles = new Map();   // 색·굵기·면채움을 공유 <Style> 로 (다시 열어도 같은 모양)
     for (const item of clusterItems) {
       if (item.polyline) {
-        const pl = item.polyline;
-        for (const part of pathParts(pl)) {
-          if (part.length < 2) continue;
-          const coords = part.map(p => `${p.getLng()},${p.getLat()},0`).join(' ');
-          kml += `  <Placemark><name>${nnm?.get(pl) || item.name}</name><LineString><coordinates>${coords}</coordinates></LineString></Placemark>\n`;
-        }
+        kml += _lineKmlPlacemarks(item, nnm, null, lnStyles);
       } else if (item.markerObj) {
         const m = item.markerObj;
         const p = m.marker.getPosition();
-        const nm = nnm?.get(m) || m.name || '';
+        const nm = clusterNewNames.get(m) || nnm?.get(m) || m.name || '';
         const sf = photoFileMap.get(m);
         if (sf) kml += `  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;
         else kml += `  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;
       }
     }
-    kml += '</Document>\n</kml>';
+    kml += _lineKmlStyleDefs(lnStyles) + '</Document>\n</kml>';
     zip.file('doc.kml', kml);
 
     const blob = await zip.generateAsync({ type: 'blob' });
@@ -3571,6 +3935,7 @@ async function exportClusteredKMZ(scope) {
   }
 
   _sendPhotoRenames(clusterRenames);
+  _applyPhotoNewNames(clusterNewNames);
   setTimeout(() => alert(`✅ ${clusterArr.length}개 파일 저장 완료!`), 500);
 }
 
@@ -3668,21 +4033,37 @@ function exportByFormat(){
 document.getElementById('exportFormat').addEventListener('change',function(){document.getElementById('photoQuality').style.display=(this.value==='photos'||this.value==='kmz')?'':'none';document.getElementById('photoNumWrap').style.display=(this.value==='kmz')?'inline-flex':'none';});
 // KMZ 저장 시 사진 파일명에 _NNN 번호를 붙일지 여부
 function getAddPhotoNum(){ const el=document.getElementById('addPhotoNum'); return !!(el&&el.checked); }
-// 사진 1장을 zip에 추가하고 KMZ 내부 파일명(sf) 반환. 번호옵션이면 _NNN(3자리) 부여.
+// 사진 1장을 zip에 추가하고 KMZ 내부 파일명(sf) 반환.
+// 번호옵션이면 KMZ 파일명 기준으로 개명 → [KMZ이름]_000.jpg, _001.jpg ...
+//  (원본이 1784617434664.jpg 같은 무의미한 이름이어도 어느 KMZ 사진인지 파일명만 보고 알 수 있게)
 // seqRef.n 은 추가된 사진마다 증가. renames 에는 디스크 원본 rename 정보 수집(실제 디스크 파일만).
-async function _zipPhoto(zip, m, item, nnm, usedNames, seqRef, renames){
+// newNames(Map: markerObj -> 새이름)에는 번호옵션으로 바뀐 이름을 담는다.
+//  → KML <name>·사이드바 이름까지 같이 바뀌어야 '사진명 변경'이 실제로 반영된다.
+// kmzBase: 저장할 KMZ 파일명(확장자 없음).
+async function _zipPhoto(zip, m, item, nnm, usedNames, seqRef, renames, newNames, kmzBase){
   const img=m.iw.getContent().querySelector('img');
   if(!(img&&img.src.startsWith('data:image')))return null;
   const numSuffix=getAddPhotoNum()?('_'+String(seqRef.n).padStart(3,'0')):'';
-  let base=((nnm?.get(m)||item.name)||'photo').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.jpg$/i,'')+numSuffix;
+  const clean=s=>(s||'').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.(jpe?g|png)$/i,'').trim();
+  let base=clean(nnm?.get(m)||item.name)||'photo';
+  if(numSuffix){
+    // KMZ 이름이 있으면 그 이름으로 통째 교체. 없을 때만 기존 이름 뒤에 번호를 붙인다.
+    base=clean(kmzBase)||base.replace(/_\d{3}$/,'');   // 이미 붙은 번호는 새 번호로 교체 (재저장 시 _000_001 방지)
+    base+=numSuffix;
+  }
   let sf=base+'.jpg',suf=1;while(usedNames.has(sf))sf=`${base}_${suf++}.jpg`;usedNames.add(sf);
   const p=m.marker.getPosition();
   const imgData=injectGPS(await compressImage(img.src),p.getLat(),p.getLng());
   zip.file(`files/${sf}`,imgData.split(',')[1],{base64:true});
-  // 디스크 실제 파일이고 번호옵션이면 원본 파일도 rename 대상에 추가.
-  //  newName = KMZ 내부와 동일한 새 이름(목록 이름 + _NNN). 서버가 원본을 이 이름으로 바꿈.
-  if(numSuffix && item.path && /^[a-zA-Z]:[\\/]/.test(item.path) && item.path.indexOf('|')<0)
-    renames.push({path:item.path, suffix:numSuffix, newName:base});
+  if(numSuffix){
+    // KMZ 내부 파일명이 중복회피로 바뀌었으면(_1 등) 그 이름을 그대로 새 이름으로 사용
+    const newName=sf.replace(/\.jpg$/i,'');
+    if(newNames)newNames.set(m,newName);
+    // 디스크 실제 파일이면 원본 파일도 rename 대상에 추가.
+    //  newName = KMZ 내부와 동일한 새 이름(목록 이름 + _NNN). 서버가 원본을 이 이름으로 바꿈.
+    if(item.path && /^[a-zA-Z]:[\\/]/.test(item.path) && item.path.indexOf('|')<0)
+      renames.push({path:item.path, suffix:numSuffix, newName});
+  }
   seqRef.n++;
   return sf;
 }
@@ -3694,6 +4075,25 @@ function _sendPhotoRenames(renames){
     return;
   }
   window.__wsSend({type:'rename_photos', items:renames});
+}
+// '사진명 변경'으로 정해진 새 이름을 사이드바 항목·마커·사진창 제목에 반영 (저장 성공 후 호출)
+function _applyPhotoNewNames(newNames){
+  if(!newNames||!newNames.size)return 0;
+  let n=0;
+  for(const item of allItems){
+    const m=item.markerObj; if(!m||!newNames.has(m))continue;
+    const nn=newNames.get(m);
+    if(item.name===nn&&m.name===nn)continue;
+    item.name=nn; m.name=nn;
+    const found=markers.find(x=>x.marker===m.marker); if(found)found.name=nn;
+    try{
+      const c=m.iw.getContent();
+      if(c){const t=c.querySelector('span')||c.querySelector('div');if(t)t.textContent=nn;}
+    }catch(e){}
+    n++;
+  }
+  if(n){try{renderList();}catch(e){}}
+  return n;
 }
 
 function exportGPX() {
@@ -3731,21 +4131,42 @@ function _lineKmlPlacemarks(item, nnm, bounds, styles) {
   let out = '';
   for (const pl of ovs) {
     let su = '';
+    const isPg = !!pl._isPoly;   // KMZ 폴리곤(면) — 선이 아니라 Polygon + PolyStyle 로 저장
     if (styles) {
       const hex = ((pl._origColor || item._origColor || '#1e8449') + '').replace('#', '');
       const w = pl._origWeight || 3;
-      const key = hex + '_' + w;
-      if (!styles.has(key)) styles.set(key, 'ln_' + key);
-      su = `<styleUrl>#${styles.get(key)}</styleUrl>`;
+      const fill = isPg ? (((pl._fillColor || '#ffff00') + '').replace('#', '')) : '';
+      const fo = isPg ? ((pl._fillOpacity != null) ? pl._fillOpacity : 0.3) : 0;
+      const key = (isPg ? 'pg' : 'ln') + '_' + hex + '_' + w + (isPg ? ('_' + fill + '_' + fo) : '');
+      if (!styles.has(key))
+        styles.set(key, { id: (isPg ? 'pg' : 'ln') + '_' + hex + '_' + w +
+                              (isPg ? ('_' + fill + '_' + Math.round(fo * 100)) : ''),
+                          hex, w, fill, fo });
+      su = `<styleUrl>#${styles.get(key).id}</styleUrl>`;
     }
     // 멀티파트(htm 색상묶음 등)는 선마다 Placemark 를 만들지 않고 MultiGeometry 한 개로 묶음
     // → 파일 작고, 다시 열 때도 항목/오버레이 1개(수천 개 DOM/폴리라인 폭증 방지).
     const segs = [];
-    for (let path of pathParts(pl)) {
-      if (bounds) path = path.filter(p => bounds.contain(p));
-      if (path.length < 2) continue;
-      const coords = path.map(p => `${p.getLng()},${p.getLat()},0`).join(' ');
-      segs.push(`<LineString><coordinates>${coords}</coordinates></LineString>`);
+    if (isPg) {
+      // 폴리곤: 첫 링=외곽(outerBoundaryIs), 나머지=구멍(innerBoundaryIs).
+      // _polys(원본 Polygon 단위 링묶음)가 있으면 그대로 Polygon 여러 개로 되살린다.
+      const ring2xml = r => `<LinearRing><coordinates>${r.map(p => `${p.getLng()},${p.getLat()},0`).join(' ')}</coordinates></LinearRing>`;
+      const groups = pl._polys || [pl._rings || pathParts(pl)];
+      for (let rings of groups) {
+        if (bounds) rings = rings.map(r => r.filter(p => bounds.contain(p)));
+        rings = rings.filter(r => r.length >= 3);
+        if (!rings.length) continue;
+        let g = `<Polygon><outerBoundaryIs>${ring2xml(rings[0])}</outerBoundaryIs>`;
+        for (let i = 1; i < rings.length; i++) g += `<innerBoundaryIs>${ring2xml(rings[i])}</innerBoundaryIs>`;
+        segs.push(g + '</Polygon>');
+      }
+    } else {
+      for (let path of pathParts(pl)) {
+        if (bounds) path = path.filter(p => bounds.contain(p));
+        if (path.length < 2) continue;
+        const coords = path.map(p => `${p.getLng()},${p.getLat()},0`).join(' ');
+        segs.push(`<LineString><coordinates>${coords}</coordinates></LineString>`);
+      }
     }
     if (!segs.length) continue;
     const geom = segs.length === 1 ? segs[0] : `<MultiGeometry>${segs.join('')}</MultiGeometry>`;
@@ -3753,13 +4174,18 @@ function _lineKmlPlacemarks(item, nnm, bounds, styles) {
   }
   return out;
 }
-// _lineKmlPlacemarks 가 모은 styles(Map: 'RRGGBB_w' -> id) -> KML <Style> 정의 문자열 (KML 색은 aabbggrr)
+// _lineKmlPlacemarks 가 모은 styles(Map: key -> {id,hex,w,fill,fo}) -> KML <Style> 정의 (KML 색은 aabbggrr)
+//  면(fill 있음)은 PolyStyle 까지 써서 다시 열 때 채움색·투명도가 그대로 살아난다.
 function _lineKmlStyleDefs(styles) {
+  const kcol = (h, a) => a + h.slice(4, 6) + h.slice(2, 4) + h.slice(0, 2);
   let out = '';
-  for (const [key, id] of styles) {
-    const [hex, w] = key.split('_');
-    const kcol = 'ff' + hex.slice(4, 6) + hex.slice(2, 4) + hex.slice(0, 2);
-    out += `  <Style id="${id}"><LineStyle><color>${kcol}</color><width>${w}</width></LineStyle></Style>\n`;
+  for (const [, s] of styles) {
+    out += `  <Style id="${s.id}"><LineStyle><color>${kcol(s.hex, 'ff')}</color><width>${s.w}</width></LineStyle>`;
+    if (s.fill) {
+      const a = Math.round(Math.max(0, Math.min(1, s.fo)) * 255).toString(16).padStart(2, '0');
+      out += `<PolyStyle><color>${kcol(s.fill, a)}</color><fill>${s.fo > 0 ? 1 : 0}</fill></PolyStyle>`;
+    }
+    out += `</Style>\n`;
   }
   return out;
 }
@@ -3775,18 +4201,18 @@ async function exportKMZ() {
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('파일명',defaultSaveName(ds+'_지도'));if(!fname)return;
   const nnm=buildNumNameMap();
-  const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set(),renames=[],seqRef={n:0};
+  const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set(),renames=[],seqRef={n:0},newNames=new Map();
   const expItems=getFilteredItems();   // 사이드바에 보이는 객체(필터 켜면 화면 안 객체만)
   // 사진 파일 먼저 수집 (사이드바 순서 유지)
-  for(const item of expItems){if(!item.markerObj||!item.markerObj.marker.getMap())continue;const m=item.markerObj;const sf=await _zipPhoto(zip,m,item,nnm,usedNames,seqRef,renames);if(sf)photoFileMap.set(m,sf);}
+  for(const item of expItems){if(!item.markerObj||!item.markerObj.marker.getMap())continue;const m=item.markerObj;const sf=await _zipPhoto(zip,m,item,nnm,usedNames,seqRef,renames,newNames,fname);if(sf)photoFileMap.set(m,sf);}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
   // 사이드바 순서대로 KML 작성
   const lnStyles=new Map();
-  for(const item of expItems){if(item.polyline){kml+=_lineKmlPlacemarks(item,nnm,null,lnStyles);}else if(item.markerObj){const m=item.markerObj;if(!m.marker.getMap())continue;const p=m.marker.getPosition();const nm=nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
+  for(const item of expItems){if(item.polyline){kml+=_lineKmlPlacemarks(item,nnm,null,lnStyles);}else if(item.markerObj){const m=item.markerObj;if(!m.marker.getMap())continue;const p=m.marker.getPosition();const nm=newNames.get(m)||nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+=_lineKmlStyleDefs(lnStyles)+'</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   // 저장이 실제로 끝난 뒤에만 사진번호 반영·_live 표시 (대화상자 취소 시엔 안 함)
-  saveBlob(blob, fname+'.kmz', true, ()=>{ _sendPhotoRenames(renames); markAllInsertedLive(); });
+  saveBlob(blob, fname+'.kmz', true, ()=>{ _sendPhotoRenames(renames); _applyPhotoNewNames(newNames); markAllInsertedLive(); });
 }
 
 async function downloadAllPhotos(){
@@ -3837,14 +4263,14 @@ async function exportSelectedKMZ(){
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const fname=prompt('선택 객체 KMZ',defaultSaveName(ds+'_선택'));if(!fname)return;
   const nnm=buildNumNameMap();
-  const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set(),renames=[],seqRef={n:0};
-  for(const item of selItems){if(!item.markerObj)continue;const m=item.markerObj;const sf=await _zipPhoto(zip,m,item,nnm,usedNames,seqRef,renames);if(sf)photoFileMap.set(m,sf);}
+  const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set(),renames=[],seqRef={n:0},newNames=new Map();
+  for(const item of selItems){if(!item.markerObj)continue;const m=item.markerObj;const sf=await _zipPhoto(zip,m,item,nnm,usedNames,seqRef,renames,newNames,fname);if(sf)photoFileMap.set(m,sf);}
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2">\n<Document>\n  <name>${fname}</name>\n`;
   const lnStyles=new Map();
-  for(const item of selItems){if(item.polyline){kml+=_lineKmlPlacemarks(item,nnm,null,lnStyles);}else if(item.markerObj){const m=item.markerObj;const p=m.marker.getPosition();const nm=nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
+  for(const item of selItems){if(item.polyline){kml+=_lineKmlPlacemarks(item,nnm,null,lnStyles);}else if(item.markerObj){const m=item.markerObj;const p=m.marker.getPosition();const nm=newNames.get(m)||nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+=_lineKmlStyleDefs(lnStyles)+'</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
-  saveBlob(blob, fname+'.kmz', true, ()=>{ _sendPhotoRenames(renames); markAllInsertedLive(); });
+  saveBlob(blob, fname+'.kmz', true, ()=>{ _sendPhotoRenames(renames); _applyPhotoNewNames(newNames); markAllInsertedLive(); });
 }
 
 async function downloadSelectedPhotos(){
