@@ -952,7 +952,16 @@ let airYearLayer = null;
   });
 })();
 
+/* 연도별로 제공되는 최대 타일 레벨(2026-08-03 전국 실측):
+     2011~2019 -> 17 (0.51 m/px) / 2020~2024 -> 18 (0.255 m/px)
+   이보다 확대해서 요청하면 404 가 떠서 '영상 없음' 으로 잘못 판정됐다.
+   → 타일격자를 해당 레벨까지만 만들어 두면 OpenLayers 가 가장 깊은 레벨을
+     끌어올려(확대해서) 그려준다. 더 확대해도 화면이 비지 않는다.
+   ※ 나중에 19레벨이 생겨도 404 는 안 나므로(덜 선명할 뿐) 안전한 기본값이다. */
+function ngiiAirMaxLevel(year) { return Number(year) >= 2020 ? 18 : 17; }
+
 function mkAirYearLayer(year) {
+  const _res = NGII_AIR_RES.slice(0, ngiiAirMaxLevel(year) + 1);
   let attr;
   try { attr = (typeof ol.Attribution === 'function')
         ? [new ol.Attribution({ html: '항공사진 © 국토지리정보원' })]
@@ -965,8 +974,8 @@ function mkAirYearLayer(year) {
       format: 'image/jpeg', style: '', projection: 'EPSG:5179',
       wrapX: false, crossOrigin: 'anonymous', attributions: attr,
       tileGrid: new ol.tilegrid.WMTS({
-        origin: NGII_AIR_ORIG, resolutions: NGII_AIR_RES,
-        matrixIds: NGII_AIR_RES.map((_, i) => String(i)), tileSize: [256, 256]
+        origin: NGII_AIR_ORIG, resolutions: _res,
+        matrixIds: _res.map((_, i) => String(i)), tileSize: [256, 256]
       })
     })
   });
