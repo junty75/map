@@ -2,10 +2,11 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>전태영의 사진지도 (v4.0)</title>
+  <title>전태영의 사진지도 (v4.0) [웹]</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
   <!-- ── API 키: 사용자별 키를 최초 1회 입력받아 localStorage에 저장 ──
        키 재입력: 주소 뒤에 ?resetkey 를 붙여 열기 -->
+  <!-- 키입력_설정.py / 사진위치표시.py 가 생성하는 키 파일 (없으면 조용히 무시됨) -->
   <script>
   if (location.search.indexOf('resetkey') >= 0) {
     localStorage.removeItem('kakao_js_key');
@@ -13,26 +14,18 @@
   }
   // 데스크톱 키 입력창 연동: URL 해시(#kakao_js_key=..)로 받은 키를 localStorage 에 저장
   try { (location.hash||'').replace(/^#/,'').split('&').forEach(function(kv){var p=kv.split('=');if(p.length===2&&p[1]){var k=decodeURIComponent(p[0]);if(k==='kakao_js_key'||k==='vworld_key'||k==='kakao_rest_key')localStorage.setItem(k,decodeURIComponent(p[1]));}}); } catch(e){}
-
-  /* ══ GitHub Pages 배포용 고정 키 (원본: htm/map_kmz/map.html 에서 생성) ══
-     저장소에는 api_keys.js 를 올리지 않는다(kakao_rest_key 는 서버용 비밀키라 공개 금지).
-     방문자에게 키를 묻지 않도록 localStorage 에도 덮어써 항상 이 키를 쓰게 한다.
-     ※ 키가 동작하려면 각 콘솔에 배포 도메인이 등록돼 있어야 한다:
-        카카오   developers.kakao.com -> 앱 설정 -> 플랫폼 -> Web : https://junty75.github.io
-        브이월드 vworld.kr -> 인증키 관리 -> 활용 URL : https://junty75.github.io/map/
-     키를 바꿀 땐 아래 두 줄만 고치면 된다. */
-  window.JTY_API_KEYS = {
-    kakao_js_key: '94bf4516825c146467eb2318cd55b782',
-    vworld_key  : '55FD7275-A6F5-3B69-9966-CD4BFA2FD35F'
-  };
-  try {
-    localStorage.setItem('kakao_js_key', window.JTY_API_KEYS.kakao_js_key);
-    localStorage.setItem('vworld_key',   window.JTY_API_KEYS.vworld_key);
-    ['kakao_js_key', 'vworld_key'].forEach(function(k){
-      sessionStorage.removeItem('badkey_' + k);
-      localStorage.removeItem('badfilekey_' + k);
-    });
-  } catch(e){}
+window.JTY_API_KEYS = {
+  kakao_js_key: '94bf4516825c146467eb2318cd55b782',
+  vworld_key  : '55FD7275-A6F5-3B69-9966-CD4BFA2FD35F'
+};
+try {
+  localStorage.setItem('kakao_js_key', window.JTY_API_KEYS.kakao_js_key);
+  localStorage.setItem('vworld_key',   window.JTY_API_KEYS.vworld_key);
+  ['kakao_js_key', 'vworld_key'].forEach(function(k){
+    sessionStorage.removeItem('badkey_' + k);
+    localStorage.removeItem('badfilekey_' + k);
+  });
+} catch(e){}
   function _askApiKey(storeKey, name, guide){
     // 1순위: 이 기기에 저장된 키 (사용자가 직접 입력했거나 URL 해시로 받은 키).
     //   api_keys.js 파일 키를 1순위로 쓰면 파일 키가 죽은 키일 때 정상 키를 입력해도
@@ -81,14 +74,10 @@
       location.reload();
     }
   }
-
-  /* 배포본은 고정 키를 쓰므로 SDK 로딩 실패 시 방문자에게 키를 묻지 않는다.
-     (함수 선언은 호이스팅되므로 아래 재할당이 원래 _apiKeyError 를 덮어쓴다.)
-     키가 안 먹으면 대개 도메인 미등록이니 콘솔 안내만 남긴다. */
-  _apiKeyError = function(storeKey, name){
-    console.warn(name + ' 로딩 실패 - 배포 도메인(' + location.origin
-      + ')이 해당 API 콘솔에 등록돼 있는지 확인하세요.');
-  };
+_apiKeyError = function(storeKey, name){
+  console.warn(name + ' 로딩 실패 - 배포 도메인(' + location.origin
+    + ')이 해당 API 콘솔에 등록돼 있는지 확인하세요.');
+};
   var KAKAO_GUIDE = '[카카오 JavaScript 키 발급]\n'
     + '1. https://developers.kakao.com 로그인\n'
     + '2. 내 애플리케이션 → 애플리케이션 추가하기\n'
@@ -345,13 +334,15 @@
     .gps-modal-btns button { padding:6px 16px; border-radius:5px; cursor:pointer; font-size:13px; }
     #gpsDragCancel { background:#f5f5f5; border:1px solid #ccc; }
     #gpsDragOk { background:#2980b9; color:#fff; border:none; font-weight:bold; }
-    /* 위치로 검색 진행 표시 + 중단 버튼 */
+    /* 위치로 검색 진행 표시 + 중단 버튼 — 주소검색창 바로 아래 (좌측 상단)
+       z-index 는 #search-form(1000)보다 높아야 한다. 예전 60 이었을 때 지도 오버레이에
+       가려 중단 버튼이 안 보였다. */
     #searchRunning {
-      display:none; position:absolute; top:14px; left:50%; transform:translateX(-50%);
-      z-index:60; align-items:center; gap:10px;
+      display:none; position:absolute; top:56px; left:10px;
+      z-index:1002; align-items:center; gap:10px;
       background:rgba(33,33,33,0.92); color:#fff; padding:8px 14px;
       border-radius:22px; box-shadow:0 3px 14px rgba(0,0,0,0.35);
-      font-size:13px; white-space:nowrap;
+      font-size:13px; white-space:nowrap; max-width:calc(100% - 20px);
     }
     #searchRunning.on { display:inline-flex; }
     #searchRunning .spin {
@@ -395,7 +386,7 @@
     </div>
     <div id="folderBar">
       <div class="fbar-row">
-        <button id="metaSearchBtn" title="색인에서 파일명·메타정보를 즉시 검색 — 파일명, JPG 사진(EXIF 제목·설명·촬영일시), KMZ(엑셀메타), KMZ 안에 든 사진까지. 예: 제목:정자나무 주소:강남 / 파일명:IMG_2024, 공백=AND">🔎 메타검색</button>
+        <button id="metaSearchBtn" title="색인에서 파일명·메타정보를 즉시 검색 — 파일명, JPG 사진(EXIF 제목·설명·촬영일시), KMZ(엑셀메타), KMZ 안에 든 사진까지. 예: 제목:정자나무 주소:강남 / 파일명:IMG_2024, &=AND(쉼표·공백도 가능). 예: 대성&농로&포장&202605 — 숫자만 넣으면 촬영일시 앞자리(2026=연도 전체, 202605=2026년5월) · 기간은 2024-2026">🔎 메타검색</button>
         <button id="metaIndexBtn" title="폴더를 지정해 그 안 JPG·KMZ의 메타정보를 색인에 등록 — 디스크 사진/KMZ 안 사진은 EXIF(제목·설명·촬영일시), KMZ는 엑셀메타 (기존 파일까지 검색되게)">🗂 메타색인</button>
       </div>
       <div class="fbar-row">
@@ -473,7 +464,7 @@
     <div id="searchRunning">
       <span class="spin"></span>
       <span id="searchRunningMsg">🧭 검색 중…</span>
-      <button id="searchCancelBtn" type="button">■ 중단</button>
+      <button id="searchCancelBtn" type="button" title="검색 중단 (Esc)">■ 중단 (Esc)</button>
     </div>
     <form id="search-form">
       <input id="address-input" type="text" placeholder="주소 검색" style="padding:5px;width:180px;">
@@ -1920,11 +1911,19 @@ function setSearchRunning(on, msg) {
     box.classList.remove('on');
   }
 }
-// 중단 버튼 — 서버에 검색 중단 요청
-document.getElementById('searchCancelBtn').onclick = () => {
+// 검색 진행 중인지 (Esc 중단 판정용)
+function isSearchRunning() {
+  const box = document.getElementById('searchRunning');
+  return !!(box && box.classList.contains('on'));
+}
+// 중단 요청 — 서버에 검색 중단 신호 (버튼 / Esc 공용)
+function cancelRunningSearch() {
+  if (!isSearchRunning()) return false;
   window.__wsSend && window.__wsSend({ type: 'cancel_search' });
   document.getElementById('searchRunningMsg').textContent = '⏹ 중단하는 중…';
-};
+  return true;
+}
+document.getElementById('searchCancelBtn').onclick = () => cancelRunningSearch();
 
 // 메타색인 진행 표시
 function setReindexRunning(on, msg) {
@@ -1947,7 +1946,13 @@ document.getElementById('metaSearchBtn').onclick = () => {
   if (!(window.__wsReady && window.__wsReady())) {
     alert('탐색기 연동 서버(사진위치표시.py)가 실행 중이어야 합니다.'); return;
   }
-  const q = prompt('메타 검색 (파일명 + JPG 사진 EXIF + KMZ 엑셀메타) — 예) 제목:정자나무 촬영일시:2024\n파일명만 찾으려면 파일명:IMG_1234\n공백=AND, 필드 없이 입력하면 파일명과 모든 값에서 검색', '');
+  const q = prompt('메타 검색 (파일명 + JPG 사진 EXIF + KMZ 엑셀메타)\n\n'
+    + '단어를 & 로 이으면 모두 포함(AND) — 예) 대성&농로&포장\n'
+    + '숫자만 넣으면 촬영일시 앞자리 — 2026=2026년 전체, 202605=2026년 5월, 20260515=그 날\n'
+    + '기간은 - 로 이어서 — 2024-2026=2024~2026년, 202401-202605=2024년1월~2026년5월\n'
+    + '  예) 대성&농로&포장&202605\n'
+    + '구분자는 & · 쉼표 · 공백 아무거나 됩니다.\n\n'
+    + '특정 항목만 보려면 필드:값 — 예) 제목:정자나무  파일명:IMG_1234  촬영일시:202605', '');
   if (q === null || !q.trim()) return;
   window.__wsSend({ type: 'search_kmz_meta', query: q.trim() });
   window.__setBadge && window.__setBadge(true, `🔎 "${q.trim()}" 검색 중…`);
@@ -1977,14 +1982,14 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
         <b id="srTitle" style="font-size:14px;">결과</b>
         <button id="srClose" style="border:none;background:none;font-size:18px;cursor:pointer;line-height:1;">✕</button>
       </div>
-      <div id="srSelBar" style="display:flex;align-items:center;gap:10px;padding:6px 14px;border-bottom:1px solid #eee;background:#fafafa;font-size:12px;">
+      <div id="srSelBar" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:6px 14px;border-bottom:1px solid #eee;background:#fafafa;font-size:12px;flex:0 0 auto;">
         <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="srSelectAll"> 전체 선택</label>
         <span id="srSelCount" style="color:#888;">0개 선택</span>
         <button id="srMapToggle" title="검색 결과 전체를 지도에 마커로 표시 — 다시 누르면 해제. 마커 클릭 시 목록에서 해당 항목 선택" style="padding:3px 10px;border:1px solid #27ae60;border-radius:4px;background:#fff;color:#27ae60;font-size:12px;font-weight:bold;cursor:pointer;">🗺 지도삽입</button>
         <button id="srSelectMode" title="켜면 행을 클릭해서 선택할 수 있습니다 (끄면 체크박스로만 선택)" style="margin-left:auto;padding:3px 10px;border:1px solid #1a5276;border-radius:4px;background:#fff;color:#1a5276;font-size:12px;font-weight:bold;cursor:pointer;">선택하기</button>
       </div>
-      <div id="srList" style="overflow:auto;padding:6px 0;flex:1;"></div>
-      <div id="srFooter" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #e0e0e0;">
+      <div id="srList" style="overflow:auto;padding:6px 0;flex:1;min-height:0;"></div>
+      <div id="srFooter" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #e0e0e0;flex:0 0 auto;">
         <span style="color:#888;font-size:12px;">체크박스=선택 · 행 클릭/↑↓=미리보기</span>
         <button id="srSave" style="padding:6px 16px;border:none;border-radius:5px;background:#1a5276;color:#fff;font-size:13px;font-weight:bold;cursor:pointer;">💾 저장하기</button>
       </div>`;
@@ -2044,10 +2049,16 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
   setSelectMode(false);   // 새 결과창은 항상 끈 상태로 시작
   selModeBtn.onclick = () => setSelectMode(!selectMode);
 
+  // 선택 상태는 '경로 집합'으로 들고 있는다 — 영역필터로 잠시 목록에서 빠진 항목도
+  // 선택을 유지하다가, 다시 영역 안에 들어오면 체크된 채로(마커까지) 되살아난다.
+  const checkedPaths = new Set();
+
   function updateCount() {
     const checks = [...list.querySelectorAll('.sr-check')];
     const n = checks.filter(c => c.checked).length;
-    selCnt.textContent = `${n}개 선택`;
+    const tot = checkedPaths.size;
+    // 화면 밖(영역필터로 숨은) 선택이 있으면 함께 알려준다 — 저장은 목록에 보이는 것만 대상
+    selCnt.textContent = (tot > n) ? `${n}개 선택 (숨김 포함 ${tot}개)` : `${n}개 선택`;
     selAll.checked = n > 0 && n === checks.length;
     selAll.indeterminate = n > 0 && n < checks.length;
   }
@@ -2106,12 +2117,70 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
     return marker;
   }
 
-  list.innerHTML = '';
-  if (!items.length) {
+  // ── 파일 종류 탭 (전체 / 사진 / KMZ / GPX / 기타) ──
+  //    패널은 한 번만 만들어 재사용하므로, 탭 줄이 없으면 목록 위에 끼워 넣는다.
+  let tabBar = modal.querySelector('#srTabs');
+  if (!tabBar) {
+    tabBar = document.createElement('div');
+    tabBar.id = 'srTabs';
+    tabBar.style.cssText = 'display:flex;gap:5px;padding:7px 14px;border-bottom:1px solid #eee;background:#fff;overflow-x:auto;flex:0 0 auto;';
+    modal.querySelector('#srList').before(tabBar);
+  }
+  const SR_TABS = [
+    { key: 'all',   label: '전체' },
+    { key: 'photo', label: '사진' },
+    { key: 'kmz',   label: 'KMZ' },
+    { key: 'gpx',   label: 'GPX' },
+    { key: 'etc',   label: '기타' },
+  ];
+  // 서버가 준 type('photo'|'kmz')을 우선 보고, 없으면 확장자로 판정
+  function srTypeOf(it) {
+    const t = String(it.type || '').toLowerCase();
+    if (t === 'photo') return 'photo';
+    const name = String(it.path || it.name || '');
+    if (IMAGE_EXT.test(name)) return 'photo';
+    if (/\.(kmz|kml)$/i.test(name)) return 'kmz';
+    if (/\.gpx$/i.test(name)) return 'gpx';
+    if (t === 'kmz') return 'kmz';
+    return 'etc';
+  }
+  let curTab = 'all';
+  let view = items;
+  let areaOn = false;      // 현재 지도 영역 필터
+
+  function renderTabs() {
+    const base = baseItems();
+    const counts = {};
+    base.forEach(it => { const k = srTypeOf(it); counts[k] = (counts[k] || 0) + 1; });
+    const defs = SR_TABS.filter(d => d.key === 'all' || counts[d.key]);
+    tabBar.innerHTML = '';
+    if (defs.length <= 2) { tabBar.style.display = 'none'; return; }   // 한 종류뿐이면 탭 숨김
+    tabBar.style.display = 'flex';
+    defs.forEach(d => {
+      const n = d.key === 'all' ? base.length : counts[d.key];
+      const b = document.createElement('button');
+      b.textContent = `${d.label} ${n}`;
+      b.style.cssText = 'padding:4px 11px;border:1px solid #ccc;border-radius:14px;background:#fff;color:#555;font-size:12px;cursor:pointer;white-space:nowrap;';
+      if (d.key === curTab) { b.style.background = '#1a5276'; b.style.color = '#fff'; b.style.borderColor = '#1a5276'; b.style.fontWeight = 'bold'; }
+      b.onclick = () => { curTab = d.key; renderTabs(); renderRows(); };
+      tabBar.appendChild(b);
+    });
+  }
+
+  function renderRows() {
+    const base = baseItems();
+    view = (curTab === 'all') ? base : base.filter(it => srTypeOf(it) === curTab);
+    rows.length = 0; curIdx = -1;
+    // 탭이 바뀌면 번호(인덱스)가 달라지므로 지도 마커는 지우고 새로 만든다
+    if (modal._srMapMarkerMap) Object.values(modal._srMapMarkerMap).forEach(m => m && m.setMap(null));
+    modal._srMapMarkerMap = {};
+    modal._srSelectedIdx = undefined;
+    list.innerHTML = '';
+  if (!view.length) {
     list.innerHTML = '<div style="padding:20px;color:#888;text-align:center;">결과 없음</div>';
-    selAll.checked = false; selAll.indeterminate = false; selCnt.textContent = '0개 선택';
+    updateCount();   // 목록이 비어도 '숨김 포함 N개' 안내는 유지
   } else {
-    items.forEach((it, idx) => {
+    view.forEach((it, idx) => {
       const row = document.createElement('div');
       row.className = 'sr-row';
       row.style.cssText = 'display:flex;align-items:flex-start;gap:8px;padding:8px 14px;border-bottom:1px solid #f0f0f0;cursor:pointer;font-size:13px;';
@@ -2124,8 +2193,10 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
       const chk = document.createElement('input');
       chk.type = 'checkbox'; chk.className = 'sr-check'; chk.style.marginTop = '3px';
       chk._item = it;
+      chk.checked = checkedPaths.has(it.path);   // 숨어 있던 항목도 선택 상태 그대로 복원
       chk.onclick = e => {
         e.stopPropagation();
+        if (chk.checked) checkedPaths.add(it.path); else checkedPaths.delete(it.path);
         if (modal._srMapOn) {
           if (chk.checked) {
             if (!modal._srMapMarkerMap[idx]) modal._srMapMarkerMap[idx] = mkOneSrMarker(it, idx);
@@ -2151,11 +2222,67 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
       };
       list.appendChild(row);
     });
+    // 지도표시 중이면 새 목록 기준으로 마커를 다시 만든다 (체크된 것만)
+    if (modal._srMapOn) {
+      list.querySelectorAll('.sr-num').forEach(n => { n.style.display = 'flex'; });
+      view.forEach((it, idx) => {
+        if (!rows[idx] || !rows[idx].chk.checked) return;
+        const m = mkOneSrMarker(it, idx);
+        if (m) modal._srMapMarkerMap[idx] = m;
+      });
+    }
     updateCount();
   }
+  }
+
+  // ── 현재 지도 영역 필터 ──
+  //    켜면 지금 화면에 보이는 범위 안의 항목만 목록에 남는다.
+  //    저장/전체선택은 '목록에 남은 것'만 대상이므로, 이 상태로 저장하면 필터된 것만 저장된다.
+  let areaBtn = modal.querySelector('#srAreaFilter');
+  if (!areaBtn) {
+    areaBtn = document.createElement('button');
+    areaBtn.id = 'srAreaFilter';
+    areaBtn.title = '지금 지도에 보이는 영역 안의 항목만 목록에 남깁니다.\n켠 채로 지도를 움직이면 자동으로 다시 걸립니다.\n이 상태에서 저장하면 남은 항목만 저장됩니다.';
+    areaBtn.style.cssText = 'padding:3px 10px;border:1px solid #8e44ad;border-radius:4px;background:#fff;color:#8e44ad;font-size:12px;font-weight:bold;cursor:pointer;';
+    mapToggleBtn.after(areaBtn);
+  }
+  function inCurrentView(it) {
+    if (typeof it.lat !== 'number' || typeof it.lng !== 'number') return false;   // 좌표 없음 = 영역 밖
+    try { return map.getBounds().contain(new kakao.maps.LatLng(it.lat, it.lng)); }
+    catch (e) { return true; }
+  }
+  function baseItems() { return areaOn ? items.filter(inCurrentView) : items; }
+  function paintAreaBtn() {
+    if (areaOn) {
+      areaBtn.style.background = '#8e44ad'; areaBtn.style.color = '#fff';
+      areaBtn.textContent = `✓ 영역 ${baseItems().length}/${items.length}`;
+    } else {
+      areaBtn.style.background = '#fff'; areaBtn.style.color = '#8e44ad';
+      areaBtn.textContent = '🔍 영역필터';
+    }
+  }
+  areaBtn.onclick = () => { areaOn = !areaOn; paintAreaBtn(); renderTabs(); renderRows(); };
+  // 필터를 켠 채로 지도를 움직이면 '현재 영역' 기준을 다시 잡는다 (리스너는 한 번만 등록)
+  modal._areaRefresh = () => { if (areaOn) { paintAreaBtn(); renderTabs(); renderRows(); } };
+  if (!modal._areaHooked) {
+    modal._areaHooked = true;
+    kakao.maps.event.addListener(map, 'idle', () => {
+      if (modal.style.display !== 'none' && modal._areaRefresh) modal._areaRefresh();
+    });
+  }
+
+  paintAreaBtn();
+  renderTabs();
+  renderRows();
 
   selAll.onclick = () => {
-    list.querySelectorAll('.sr-check').forEach(c => { c.checked = selAll.checked; });
+    // 목록에 보이는 것만 대상 (영역필터로 숨은 항목의 선택은 건드리지 않음)
+    list.querySelectorAll('.sr-check').forEach(c => {
+      c.checked = selAll.checked;
+      const p = c._item && c._item.path;
+      if (p) { if (c.checked) checkedPaths.add(p); else checkedPaths.delete(p); }
+    });
+    if (modal._srMapOn) renderRows();   // 마커를 선택 상태에 맞춰 다시 그림
     updateCount();
   };
   saveBtn.style.display = onSaveItems ? '' : 'none';
@@ -2173,6 +2300,7 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
       modal._srMapOn = false; modal._srSelectedIdx = undefined;
       window.__srMapDisplayOn = false;
       mapToggleBtn.style.background = '#fff'; mapToggleBtn.style.color = '#27ae60'; mapToggleBtn.textContent = '🗺 지도삽입';
+      checkedPaths.clear();
       list.querySelectorAll('.sr-check').forEach(c => { c.checked = false; });
       list.querySelectorAll('.sr-num').forEach(n => { n.style.display = 'none'; });
       updateCount();
@@ -2181,13 +2309,10 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
       modal._srMapMarkerMap = {};
       window.__srMapDisplayOn = true;
       mapToggleBtn.style.background = '#27ae60'; mapToggleBtn.style.color = '#fff'; mapToggleBtn.textContent = '✓ 지도표시 중';
-      list.querySelectorAll('.sr-check').forEach(c => { c.checked = true; });
-      list.querySelectorAll('.sr-num').forEach(n => { n.style.display = 'flex'; });
-      updateCount();
-      items.forEach((it, idx) => {
-        const m = mkOneSrMarker(it, idx);
-        if (m) modal._srMapMarkerMap[idx] = m;
-      });
+      // 영역필터로 지금 안 보이는 항목까지 '전체' 선택해 둔다 —
+      // 그래야 지도를 옮겨 그 항목이 영역에 들어오면 체크된 채로 마커까지 되살아난다.
+      items.forEach(it => { if (it.path) checkedPaths.add(it.path); });
+      renderRows();
     }
   };
 
@@ -3225,6 +3350,11 @@ document.addEventListener('keydown', e => {
   // 목록 인풋 안에서는 상위 처리 차단 (onkeydown으로 자체 처리)
   if (inListInput) return;
 
+  // 검색(위치로/메타) 진행 중 — Esc로 중단. 다른 Esc 동작보다 먼저 본다.
+  if (e.key==='Escape' && isSearchRunning()) {
+    e.preventDefault(); cancelRunningSearch(); return;
+  }
+
   // 로드뷰 지점 선택 모드 — Esc로 취소
   if (roadviewPickMode && e.key==='Escape') {
     e.preventDefault(); stopRoadviewPick(); showSaveStatus('로드뷰 선택 취소됨'); return;
@@ -3446,29 +3576,176 @@ function _loadExportedHtm(html,bounds){
 }
 
 // ══════════════════════════════════════════════════
+//  폴더 드롭 — 하위폴더 재귀 스캔 + 선택
+// ══════════════════════════════════════════════════
+// 지도에 표시 가능한 확장자만 폴더에서 걷어온다(폴더엔 무관한 파일이 섞여 있음).
+const DROP_EXT = /\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2|kmz|kml|zip|gpx|csv|htm|html)$/i;
+
+// DirectoryReader.readEntries 는 한 번에 100개까지만 준다 → 빈 배열이 올 때까지 반복
+function _dropReadAll(reader){
+  return new Promise(res=>{
+    const out=[];
+    const step=()=>reader.readEntries(ents=>{
+      if(!ents.length)return res(out);
+      out.push(...ents);step();
+    },()=>res(out));
+    step();
+  });
+}
+// entry(webkitGetAsEntry) 재귀 스캔 — {file, dir} 수집. dir 은 드롭한 폴더 기준 상대경로.
+async function _dropScan(entry,dirPath,out,stat){
+  if(!entry)return;
+  if(entry.isFile){
+    stat.seen++;
+    if(!DROP_EXT.test(entry.name)){stat.skip++;return;}
+    const f=await new Promise(r=>{try{entry.file(r,()=>r(null));}catch(_){r(null);}});
+    if(f)out.push({file:f,dir:dirPath,handle:null});else stat.fail++;
+  }else if(entry.isDirectory){
+    const sub=dirPath?dirPath+'/'+entry.name:entry.name;
+    const ents=await _dropReadAll(entry.createReader());
+    for(const c of ents)await _dropScan(c,sub,out,stat);
+  }
+}
+// FileSystemHandle 재귀 스캔 — 드롭 이벤트가 끝난 뒤에도 유효해서 entry 방식보다 안정적이다.
+// (entry 는 하위폴더를 읽는 도중 무효화돼 파일이 0개로 나오는 경우가 있었다)
+async function _dropScanHandle(h,dirPath,out,stat){
+  if(!h)return;
+  if(h.kind==='file'){
+    stat.seen++;
+    if(!DROP_EXT.test(h.name)){stat.skip++;return;}
+    try{out.push({file:await h.getFile(),dir:dirPath,handle:h});}catch(_){stat.fail++;}
+  }else if(h.kind==='directory'){
+    const sub=dirPath?dirPath+'/'+h.name:h.name;
+    try{for await(const c of h.values())await _dropScanHandle(c,sub,out,stat);}catch(_){stat.fail++;}
+  }
+}
+// 폴더가 여러 개(하위폴더 포함)일 때 어떤 폴더를 삽입할지 고르는 창
+function _dropPickFolders(groups){
+  return new Promise(resolve=>{
+    const keys=[...groups.keys()].sort();
+    const total=keys.reduce((s,k)=>s+groups.get(k).length,0);
+    const ov=document.createElement('div');
+    ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:100000;display:flex;align-items:center;justify-content:center;';
+    const box=document.createElement('div');
+    box.style.cssText='background:#fff;border-radius:8px;padding:16px 18px;min-width:380px;max-width:min(680px,92vw);max-height:80vh;display:flex;flex-direction:column;font-size:14px;box-shadow:0 8px 30px rgba(0,0,0,.35);';
+    const head=document.createElement('div');
+    head.innerHTML='<div style="font-weight:700;margin-bottom:4px;">📁 삽입할 폴더 선택</div>'
+      +'<div style="color:#666;margin-bottom:10px;">하위 폴더에도 파일이 있습니다. 삽입할 폴더를 고르세요 (전체 '+total+'개)</div>';
+    const list=document.createElement('div');
+    list.style.cssText='overflow:auto;flex:1;border:1px solid #ddd;border-radius:6px;padding:8px;margin-bottom:10px;';
+    const boxes=[];
+    keys.forEach(k=>{
+      const lab=document.createElement('label');
+      lab.style.cssText='display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;';
+      const cb=document.createElement('input');cb.type='checkbox';cb.checked=true;cb.value=k;
+      const sp=document.createElement('span');
+      sp.style.cssText='flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      sp.textContent=k||'(드롭한 파일)';sp.title=k;
+      const cnt=document.createElement('span');cnt.style.cssText='color:#888;white-space:nowrap;';
+      cnt.textContent=groups.get(k).length+'개';
+      lab.append(cb,sp,cnt);list.appendChild(lab);boxes.push(cb);
+    });
+    const btns=document.createElement('div');
+    btns.style.cssText='display:flex;gap:6px;justify-content:flex-end;';
+    const mk=(txt,primary)=>{const b=document.createElement('button');b.textContent=txt;
+      b.style.cssText='padding:6px 14px;border-radius:5px;cursor:pointer;border:1px solid '
+        +(primary?'#2d6cdf;background:#2d6cdf;color:#fff':'#ccc;background:#f7f7f7;color:#333');
+      return b;};
+    const bAll=mk('전체선택'),bNone=mk('전체해제'),bCancel=mk('취소'),bOk=mk('삽입',true);
+    bAll.style.marginRight='auto';
+    bAll.onclick=()=>boxes.forEach(c=>c.checked=true);
+    bNone.onclick=()=>boxes.forEach(c=>c.checked=false);
+    const close=v=>{document.removeEventListener('keydown',onKey,true);ov.remove();resolve(v);};
+    bCancel.onclick=()=>close(null);
+    bOk.onclick=()=>close(boxes.filter(c=>c.checked).map(c=>c.value));
+    const onKey=ev=>{if(ev.key==='Escape'){ev.stopPropagation();close(null);}};
+    document.addEventListener('keydown',onKey,true);
+    ov.addEventListener('click',ev=>{if(ev.target===ov)close(null);});
+    btns.append(bAll,bNone,bCancel,bOk);
+    box.append(head,list,btns);ov.appendChild(box);document.body.appendChild(ov);
+    bOk.focus();
+  });
+}
+// 드롭된 entry 들을 스캔해 실제로 삽입할 File 목록을 만든다.
+// 주의: DataTransfer 는 이벤트가 끝나면 무효 → 스캔(파일 확보)을 먼저 끝내고 나서 선택창을 띄운다.
+async function collectDroppedFolderFiles(entries,handlePromises){
+  let out=[];const stat={seen:0,skip:0,fail:0};
+  for(let i=0;i<entries.length;i++){
+    const en=entries[i];
+    let h=null;
+    try{h=(handlePromises&&handlePromises[i])?await handlePromises[i]:null;}catch(_){h=null;}
+    if(h&&h.kind)await _dropScanHandle(h,'',out,stat);
+    else await _dropScan(en,'',out,stat);
+  }
+  // 핸들 방식이 실패했으면(권한 등) entry 방식으로 한 번 더
+  if(!out.length&&entries.some(en=>en)){
+    const st2={seen:0,skip:0,fail:0};
+    for(const en of entries)await _dropScan(en,'',out,st2);
+    stat.seen+=st2.seen;stat.skip+=st2.skip;stat.fail+=st2.fail;
+  }
+  const groups=new Map();
+  out.forEach(o=>{if(!groups.has(o.dir))groups.set(o.dir,[]);groups.get(o.dir).push(o);});
+  if(!groups.size){
+    alert('폴더 안에 지도에 표시할 수 있는 파일이 없습니다.\n\n'
+      +`검사한 파일 ${stat.seen}개 / 지원하지 않는 형식 ${stat.skip}개 / 읽기 실패 ${stat.fail}개\n`
+      +'읽기 실패가 있으면 클라우드(드롭박스·원드라이브) 온라인 전용 파일일 수 있습니다.\n'
+      +'해당 폴더를 "로컬에 항상 유지"로 내려받은 뒤 다시 시도하세요.');
+    return [];
+  }
+  if(groups.size>1){
+    const sel=await _dropPickFolders(groups);
+    if(!sel||!sel.length)return [];
+    const set=new Set(sel);
+    out=out.filter(o=>set.has(o.dir));
+  }
+  return out;
+}
+
+// ══════════════════════════════════════════════════
 //  파일 드롭
 // ══════════════════════════════════════════════════
 document.addEventListener('dragover',e=>e.preventDefault());
 document.addEventListener('drop',e=>{
   e.preventDefault();
-  const files=Array.from(e.dataTransfer.files); if(!files.length)return;
-  // ── 파일 핸들 수집 (이벤트 핸들러 안에서만 getAsFileSystemHandle 호출 가능) ──
-  const _fhPromises=[];
-  if(e.dataTransfer.items){
-    for(let i=0;i<e.dataTransfer.items.length;i++){
-      const it=e.dataTransfer.items[i];
-      _fhPromises[i]=(it.kind==='file'&&typeof it.getAsFileSystemHandle==='function')
+  // ── 폴더가 섞여 있으면 재귀 스캔 후 처리 (entry 는 이벤트 안에서 동기로 확보해야 함) ──
+  const _entries=e.dataTransfer.items
+    ?Array.from(e.dataTransfer.items).map(it=>(it.kind==='file'&&typeof it.webkitGetAsEntry==='function')?it.webkitGetAsEntry():null)
+    :[];
+  const _fh=_collectFileHandles(e.dataTransfer);
+  if(_entries.some(en=>en&&en.isDirectory)){
+    (async()=>{
+      const picked=await collectDroppedFolderFiles(_entries,_fh);
+      if(picked.length)handleDroppedFiles(picked.map(o=>o.file),picked.map(o=>Promise.resolve(o.handle||null)));
+    })();
+    return;
+  }
+  handleDroppedFiles(Array.from(e.dataTransfer.files),_fh);
+});
+
+// 파일 핸들 수집 (이벤트 핸들러 안에서만 getAsFileSystemHandle 호출 가능)
+function _collectFileHandles(dt){
+  const out=[];
+  if(dt&&dt.items){
+    for(let i=0;i<dt.items.length;i++){
+      const it=dt.items[i];
+      out[i]=(it.kind==='file'&&typeof it.getAsFileSystemHandle==='function')
         ?it.getAsFileSystemHandle().catch(()=>null):Promise.resolve(null);
     }
   }
+  return out;
+}
+
+function handleDroppedFiles(files,_fhPromises){
+  if(!files.length)return;
+  _fhPromises=_fhPromises||[];
   const bounds=new kakao.maps.LatLngBounds();
   let noGPSAction=null;
 
   files.forEach((file,_fi)=>{
     const name=file.name.toLowerCase();
 
-    if (name.endsWith('.kmz')||name.endsWith('.zip')) {
-      loadKMZ(file,bounds);
+    if (name.endsWith('.kmz')||name.endsWith('.zip')||name.endsWith('.kml')) {
+      loadKMZ(file,bounds);   // loadKMZ 는 zip 헤더로 판별해 평문 .kml 도 처리
 
     } else if (name.endsWith('.htm')||name.endsWith('.html')) {
       const reader=new FileReader();
@@ -3623,7 +3900,7 @@ document.addEventListener('drop',e=>{
       reader.readAsText(file,'utf-8');
     }
   });
-});
+}
 
 // ══════════════════════════════════════════════════
 //  KMZ 로딩
@@ -3892,6 +4169,10 @@ async function exportClusteredKMZ(scope) {
   const clusterArr = [...clustersMap.values()];
   if (!confirm(`${clusterArr.length}개 파일로 저장됩니다.\n계속하시겠습니까?`)) return;
 
+  // 각각저장은 파일이 여러 개 — 파일명은 클러스터 이름 그대로 쓰고 폴더만 고른다
+  const clusterDir = await askSaveFolder(`KMZ ${clusterArr.length}개를 저장할 폴더 선택`, 'kmz_save_dir');
+  if (clusterDir === '') return;   // 취소
+
   const nnm = buildNumNameMap();
   const clusterRenames = [];   // 디스크 원본 rename 누적 (마지막에 1회 전송)
   const clusterNewNames = new Map();   // '사진명 변경'으로 바뀐 이름 누적
@@ -3930,7 +4211,8 @@ async function exportClusteredKMZ(scope) {
     zip.file('doc.kml', kml);
 
     const blob = await zip.generateAsync({ type: 'blob' });
-    saveBlob(blob, clusterName + '.kmz');   // 각각저장은 클러스터 이름 그대로
+    if (clusterDir) saveBlobTo({ folder: clusterDir, filename: clusterName + '.kmz' }, blob);
+    else saveBlob(blob, clusterName + '.kmz');   // 서버 미연결 → 예전대로(자동폴더·다운로드)
     await new Promise(r => setTimeout(r, 400));
   }
 
@@ -3980,23 +4262,70 @@ function defaultSaveName(fallback){
   return t.base || fallback;
 }
 
-// 공통 저장 — 폴더가 정해지고 WS 연결되면 Python에 저장, 아니면 다운로드
-// chooseDir=true 이면 KMZ 저장 시 네이티브 '다른 이름으로 저장' 대화상자를 띄워
-// 사용자가 폴더·파일명을 직접 고르게 한다(지난번 저장 폴더가 기본값).
-// onSaved: 저장이 실제로 끝난 뒤 실행할 후처리(_live 표시·사진번호 등). 대화상자 경로는
-// 사용자가 저장을 확정(성공)했을 때만 실행되고, 취소하면 실행되지 않는다.
-function saveBlob(blob, filename, chooseDir, onSaved){
-  if (chooseDir && /\.kmz$/i.test(filename) && window.__wsReady && window.__wsReady()){
-    window.__kmzOnSaved = onSaved || null;   // file_saved(ok) 때 호출 / 취소·실패 시 미실행
-    const sug = resolveSaveTarget().folder || '';
+// ── 네이티브 저장 대화상자 (Python tkinter) ─────────────────────
+// 저장 버튼을 누르면 파일을 만들기 전에 먼저 저장 위치를 묻는다.
+//  · 파일 1개(KMZ·GPX·CSV) → '다른 이름으로 저장'(폴더 + 파일명)
+//  · 여러 개(사진으로 저장·각각저장) → 폴더만 선택
+// 기본 시작 폴더는 지난번 저장 폴더(서버가 UI설정에 기억).
+const _pickWaiters = new Map(); let _pickSeq = 0;
+window.__resolvePick = (reqid, val) => {
+  const f = _pickWaiters.get(reqid);
+  if (f) { _pickWaiters.delete(reqid); f(val); }
+};
+// 반환: {folder,filename} / 취소 '' / 서버 미연결 undefined
+function askSavePath(defName){
+  if (!(window.__wsReady && window.__wsReady())) return Promise.resolve(undefined);
+  const reqid = 'p' + (++_pickSeq);
+  window.__setBadge && window.__setBadge(true, '💾 저장 위치 선택...');
+  return new Promise(res => {
+    _pickWaiters.set(reqid, res);
+    window.__wsSend({ type:'pick_save_path', reqid, filename:defName,
+                      suggested: resolveSaveTarget().folder || '' });
+  });
+}
+// 반환: 폴더 경로 / 취소 '' / 서버 미연결 undefined
+function askSaveFolder(title, key){
+  if (!(window.__wsReady && window.__wsReady())) return Promise.resolve(undefined);
+  const reqid = 'd' + (++_pickSeq);
+  window.__setBadge && window.__setBadge(true, '💾 저장 폴더 선택...');
+  return new Promise(res => {
+    _pickWaiters.set(reqid, res);
+    window.__wsSend({ type:'pick_save_folder', reqid, title: title || '저장할 폴더 선택',
+                      key: key || 'photo_save_dir', suggested: resolveSaveTarget().folder || '' });
+  });
+}
+// 저장 위치·파일명 확정. 반환 {folder, filename, base} / 취소 null.
+// 서버 미연결이면 예전처럼 파일명만 물어 다운로드 폴더에 저장한다.
+async function askSaveDest(defBase, ext){
+  const r = await askSavePath(defBase + ext);
+  if (r === undefined){
+    const n = prompt('파일명', defBase);
+    return n ? { folder:'', filename:n + ext, base:n } : null;
+  }
+  if (!r || !r.filename) return null;              // 취소
+  return { folder:r.folder, filename:r.filename,
+           base:r.filename.replace(/\.[^.]+$/, '') };
+}
+// 대화상자에서 고른 위치에 저장. folder 가 없으면 브라우저 다운로드로 폴백.
+function saveBlobTo(dest, blob, onSaved){
+  if (dest && dest.folder && window.__wsReady && window.__wsReady()){
+    window.__kmzOnSaved = onSaved || null;   // file_saved(ok) 때 호출 / 실패 시 미실행
     const fr = new FileReader();
-    fr.onload = () => {
-      window.__wsSend({ type:'save_kmz_dialog', filename, suggested:sug, data:fr.result.split(',')[1] });
-      window.__setBadge && window.__setBadge(true, '💾 저장 위치 선택...');
-    };
+    fr.onload = () => window.__saveViaPython(dest.folder, dest.filename,
+                                             fr.result.split(',')[1], true);
     fr.readAsDataURL(blob);
     return;
   }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = (dest && dest.filename) || 'export';
+  document.body.appendChild(a); a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(a.href); }, 1000);
+  if (onSaved) onSaved();
+}
+
+// 공통 저장 — 폴더가 정해지고 WS 연결되면 Python에 저장, 아니면 다운로드
+// (저장 위치를 따로 묻지 않는 자동 저장 경로. 대화상자 저장은 saveBlobTo 사용)
+function saveBlob(blob, filename, chooseDir, onSaved){
   const t = resolveSaveTarget();
   const folder = t.folder;
   if (folder && window.__wsReady && window.__wsReady()){
@@ -4096,28 +4425,29 @@ function _applyPhotoNewNames(newNames){
   return n;
 }
 
-function exportGPX() {
+async function exportGPX() {
   const expItems=getFilteredItems();   // 사이드바에 보이는 객체(필터 켜면 화면 안 객체만)
   const am=expItems.filter(i=>i.markerObj&&i.markerObj.marker&&i.markerObj.marker.getMap()).map(i=>i.markerObj);
   const pls=[]; expItems.forEach(i=>{ if(i.type==='track') for(const pl of _itemOverlays(i)) if(pl&&(pl.getMap()||pl._viewCulled)) pls.push(pl); });
-  const fname=prompt('파일명',defaultSaveName(am.at(-1)?.name?.trim()||'data'));if(!fname)return;
+  const dest=await askSaveDest(defaultSaveName(am.at(-1)?.name?.trim()||'data'),'.gpx');if(!dest)return;
+  const fname=dest.base;
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
   pls.forEach((pl,i)=>{const segs=pathParts(pl).map(part=>`<trkseg>\n`+part.map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name>${segs}</trk>\n`;});
   am.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
-  saveBlob(new Blob([gpx],{type:'application/gpx+xml'}), fname+'.gpx');
+  saveBlobTo(dest, new Blob([gpx],{type:'application/gpx+xml'}));
 }
 
 async function exportCSV() {
   const am=getFilteredItems().filter(i=>i.markerObj&&i.markerObj.marker&&i.markerObj.marker.getMap()).map(i=>i.markerObj);
   if(!am.length){alert('내보낼 마커가 없습니다.');return;}
-  const fname=prompt('CSV 파일명',defaultSaveName(document.getElementById('address-display').innerText.split(' ')[0]||'markers'));if(!fname)return;
+  const dest=await askSaveDest(defaultSaveName(document.getElementById('address-display').innerText.split(' ')[0]||'markers'),'.csv');if(!dest)return;
   const nnm=buildNumNameMap();
   const getAddr=m=>new Promise(r=>{if(m.addr!==undefined){r(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(res,status)=>{m.addr=status===kakao.maps.services.Status.OK?(res[0].address?.address_name||''):'';r(m.addr);});});
   let csv='﻿이름,위도,경도,주소\n';
   for(const m of am){const pos=m.marker.getPosition?m.marker.getPosition():null;if(!pos)continue;const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
-  saveBlob(new Blob([csv],{type:'text/csv;charset=utf-8;'}), fname+'.csv');
+  saveBlobTo(dest, new Blob([csv],{type:'text/csv;charset=utf-8;'}));
 }
 
 // 트랙(선) 항목 -> KML Placemark 문자열. 색상별로 묶인 보조선(extraOverlays)까지 모두 포함.
@@ -4199,7 +4529,9 @@ function markAllInsertedLive() {
 }
 async function exportKMZ() {
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
-  const fname=prompt('파일명',defaultSaveName(ds+'_지도'));if(!fname)return;
+  // 파일을 만들기 전에 저장 위치·파일명을 먼저 받는다 → KMZ 안 사진 이름도 확정된 이름 기준
+  const dest=await askSaveDest(defaultSaveName(ds+'_지도'),'.kmz');if(!dest)return;
+  const fname=dest.base;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set(),renames=[],seqRef={n:0},newNames=new Map();
   const expItems=getFilteredItems();   // 사이드바에 보이는 객체(필터 켜면 화면 안 객체만)
@@ -4211,15 +4543,43 @@ async function exportKMZ() {
   for(const item of expItems){if(item.polyline){kml+=_lineKmlPlacemarks(item,nnm,null,lnStyles);}else if(item.markerObj){const m=item.markerObj;if(!m.marker.getMap())continue;const p=m.marker.getPosition();const nm=newNames.get(m)||nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+=_lineKmlStyleDefs(lnStyles)+'</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
-  // 저장이 실제로 끝난 뒤에만 사진번호 반영·_live 표시 (대화상자 취소 시엔 안 함)
-  saveBlob(blob, fname+'.kmz', true, ()=>{ _sendPhotoRenames(renames); _applyPhotoNewNames(newNames); markAllInsertedLive(); });
+  // 저장이 실제로 끝난 뒤에만 사진번호 반영·_live 표시 (저장 실패 시엔 안 함)
+  saveBlobTo(dest, blob, ()=>{ _sendPhotoRenames(renames); _applyPhotoNewNames(newNames); markAllInsertedLive(); });
+}
+
+// 사진으로 저장 — 폴더만 지정하면 그 폴더에 전부 저장(파일명은 객체 이름 그대로).
+// list: [{src,name,lat,lng}]. 서버 미연결이면 예전처럼 다운로드 폴더로 내려받는다.
+async function savePhotosToFolder(list){
+  if(!list.length){alert('저장할 사진이 없습니다.');return;}
+  const folder=await askSaveFolder('사진 '+list.length+'장을 저장할 폴더 선택');
+  if(folder==='')return;                        // 취소
+  const used=new Set(); let n=0;
+  for(const p of list){
+    const du=await buildPhotoJpeg(p.src,p.lat,p.lng);
+    const base=((p.name||'image').replace(/[\/\\:*?"<>|]/g,'_').replace(/\.(jpe?g|png)$/i,'').trim())||'image';
+    let nm=base+'.jpg',c=1;
+    while(used.has(nm.toLowerCase())){nm=base+'_'+(c++)+'.jpg';}
+    used.add(nm.toLowerCase());
+    if(folder===undefined){                     // 서버 미연결 → 브라우저 다운로드
+      const a=document.createElement('a');a.href=du;a.download=nm;
+      document.body.appendChild(a);a.click();document.body.removeChild(a);
+      await new Promise(r=>setTimeout(r,300));
+    }else{
+      window.__wsSend({type:'save_file',folder,filename:nm,data:du.split(',')[1],
+                       overwrite:true,silent:true});
+      await new Promise(r=>setTimeout(r,40));
+    }
+    n++;
+  }
+  if(folder)window.__setBadge&&window.__setBadge(true,`✅ 사진 ${n}장 저장됨 → ${folder}`);
 }
 
 async function downloadAllPhotos(){
   const seen=new Set();
   const pm=getFilteredItems().filter(i=>i.markerObj).map(i=>i.markerObj).filter(m=>{if(!m.marker||!m.marker.getMap()||seen.has(m.marker))return false;seen.add(m.marker);return!!m.iw.getContent().querySelector('img');});
   const nnm=buildNumNameMap();
-  for(const m of pm){const img=m.iw.getContent().querySelector('img');const pos=m.marker.getPosition();await downloadPhotoWithGPS(img.src,nnm?.get(m)||m.name,pos.getLat(),pos.getLng());}
+  await savePhotosToFolder(pm.map(m=>{const img=m.iw.getContent().querySelector('img');const pos=m.marker.getPosition();
+    return{src:img.src,name:nnm?.get(m)||m.name,lat:pos.getLat(),lng:pos.getLng()};}));
 }
 
 function getSelectedExportItems(){
@@ -4231,28 +4591,28 @@ function getSelectedExportItems(){
   return{sm,sp};
 }
 
-function exportSelectedGPX(){
+async function exportSelectedGPX(){
   const r=getSelectedExportItems();if(!r)return;
   const{sm,sp}=r;
-  const fname=prompt('선택 객체 GPX',defaultSaveName(sm.at(-1)?.name||'selected'));if(!fname)return;
+  const dest=await askSaveDest(defaultSaveName(sm.at(-1)?.name||'selected'),'.gpx');if(!dest)return;
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
   sp.forEach((pl,i)=>{const segs=pathParts(pl).map(part=>`<trkseg>\n`+part.map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name>${segs}</trk>\n`;});
   sm.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
-  saveBlob(new Blob([gpx],{type:'application/gpx+xml'}), fname+'.gpx');
+  saveBlobTo(dest, new Blob([gpx],{type:'application/gpx+xml'}));
 }
 
 async function exportSelectedCSV(){
   const r=getSelectedExportItems();if(!r)return;
   const{sm}=r;
   if(!sm.length){alert('선택된 마커가 없습니다.');return;}
-  const fname=prompt('선택 객체 CSV',defaultSaveName('selected'));if(!fname)return;
+  const dest=await askSaveDest(defaultSaveName('selected'),'.csv');if(!dest)return;
   const nnm=buildNumNameMap();
   const getAddr=m=>new Promise(res=>{if(m.addr!==undefined){res(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(result,status)=>{m.addr=status===kakao.maps.services.Status.OK?(result[0].address?.address_name||''):'';res(m.addr);});});
   let csv='﻿이름,위도,경도,주소\n';
   for(const m of sm){const pos=m.marker.getPosition();const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
-  saveBlob(new Blob([csv],{type:'text/csv;charset=utf-8;'}), fname+'.csv');
+  saveBlobTo(dest, new Blob([csv],{type:'text/csv;charset=utf-8;'}));
 }
 
 async function exportSelectedKMZ(){
@@ -4261,7 +4621,8 @@ async function exportSelectedKMZ(){
   const selSet=new Set([...selectedItems].map(i=>filtered[i]).filter(Boolean));
   const selItems=allItems.filter(item=>selSet.has(item));
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
-  const fname=prompt('선택 객체 KMZ',defaultSaveName(ds+'_선택'));if(!fname)return;
+  const dest=await askSaveDest(defaultSaveName(ds+'_선택'),'.kmz');if(!dest)return;
+  const fname=dest.base;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set(),renames=[],seqRef={n:0},newNames=new Map();
   for(const item of selItems){if(!item.markerObj)continue;const m=item.markerObj;const sf=await _zipPhoto(zip,m,item,nnm,usedNames,seqRef,renames,newNames,fname);if(sf)photoFileMap.set(m,sf);}
@@ -4270,7 +4631,7 @@ async function exportSelectedKMZ(){
   for(const item of selItems){if(item.polyline){kml+=_lineKmlPlacemarks(item,nnm,null,lnStyles);}else if(item.markerObj){const m=item.markerObj;const p=m.marker.getPosition();const nm=newNames.get(m)||nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
   kml+=_lineKmlStyleDefs(lnStyles)+'</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
-  saveBlob(blob, fname+'.kmz', true, ()=>{ _sendPhotoRenames(renames); _applyPhotoNewNames(newNames); markAllInsertedLive(); });
+  saveBlobTo(dest, blob, ()=>{ _sendPhotoRenames(renames); _applyPhotoNewNames(newNames); markAllInsertedLive(); });
 }
 
 async function downloadSelectedPhotos(){
@@ -4279,7 +4640,8 @@ async function downloadSelectedPhotos(){
   const pm=sm.filter(m=>m.iw.getContent().querySelector('img'));
   if(!pm.length){alert('선택된 사진 마커가 없습니다.');return;}
   const nnm=buildNumNameMap();
-  for(const m of pm){const img=m.iw.getContent().querySelector('img');const pos=m.marker.getPosition();await downloadPhotoWithGPS(img.src,nnm?.get(m)||m.name,pos.getLat(),pos.getLng());}
+  await savePhotosToFolder(pm.map(m=>{const img=m.iw.getContent().querySelector('img');const pos=m.marker.getPosition();
+    return{src:img.src,name:nnm?.get(m)||m.name,lat:pos.getLat(),lng:pos.getLng()};}));
 }
 
 // ══════════════════════════════════════════════════
@@ -4322,13 +4684,13 @@ function compressImage(imgSrc){
   });
 }
 
-function downloadPhotoWithGPS(imgSrc,name,lat,lng){
+// 저장용 JPG 데이터URL 생성 — 화질 설정대로 축소 + GPS EXIF 삽입 (저장/다운로드 공통)
+function buildPhotoJpeg(imgSrc,lat,lng){
   return new Promise(r=>{
     const qVal=parseInt(document.getElementById('photoQuality')?.value??'200');
     const toDMS=v=>{const a=Math.abs(v),d=Math.floor(a),m=Math.floor((a-d)*60),s=(a-d-m/60)*3600;return[[d,1],[m,1],[Math.round(s*100),100]];};
     const insertGPS=du=>{try{let exif={};try{exif=piexif.load(imgSrc);}catch(e){}if(exif['0th']){delete exif['0th'][piexif.ImageIFD.UserComment];delete exif['0th'][piexif.ImageIFD.ImageDescription];}if(exif['Exif'])delete exif['Exif'][piexif.ExifIFD.UserComment];if(!exif['GPS'])exif['GPS']={};exif['GPS'][piexif.GPSIFD.GPSLatitudeRef]=lat>=0?'N':'S';exif['GPS'][piexif.GPSIFD.GPSLatitude]=toDMS(lat);exif['GPS'][piexif.GPSIFD.GPSLongitudeRef]=lng>=0?'E':'W';exif['GPS'][piexif.GPSIFD.GPSLongitude]=toDMS(lng);return piexif.insert(piexif.dump(exif),du);}catch(e){return du;}};
-    const doDownload=du=>{const res=insertGPS(du);const a=document.createElement('a');a.href=res;a.download=(name||'image')+'.jpg';document.body.appendChild(a);a.click();document.body.removeChild(a);setTimeout(r,300);};
-    if(qVal===0){doDownload(imgSrc);return;}
+    if(qVal===0){r(insertGPS(imgSrc));return;}
     const T=qVal*1024,image=new Image();
     image.onload=()=>{
       const MAX=1920;let w=image.width,h=image.height;
@@ -4336,9 +4698,19 @@ function downloadPhotoWithGPS(imgSrc,name,lat,lng){
       const c=document.createElement('canvas');c.width=w;c.height=h;c.getContext('2d').drawImage(image,0,0,w,h);
       let q=0.92,res=c.toDataURL('image/jpeg',q);
       while(res.length*0.75>T&&q>0.1){q=Math.round((q-0.05)*100)/100;res=c.toDataURL('image/jpeg',q);}
-      doDownload(res);
-    };image.src=imgSrc;
+      r(insertGPS(res));
+    };
+    image.onerror=()=>r(insertGPS(imgSrc));
+    image.src=imgSrc;
   });
+}
+
+// 사진 1장 내려받기 (말풍선의 사진저장 버튼)
+async function downloadPhotoWithGPS(imgSrc,name,lat,lng){
+  const du=await buildPhotoJpeg(imgSrc,lat,lng);
+  const a=document.createElement('a');a.href=du;a.download=(name||'image')+'.jpg';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+  await new Promise(r=>setTimeout(r,300));
 }
 
 // ══════════════════════════════════════════════════
@@ -4553,9 +4925,11 @@ window.onload=()=>{
   // ── 저장(saveBlob)에서 사용하는 Python 연동 공개 함수 ──
   let pendingSave = null;   // 덮어쓰기 확인용 보관 {folder, filename, b64}
   window.__wsReady = () => ws && ws.readyState === 1;
-  window.__saveViaPython = (folder, filename, b64) => {
+  // overwrite=true : 네이티브 저장 대화상자에서 이미 덮어쓰기를 확인한 경우
+  window.__saveViaPython = (folder, filename, b64, overwrite) => {
     pendingSave = { folder, filename, b64 };
-    ws.send(JSON.stringify({ type:'save_file', folder, filename, data:b64, overwrite:false }));
+    ws.send(JSON.stringify({ type:'save_file', folder, filename, data:b64,
+                             overwrite: !!overwrite }));
     setBadge(true, '💾 저장 중...');
   };
   // 외부(IIFE 바깥) 함수에서 WebSocket 전송 / 배지 표시할 수 있도록 노출
@@ -4873,8 +5247,19 @@ window.onload=()=>{
           });
           setBadge(true, n ? `✅ 원본 사진 ${n}개 이름변경됨` : '⚠️ 원본 사진 이름변경 없음');
           setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 2500);
+        } else if (d.type === 'save_path' || d.type === 'save_folder') {
+          // 저장 대화상자 결과 → askSavePath/askSaveFolder 의 Promise 해제
+          if (window.__resolvePick)
+            window.__resolvePick(d.reqid, d.type === 'save_path'
+              ? (d.path ? { folder:d.folder, filename:d.filename } : '')
+              : (d.folder || ''));
+          if ((d.type === 'save_path' && !d.path) || (d.type === 'save_folder' && !d.folder))
+            setBadge(true, '저장 취소됨');
         } else if (d.type === 'file_saved') {
-          if (d.ok) {
+          if (d.silent) {
+            // 사진 여러 장 저장 중 — 낱개 결과는 배지에 띄우지 않음
+            if (!d.ok) console.warn('사진 저장 실패:', d.filename);
+          } else if (d.ok) {
             setBadge(true, `✅ 저장됨: ${d.filename}`);
             if (d.folder) { console.log('저장 위치:', d.folder + '\\' + d.filename); showSaveStatus(`✅ 저장됨: ${d.folder}\\${d.filename}`); }
             pendingSave = null;
@@ -4899,7 +5284,7 @@ window.onload=()=>{
               } catch(e) { pendingSave = null; showSaveStatus(`❌ 저장 실패: ${e.message}`, false); }
             } else { pendingSave = null; }
           }
-          setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 3000);
+          if (!d.silent) setTimeout(() => setBadge(true, '🟢 탐색기 연동 중'), 3000);
         } else if (d.type === 'file_exists') {
           if (pendingSave && confirm(`'${d.filename}' 파일이 이미 있습니다.\n덮어쓰시겠습니까?`)) {
             ws.send(JSON.stringify({ type:'save_file', folder: pendingSave.folder,
