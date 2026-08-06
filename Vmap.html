@@ -2,11 +2,12 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>전태영의 사진지도 (VWorld) [웹]</title>
+<title>전태영의 사진지도 (VWorld)</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>">
 <!-- ── API 키: 사용자별 키를 최초 1회 입력받아 localStorage에 저장 ──
      키 재입력: 주소 뒤에 ?resetkey 를 붙여 열기 -->
 <!-- 키입력_설정.py / 사진위치표시.py 가 생성하는 키 파일 (없으면 조용히 무시됨) -->
+<script src="api_keys.js"></script>
 <script>
 if (location.search.indexOf('resetkey') >= 0) {
   localStorage.removeItem('vworld_key');
@@ -18,18 +19,6 @@ if (location.search.indexOf('resetkey') >= 0) {
 }
 // 데스크톱 키 입력창 연동: URL 해시(#vworld_key=..&kakao_js_key=..)로 받은 키를 localStorage 에 저장
 try { (location.hash||'').replace(/^#/,'').split('&').forEach(function(kv){var p=kv.split('=');if(p.length===2&&p[1]){var k=decodeURIComponent(p[0]);if(k==='kakao_js_key'||k==='vworld_key'||k==='kakao_rest_key')localStorage.setItem(k,decodeURIComponent(p[1]));}}); } catch(e){}
-window.JTY_API_KEYS = {
-  kakao_js_key: '94bf4516825c146467eb2318cd55b782',
-  vworld_key  : '55FD7275-A6F5-3B69-9966-CD4BFA2FD35F'
-};
-try {
-  localStorage.setItem('kakao_js_key', window.JTY_API_KEYS.kakao_js_key);
-  localStorage.setItem('vworld_key',   window.JTY_API_KEYS.vworld_key);
-  ['kakao_js_key', 'vworld_key'].forEach(function(k){
-    sessionStorage.removeItem('badkey_' + k);
-    localStorage.removeItem('badfilekey_' + k);
-  });
-} catch(e){}
 function _askApiKey(storeKey, name, guide){
   // 1순위: 이 기기에 저장된 키 (사용자가 직접 입력했거나 URL 해시로 받은 키).
   //   api_keys.js 파일 키를 1순위로 쓰면 파일 키가 죽은 키일 때 정상 키를 입력해도
@@ -78,10 +67,6 @@ function _apiKeyError(storeKey, name){
     location.reload();
   }
 }
-_apiKeyError = function(storeKey, name){
-  console.warn(name + ' 로딩 실패 - 배포 도메인(' + location.origin
-    + ')이 해당 API 콘솔에 등록돼 있는지 확인하세요.');
-};
 var VWORLD_GUIDE = '[브이월드 인증키 발급]\n'
   + '1. https://www.vworld.kr 회원가입/로그인\n'
   + '2. 오픈API → 인증키 발급 → 개발키 신청\n'
@@ -743,7 +728,11 @@ window.onload = () => {
       applyVisibility(type);
     });
   });
-  document.getElementById('insertBtn').addEventListener('click', insertLiveObjects);
+  document.getElementById('insertBtn').addEventListener('click', () => {
+    const paths = getCheckedSearchPaths();
+    if (paths.length) insertCheckedSearchItems(paths);   // 검색 결과 체크분 우선
+    else insertLiveObjects();
+  });
 
   // ── 컬럼 정렬 (헤더 클릭 → 해당 항목으로 정렬, 다시 누르면 역순) ──
   const _sortInd = { name:'sortNameInd', address:'sortAddrInd', length:'sortLenInd', taken:'sortTakenInd', geohash:'sortGeoInd' };
@@ -2536,6 +2525,37 @@ document.addEventListener('paste',e=>{
 function insertLiveObjects(){
   if(window.__promoteLive)window.__promoteLive();
 }
+// 검색 결과창에서 체크해 둔 파일 경로들 (없으면 빈 배열)
+function getCheckedSearchPaths(){
+  const modal=document.getElementById('searchResultModal');
+  if(!modal||modal.style.display==='none')return [];
+  return [...modal.querySelectorAll('.sr-check')]
+    .filter(c=>c.checked&&c._item&&c._item.path).map(c=>c._item.path);
+}
+// 검색 결과에서 체크한 파일들을 서버에서 받아 사이드바에 영구 삽입.
+//  임시(live) 객체로 먼저 올라오고 — KMZ 는 브라우저에서 푸는 데 시간이 걸리므로
+//  개수가 더 안 늘어날 때까지 기다렸다가 확정한다.
+async function insertCheckedSearchItems(paths){
+  if(!(window.__wsReady&&window.__wsReady())){
+    alert('탐색기 연동 서버(사진위치표시.py)가 실행 중이어야 합니다.');return;
+  }
+  window.__setBadge&&window.__setBadge(true,`⬇ ${paths.length}개 삽입 준비 중…`);
+  window.__wsSend({type:'preview_files',paths});
+  const t0=Date.now();
+  let last=-1,stable=0;
+  while(Date.now()-t0<20000){
+    await new Promise(r=>setTimeout(r,200));
+    const n=allItems.filter(i=>i._live).length;
+    if(n>0&&n===last){ if(++stable>=3)break; }   // 0.6초간 변화 없으면 완료
+    else stable=0;
+    last=n;
+  }
+  if(!allItems.some(i=>i._live)){
+    window.__setBadge&&window.__setBadge(true,'⚠️ 삽입할 객체를 받지 못했습니다');
+    return;
+  }
+  insertLiveObjects();
+}
 
 const _fmtR = d => d < 1000 ? `${Math.round(d)} m` : `${(d/1000).toFixed(2)} km`;
 
@@ -2555,6 +2575,7 @@ function stopLocationPick(){
 }
 function startLocationPick(){
   if(!(window.__wsReady&&window.__wsReady())){alert('탐색기 연동 서버(사진위치표시.py)가 실행 중이어야 합니다.');return;}
+  setSearchRunning(false);   // 이전 검색의 '중단하는 중…' 표시가 남아 있으면 지운다
   if(!vmap)return;
   if(roadviewPickMode)stopRoadviewPick();
   clearLocationPick(false);
@@ -4887,7 +4908,10 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
     if(ws&&ws.readyState<2)return;
     try{ws=new WebSocket(WS_URL);}catch(e){scheduleRetry();return;}
 
-    ws.onopen=()=>{setBadge(true,'🟢 탐색기 연동 중');clearTimeout(retryTimer);window.__wsSend({type:'get_ui_settings'});};
+    ws.onopen=()=>{setBadge(true,'🟢 탐색기 연동 중');clearTimeout(retryTimer);
+      // 재접속 — 끊기기 전 검색의 진행/중단 표시는 이미 의미가 없으니 내린다
+      try{setSearchRunning(false);setReindexRunning(false);}catch(e){}
+      window.__wsSend({type:'get_ui_settings'});};
 
     ws.onmessage=({data})=>{
       try{
