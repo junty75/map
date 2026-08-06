@@ -2,12 +2,11 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>전태영의 사진지도 (VWorld)</title>
+<title>전태영의 사진지도 (VWorld) [웹]</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>">
 <!-- ── API 키: 사용자별 키를 최초 1회 입력받아 localStorage에 저장 ──
      키 재입력: 주소 뒤에 ?resetkey 를 붙여 열기 -->
 <!-- 키입력_설정.py / 사진위치표시.py 가 생성하는 키 파일 (없으면 조용히 무시됨) -->
-<script src="api_keys.js"></script>
 <script>
 if (location.search.indexOf('resetkey') >= 0) {
   localStorage.removeItem('vworld_key');
@@ -19,6 +18,18 @@ if (location.search.indexOf('resetkey') >= 0) {
 }
 // 데스크톱 키 입력창 연동: URL 해시(#vworld_key=..&kakao_js_key=..)로 받은 키를 localStorage 에 저장
 try { (location.hash||'').replace(/^#/,'').split('&').forEach(function(kv){var p=kv.split('=');if(p.length===2&&p[1]){var k=decodeURIComponent(p[0]);if(k==='kakao_js_key'||k==='vworld_key'||k==='kakao_rest_key')localStorage.setItem(k,decodeURIComponent(p[1]));}}); } catch(e){}
+window.JTY_API_KEYS = {
+  kakao_js_key: '94bf4516825c146467eb2318cd55b782',
+  vworld_key  : '55FD7275-A6F5-3B69-9966-CD4BFA2FD35F'
+};
+try {
+  localStorage.setItem('kakao_js_key', window.JTY_API_KEYS.kakao_js_key);
+  localStorage.setItem('vworld_key',   window.JTY_API_KEYS.vworld_key);
+  ['kakao_js_key', 'vworld_key'].forEach(function(k){
+    sessionStorage.removeItem('badkey_' + k);
+    localStorage.removeItem('badfilekey_' + k);
+  });
+} catch(e){}
 function _askApiKey(storeKey, name, guide){
   // 1순위: 이 기기에 저장된 키 (사용자가 직접 입력했거나 URL 해시로 받은 키).
   //   api_keys.js 파일 키를 1순위로 쓰면 파일 키가 죽은 키일 때 정상 키를 입력해도
@@ -67,6 +78,10 @@ function _apiKeyError(storeKey, name){
     location.reload();
   }
 }
+_apiKeyError = function(storeKey, name){
+  console.warn(name + ' 로딩 실패 - 배포 도메인(' + location.origin
+    + ')이 해당 API 콘솔에 등록돼 있는지 확인하세요.');
+};
 var VWORLD_GUIDE = '[브이월드 인증키 발급]\n'
   + '1. https://www.vworld.kr 회원가입/로그인\n'
   + '2. 오픈API → 인증키 발급 → 개발키 신청\n'
@@ -558,6 +573,42 @@ function initMap(lat, lng) {
     pixelRatio         : 1
   };
   vmap = new vw.ol3.Map('vmap', vw.ol3.MapOptions);
+
+  // ── 최대 확대 한 단계 늘리기 (브이월드 기본 19 → 20) ──────────────────────────
+  // 카카오(map.html, minLevel:0)의 최대 확대가 z20 상당이라 브이월드가 한 단계 낮았다.
+  // 막는 곳이 두 군데라 둘 다 풀어야 한다. (지도 생성 전에 손대면 생성 과정에서 초기화됨)
+  //   1) 뷰의 해상도 제한 → 뷰를 통째로 교체 (OL 3.19라 setMaxZoom 이 없음)
+  //   2) 마우스 휠 → 브이월드가 MouseWheelZoom.handleEvent 를 덮어쓰면서
+  //      vw.ol3.ViewConfig.MAXZOOM 을 직접 읽어 그 이상이면 그냥 return 해버린다.
+  //      (1)만 하면 +/- 버튼은 되는데 휠만 19에서 멈춘다.
+  // 타일 요청은 소스 tileGrid(최대 19)로 클램프되므로 19레벨 영상이 2배 확대돼 그려진다.
+  try {
+    const _v0  = vmap.getView();
+    const _z0  = _v0.getZoom() || 14;
+    const _res = (typeof _v0.getResolutions === 'function') ? _v0.getResolutions() : null;
+    // OL 3.19 에는 getMaxZoom/getMinZoom 이 없다 → 극단값을 넣어보고 되돌아온 값으로 범위 확인
+    _v0.setZoom(30);  const _max = _v0.getZoom();
+    _v0.setZoom(-10); const _min = _v0.getZoom();
+    _v0.setZoom(_z0);
+    const _opt = {
+      projection: _v0.getProjection(),
+      center    : _v0.getCenter(),
+      zoom      : _z0,
+      rotation  : _v0.getRotation() || 0
+    };
+    if (_res && _res.length) {          // resolutions 배열로 만들어진 뷰: 끝에 절반 해상도 한 단계 추가
+      const _ext = _res.slice();
+      _ext.push(_ext[_ext.length - 1] / 2);
+      _opt.resolutions = _ext;
+    } else {                            // 줌 범위로 만들어진 뷰: 최소는 그대로, 최대만 +1
+      _opt.minZoom = _min;
+      _opt.maxZoom = _max + 1;
+    }
+    vmap.setView(new ol.View(_opt));
+    if (vw.ol3.ViewConfig && typeof vw.ol3.ViewConfig.MAXZOOM === 'number')
+      vw.ol3.ViewConfig.MAXZOOM = _max + 1;      // 휠 줌 제한 해제 (핸들러가 실행 시점에 읽음)
+  } catch (e) { console.warn('최대 줌 확장 실패:', e); }
+
   vmap.on('click',       mapClick);
   vmap.on('pointermove', mapMove);
   vmap.on('moveend',     refreshViewFilterList);   // '필터' 켜짐 시 화면이동마다 목록 갱신
@@ -1772,9 +1823,17 @@ function addTextLabelV(coord,text,rot,color,h,ax,ay){
     // h(CAD 문자 높이 m) 있으면 줌 연동 크기(dmap 방식).
     // 웹메르카토르는 위도만큼 축척 왜곡 -> 실제 m/px = resolution×cos(lat)
     const cosLat=Math.cos(ol.proj.toLonLat(coord)[1]*Math.PI/180)||1;
-    f.setStyle(function(feature,resolution){
-      const px=h*1.1/(resolution*cosLat);     // 크기 보정 x1.1 (사용자 체감 확정값 — 여기 숫자만 바꾸면 됨)
-      if(px<2)return null;                    // 너무 작으면 숨김
+    f.setStyle(function(a,b){
+      // ⚠ OpenLayers 의 '피처 단위' 스타일 함수는 인자가 (resolution) 하나뿐이다.
+      //   (feature, resolution) 두 개를 받는 건 '레이어' 스타일 함수뿐.
+      //   전에는 (feature,resolution)으로 받아 resolution 이 undefined → px 가 NaN →
+      //   font:'bold NaNpx' 가 무시돼 캔버스 기본 글꼴로 고정 = 축소해도 글자가 안 줄었다.
+      //   두 형태 모두 안전하게 처리한다.
+      let res=(typeof b==='number')?b:(typeof a==='number'?a:NaN);
+      if(!(res>0)){ try{ res=vmap.getView().getResolution(); }catch(e){} }
+      if(!(res>0))return null;
+      const px=h*1.1/(res*cosLat);            // 크기 보정 x1.1 (사용자 체감 확정값 — 여기 숫자만 바꾸면 됨)
+      if(!(px>=2))return null;                // 너무 작으면 숨김
       return new ol.style.Style({text:new ol.style.Text({
         text:txt,
         font:'bold '+Math.min(px,400)+'px sans-serif',
