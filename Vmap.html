@@ -4234,7 +4234,9 @@ async function exportHTM(selectedOnly){
           (팝업 차단 때문에 자동 이동은 불가 — 사용자 클릭이 반드시 필요하다.)
     이 파일도 var LINES/POLYS/... 형식을 그대로 담으므로 지도에 끌어다 놓으면 바로 복원된다.
    ══════════════════════════════════════════════════ */
-const GH_MAP_URL = 'https://junty75.github.io/map/Vmap';
+// 받는 쪽은 htm/img/index_vworld.html (모바일 브이월드 지도) — 수신부는 그쪽 _installLinkReceiver 참조.
+// 깃허브에는 /Vmap/ 로 올라가 있다 (카카오 판 index.html 은 /img/).
+const GH_MAP_URL = 'https://junty75.github.io/Vmap/';
 
 const LAUNCHER_JS = [
 "(function(){",
