@@ -3565,12 +3565,51 @@ function _loadExportedHtm(html,bounds){
   if(!LINES&&!POLYS&&!TEXTS&&!MARKERS&&!PHOTOS)return false;
   return _loadExportedData({LINES,POLYS,TEXTS,MARKERS,PHOTOS},bounds);
 }
+// ── 중복 방지 ────────────────────────────────────────
+// 같은 htm 을 여러 번 열어도 이미 지도에 있는 객체는 다시 만들지 않는다.
+// 매번 지도에 살아있는 객체에서 시그니처를 새로 뽑으므로, 지웠다가 다시 열면 되살아난다.
+// 선/면은 '스타일이 같은 것끼리 묶은 뒤'의 묶음 단위로 비교한다(아래 병합 로직과 같은 단위).
+// 점 객체(마커/사진/문자)는 좌표를 문자열로 굳혀 비교하면 안 된다 —
+// 35.6519945 처럼 반올림 경계에 걸린 값은 같은 지점인데도 "35.651994"/"35.651995"
+// 로 갈려 중복을 놓친다. 이름으로 묶고 좌표는 오차 허용(약 0.2m)으로 비교한다.
+const _PT_EPS=2e-6;
+const _R6=n=>Number(n).toFixed(6);
+const _sigCoords=parts=>parts.map(cs=>cs.map(ll=>_R6(ll.getLat())+','+_R6(ll.getLng())).join(';')).join('#');
+function _ptKeyExp(kind,name){return kind+'|'+(name==null?'':name);}
+function _hasPtExp(store,kind,lat,lng,name){
+  const a=store.pts.get(_ptKeyExp(kind,name)); if(!a)return false;
+  for(const p of a) if(Math.abs(p[0]-lat)<_PT_EPS&&Math.abs(p[1]-lng)<_PT_EPS)return true;
+  return false;
+}
+function _addPtExp(store,kind,lat,lng,name){
+  const k=_ptKeyExp(kind,name), a=store.pts.get(k);
+  if(a)a.push([lat,lng]); else store.pts.set(k,[[lat,lng]]);
+}
+function _existingExpSigs(){
+  const store={lines:new Set(),pts:new Map()};
+  for(const pl of polylines){
+    if(!pl)continue;
+    try{
+      if(pl._isPoly){
+        const rings=(pl._rings&&pl._rings.length)?pl._rings:[pl.getPath()];
+        store.lines.add('G|'+[pl._origColor,pl._origWeight,pl._opacity,pl._fillColor,pl._fillOpacity].join('|')+'|'+_sigCoords(rings));
+      }else{
+        store.lines.add('L|'+[pl._origColor,pl._origWeight,pl._opacity].join('|')+'|'+_sigCoords(pathParts(pl)));
+      }
+    }catch(e){}
+  }
+  for(const m of markers){ const p=m.marker&&m.marker.getPosition(); if(p)_addPtExp(store,'M',p.getLat(),p.getLng(),m.name); }
+  for(const t of textLabels){ const p=t.ov&&t.ov.getPosition(); if(p)_addPtExp(store,'T',p.getLat(),p.getLng(),t.t); }
+  return store;
+}
+
 // 위 형식의 데이터 객체를 지도에 그린다.
 // 파일에서 읽은 경우(_loadExportedHtm)와 런처 htm 이 postMessage 로 보낸 경우가 공유한다.
 function _loadExportedData(D,bounds){
   const LINES=D.LINES, POLYS=D.POLYS, TEXTS=D.TEXTS, MARKERS=D.MARKERS, PHOTOS=D.PHOTOS;
   const LL=a=>{const l=new kakao.maps.LatLng(a[0],a[1]);bounds.extend(l);return l;};
   const _defer=[];   // setBounds 뒤에 한 번만 setMap (이중 렌더 방지 — loadKMZ 와 동일)
+  const sigs=_existingExpSigs(); let skipped=0;
 
   // ── 선: 스타일(색·굵기·투명도)이 같은 것끼리 멀티파트 Polyline 1개로 묶음.
   //    도형 수천 개짜리 도면을 개별 오버레이로 만들면 pan/zoom 이 버벅임.
@@ -3582,6 +3621,9 @@ function _loadExportedData(D,bounds){
     (lgrp[k]=lgrp[k]||{c:g.c||'#ff0000',w:(g.w!=null)?g.w:3,o:(g.o!=null)?g.o:1,z:g.z||0,parts:[]}).parts.push(...parts);
   });
   Object.values(lgrp).forEach(s=>{
+    const sig='L|'+[s.c,s.w,s.o].join('|')+'|'+_sigCoords(s.parts);
+    if(sigs.lines.has(sig)){skipped++;return;}
+    sigs.lines.add(sig);
     const poly=new kakao.maps.Polyline({path:s.parts.length===1?s.parts[0]:s.parts,
       strokeWeight:s.w,strokeColor:s.c,strokeOpacity:s.o,strokeStyle:'solid',zIndex:s.z});
     if(s.parts.length>1)poly._parts=s.parts;   // getPath()는 멀티파트를 유실 — 내보내기/연장계산용 원본 보관
@@ -3602,6 +3644,9 @@ function _loadExportedData(D,bounds){
     pgrp[k].rings.push(...rings);pgrp[k].polys.push(rings);
   });
   Object.values(pgrp).forEach(s=>{
+    const sig='G|'+[s.c,s.w,s.o,s.fc,s.fo].join('|')+'|'+_sigCoords(s.rings);
+    if(sigs.lines.has(sig)){skipped++;return;}
+    sigs.lines.add(sig);
     const pgo=new kakao.maps.Polygon({path:s.rings.length===1?s.rings[0]:s.rings,
       strokeWeight:s.w,strokeColor:s.c,strokeOpacity:s.o,strokeStyle:'solid',
       fillColor:s.fc,fillOpacity:s.fo,zIndex:s.z});
@@ -3614,14 +3659,30 @@ function _loadExportedData(D,bounds){
   });
 
   // ── CAD 문자 / 마커 / 사진 (KMZ 로딩과 같은 헬퍼 재사용)
-  (TEXTS||[]).forEach(t=>{ if(String(t[2]||'').length) addTextLabel(LL(t),t[2],t[3],t[4],t[5],t[6],t[7]); });
-  (MARKERS||[]).forEach(m=>addMarker(LL(m),m[2]||'마커'));
-  (PHOTOS||[]).forEach(p=>{ if(p[3]) addPhotoMarker(LL(p),p[3],p[2]||'사진',''); });
+  //    건너뛴 객체도 LL() 로 좌표를 먼저 반영해 화면 맞춤 범위는 파일 전체 기준이 되게 한다
+  (TEXTS||[]).forEach(t=>{
+    if(!String(t[2]||'').length)return;
+    const ll=LL(t), name=String(t[2]);
+    if(_hasPtExp(sigs,'T',t[0],t[1],name)){skipped++;return;}
+    _addPtExp(sigs,'T',t[0],t[1],name); addTextLabel(ll,t[2],t[3],t[4],t[5],t[6],t[7]);
+  });
+  (MARKERS||[]).forEach(m=>{
+    const ll=LL(m), name=m[2]||'마커';
+    if(_hasPtExp(sigs,'M',m[0],m[1],name)){skipped++;return;}
+    _addPtExp(sigs,'M',m[0],m[1],name); addMarker(ll,name);
+  });
+  (PHOTOS||[]).forEach(p=>{
+    if(!p[3])return;
+    const ll=LL(p), name=p[2]||'사진';
+    if(_hasPtExp(sigs,'M',p[0],p[1],name)){skipped++;return;}
+    _addPtExp(sigs,'M',p[0],p[1],name); addPhotoMarker(ll,p[3],name,'');
+  });
 
   if(!bounds.isEmpty())map.setBounds(bounds);
   _defer.forEach(p=>{if(!p._parts)p.setMap(map);});   // 묶음선(_parts)은 컬링이 화면 교차 구간만 붙임
   cullBundlePolys();
   updateTextLabelSizes();
+  if(skipped)console.log('[중복] 이미 있는 객체 '+skipped+'개는 건너뜀');
   return true;
 }
 
@@ -5228,17 +5289,30 @@ async function exportHTM(selectedOnly){
 //    · postMessage     : 용량 제한이 사실상 없음  ← 이걸 쓴다
 //
 //  동작: 내보낸 htm 을 열면 [지도 열기] 버튼 하나뿐인 페이지가 뜬다. 누르면
-//        GH_MAP_URL#link 를 새 탭으로 열고, 그 탭이 응답하면 데이터를 postMessage 로 넘긴다.
-//        (팝업 차단 때문에 자동 이동은 불가 — 사용자 클릭이 반드시 필요하다.)
+//        지도 URL#link 를 새 탭으로 열고, 그 탭이 응답하면 데이터를 postMessage 로 넘긴다.
+//        데이터가 다 들어가면(__jtymap:'done') 런처 창은 window.close() 로 스스로 닫는다.
+//        (팝업 차단 때문에 자동 이동은 불가 — 사용자 클릭이 반드시 필요하다.
+//         클릭 없이 열리게 해봤지만 확인창과 지도창이 동시에 뜨는 게 더 헷갈려 되돌렸다.
+//         이 창을 아예 없애려면 지도를 iframe 으로 품어야 하는데, 부모가 file:// 이라
+//         내위치 권한 위임이 막힐 위험이 있어 하지 않는다.)
 //  이 파일도 var LINES/POLYS/... 형식을 그대로 담으므로 지도에 끌어다 놓으면 바로 복원된다.
 // ══════════════════════════════════════════════════
-// 받는 쪽은 htm/img/index.html (모바일 PWA 지도) — 수신부는 그쪽 _installLinkReceiver 참조.
-const GH_MAP_URL = 'https://junty75.github.io/img/';
+// 받는 쪽:
+//   휴대폰 → htm/img/index.html (모바일 PWA 지도)  = https://junty75.github.io/img/
+//   PC     → 이 파일의 깃허브 배포본               = https://junty75.github.io/map/map
+// 런처가 기기를 보고 알아서 고른다(아래 LAUNCHER_JS 의 isMobile). 수신부는 양쪽 다
+// _installLinkReceiver 로 같은 규약(__jtymap ping/ready/data/done)을 쓴다.
+const GH_MAP_URL    = 'https://junty75.github.io/img/';
+const GH_MAP_URL_PC = 'https://junty75.github.io/map/map';
 
 const LAUNCHER_JS = [
 "(function(){",
 "  var btn=document.getElementById('go'), msg=document.getElementById('msg');",
 "  var payload={LINES:LINES,POLYS:POLYS,TEXTS:TEXTS,MARKERS:MARKERS,PHOTOS:PHOTOS};",
+"  // PC 에서 열면 PC 지도, 휴대폰에서 열면 모바일 지도",
+"  var isMobile=/Android|iPhone|iPad|iPod|IEMobile|Opera Mini|Mobile/i.test(navigator.userAgent)",
+"    ||(navigator.maxTouchPoints>1&&/Mac/.test(navigator.platform));",
+"  var MAPURL=isMobile?MAPURL_MOBILE:MAPURL_PC;",
 "  var origin=MAPURL.replace(/^(https?:\\/\\/[^\\/]+).*$/,'$1');",
 "  var win=null, timer=null, tries=0, sent=false;",
 "  function say(h){msg.innerHTML=h;}",
@@ -5255,7 +5329,12 @@ const LAUNCHER_JS = [
 "    if(ev.origin!==origin||!ev.data)return;",
 "    if(ev.data.__jtymap==='ready')send(ev.source||win);",
 "    else if(ev.data.__jtymap==='done'){reset('지도 다시 열기');",
-"      say('지도에 표시됐습니다. 이 창은 닫아도 됩니다.');}",
+"      say('지도에 표시됐습니다. 이 창은 닫아도 됩니다.');",
+"      // 데이터 전달이 끝났으니 이 창은 스스로 닫는다.",
+"      // 크롬은 '스크립트가 연 창' 또는 '방문기록이 1개뿐인 탭'만 close() 를 허용한다.",
+"      // htm 을 더블클릭해서 연 탭은 기록이 1개라 닫히고, 다른 페이지에서 넘어와",
+"      // 기록이 쌓인 탭이면 거부돼 위 안내문과 함께 그대로 남는다.",
+"      setTimeout(function(){try{window.close();}catch(e){}},400);}",
 "  });",
 "  btn.onclick=function(){",
 "    sent=false;tries=0;btn.disabled=true;btn.textContent='여는 중...';",
@@ -5312,7 +5391,8 @@ function buildLauncherHtm(title, D){
 'var TEXTS='+J(D.TEXTS)+';',
 'var MARKERS='+J(D.MARKERS)+';',
 'var PHOTOS='+J(D.PHOTOS)+';',
-'var MAPURL='+JSON.stringify(GH_MAP_URL)+';',
+'var MAPURL_MOBILE='+JSON.stringify(GH_MAP_URL)+';',
+'var MAPURL_PC='+JSON.stringify(GH_MAP_URL_PC)+';',
 LAUNCHER_JS,
 '<\/script>','</body>','</html>'
 ].join('\n');
@@ -5326,10 +5406,30 @@ async function exportHTMLink(selectedOnly){
   saveBlobTo(dest,new Blob([buildLauncherHtm(dest.base,D)],{type:'text/html;charset=utf-8'}));
 }
 
+// ── 지도 탭 하나로 모으기 ────────────────────────────
+// 런처 htm 을 여러 번 열면 그때마다 새 지도 탭이 열린다. 창 이름('jtymap')은 탭 그룹을
+// 넘어 공유되지 않아 런처 쪽에서 기존 탭을 재사용할 방법이 없다. 그래서 반대로,
+// '런처로 새로 열린 탭'이 데이터를 다 받은 뒤 같은 주소의 다른 탭들에게 비켜달라고 방송한다.
+// #link 로 열린 탭에서만 방송하므로, 직접 띄운 지도창은 남의 탭을 닫지 않는다.
+let _tabBC=null, _tabClaimed=false;
+function _initTabChannel(){
+  if(!('BroadcastChannel' in window))return;
+  try{ _tabBC=new BroadcastChannel('jtymap-tabs:'+location.pathname); }catch(e){ return; }
+  _tabBC.onmessage=ev=>{
+    if(!ev.data||ev.data.t!=='takeover'||_tabClaimed)return;
+    try{ window.__skipUnloadGuard=true; window.close(); }catch(e){}
+  };
+}
+function _claimSingleTab(){
+  _tabClaimed=true;   // 동시에 두 탭이 방송해도 서로 닫아버리지 않게
+  if(_tabBC){ try{ _tabBC.postMessage({t:'takeover'}); }catch(e){} }
+}
+
 // 런처 htm 이 보낸 데이터 받기 — 이 페이지가 #link 로 열렸을 때만 동작한다.
 // (보내는 쪽이 file:// 이면 ev.origin 이 'null' 이라 발신 origin 으로는 걸러낼 수 없다.
 //  대신 #link 로 열렸을 때 딱 한 번만 받는 것으로 제한한다.)
 function _installLinkReceiver(){
+  _initTabChannel();   // 해시와 무관하게 — 먼저 열린 탭도 '비켜달라'를 받아야 한다
   if(!/(^|[#&])link(&|=|$)/.test(location.hash||''))return;
   let loaded=false;
   const reply=(ev,msg)=>{ try{ ev.source && ev.source.postMessage(msg,'*'); }catch(e){} };
@@ -5342,6 +5442,7 @@ function _installLinkReceiver(){
     window.removeEventListener('message',onMsg);
     try{
       _loadExportedData(d.payload||{}, new kakao.maps.LatLngBounds());
+      _claimSingleTab();                  // 먼저 열려 있던 지도 탭들은 닫는다
       reply(ev,{__jtymap:'done'});
     }catch(e){
       loaded=false;
