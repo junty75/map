@@ -2,11 +2,12 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8">
-  <title>전태영의 사진지도 (v4.0) [웹]</title>
+  <title>전태영의 사진지도 (v4.0)</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>">
   <!-- ── API 키: 사용자별 키를 최초 1회 입력받아 localStorage에 저장 ──
        키 재입력: 주소 뒤에 ?resetkey 를 붙여 열기 -->
   <!-- 키입력_설정.py / 사진위치표시.py 가 생성하는 키 파일 (없으면 조용히 무시됨) -->
+  <script src="api_keys.js"></script>
   <script>
   if (location.search.indexOf('resetkey') >= 0) {
     localStorage.removeItem('kakao_js_key');
@@ -14,18 +15,6 @@
   }
   // 데스크톱 키 입력창 연동: URL 해시(#kakao_js_key=..)로 받은 키를 localStorage 에 저장
   try { (location.hash||'').replace(/^#/,'').split('&').forEach(function(kv){var p=kv.split('=');if(p.length===2&&p[1]){var k=decodeURIComponent(p[0]);if(k==='kakao_js_key'||k==='vworld_key'||k==='kakao_rest_key')localStorage.setItem(k,decodeURIComponent(p[1]));}}); } catch(e){}
-window.JTY_API_KEYS = {
-  kakao_js_key: '94bf4516825c146467eb2318cd55b782',
-  vworld_key  : '55FD7275-A6F5-3B69-9966-CD4BFA2FD35F'
-};
-try {
-  localStorage.setItem('kakao_js_key', window.JTY_API_KEYS.kakao_js_key);
-  localStorage.setItem('vworld_key',   window.JTY_API_KEYS.vworld_key);
-  ['kakao_js_key', 'vworld_key'].forEach(function(k){
-    sessionStorage.removeItem('badkey_' + k);
-    localStorage.removeItem('badfilekey_' + k);
-  });
-} catch(e){}
   function _askApiKey(storeKey, name, guide){
     // 1순위: 이 기기에 저장된 키 (사용자가 직접 입력했거나 URL 해시로 받은 키).
     //   api_keys.js 파일 키를 1순위로 쓰면 파일 키가 죽은 키일 때 정상 키를 입력해도
@@ -74,10 +63,6 @@ try {
       location.reload();
     }
   }
-_apiKeyError = function(storeKey, name){
-  console.warn(name + ' 로딩 실패 - 배포 도메인(' + location.origin
-    + ')이 해당 API 콘솔에 등록돼 있는지 확인하세요.');
-};
   var KAKAO_GUIDE = '[카카오 JavaScript 키 발급]\n'
     + '1. https://developers.kakao.com 로그인\n'
     + '2. 내 애플리케이션 → 애플리케이션 추가하기\n'
@@ -251,11 +236,21 @@ _apiKeyError = function(storeKey, name){
     .zoom_reset, [class*="zoom_reset"] { display:none !important; }
 
     #search-form, .controls {
-      position:absolute; background:white; padding:5px; border-radius:5px;
-      box-shadow:0 2px 6px rgba(0,0,0,0.3); z-index:1000;
+      background:white; padding:5px; border-radius:5px;
+      box-shadow:0 2px 6px rgba(0,0,0,0.3);
     }
-    #search-form { top:10px; left:10px; display:flex; gap:5px; }
-    .controls { top:10px; right:10px; display:flex; flex-direction:column; align-items:flex-start; gap:4px; }
+    #search-form { position:absolute; z-index:1000; top:10px; left:10px; display:flex; gap:5px; }
+    /* 우측 상단 묶음 — 흰 상자(.controls) 아래에 배경 없는 버튼줄(#eraseRow)을 오른쪽 끝으로 */
+    #ctrlWrap { position:absolute; top:10px; right:10px; z-index:1000;
+                display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+    /* stretch: 각 줄이 패널 폭(= 가장 긴 줄)에 맞춰 늘어난다 →
+       윗줄 오른쪽에 남던 빈칸을 좌표표시창이 채운다 (#latlng-display 의 flex:1) */
+    .controls { display:flex; flex-direction:column; align-items:stretch; gap:4px; }
+    #eraseRow { display:flex; gap:6px; align-items:center; }
+    #eraseRow button {
+      padding:5px 11px; font-size:12px; font-family:inherit; border:none; border-radius:6px;
+      background:#fff; box-shadow:0 2px 6px rgba(0,0,0,0.3); cursor:pointer; white-space:nowrap;
+    }
 
     /* 주소 표시 → 좌측 하단 */
     #address-display {
@@ -269,6 +264,10 @@ _apiKeyError = function(storeKey, name){
 
     .dotOverlay.distanceInfo { background:white; border:1px solid #db4040; padding:5px; border-radius:3px; font-size:12px; white-space:nowrap; }
     .drawing-cursor * { cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><text x="0" y="20" font-size="20" fill="red">&#x3009;</text></svg>') 0 0, auto !important; }
+    /* 지우개 모드 커서 — map.setCursor() 는 카카오가 타일 위에서 되돌려 놓는 경우가 있어
+       Vmap 처럼 확실히 바뀌도록 CSS 로 강제한다. (pointer-events 는 건드리지 않는다 —
+       지우개는 마커 클릭을 받아야 하므로) */
+    .erase-cursor, .erase-cursor * { cursor: crosshair !important; }
     /* 선그리기 중: 지도 내부의 마커/오버레이가 마우스 이벤트를 받지 못하게 (클릭은 #drawCatcher가 전담) */
     .drawing-cursor *:not(#drawCatcher) { pointer-events: none !important; }
 
@@ -487,9 +486,10 @@ _apiKeyError = function(storeKey, name){
       <label><input type="checkbox" data-col="taken"> 촬영일시</label>
       <label><input type="checkbox" data-col="geohash"> Geohash</label>
     </div>
+    <div id="ctrlWrap">
     <div class="controls">
       <div style="display:flex;gap:6px;align-items:center;">
-        <input id="latlng-display" readonly style="width:178px;font-size:12px;cursor:pointer;" title="클릭하여 복사" onclick="copyCoordFromInput(this)">
+        <input id="latlng-display" readonly style="flex:1;min-width:178px;font-size:12px;cursor:pointer;" title="클릭하여 복사" onclick="copyCoordFromInput(this)">
         <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
         <button type="button" onclick="window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes')" title="도움말 (F1)">❓</button>
         <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
@@ -545,6 +545,12 @@ _apiKeyError = function(storeKey, name){
         </select>
         <button type="button" id="areaBtn" onclick="toggleAreaMeasure()" title="클릭으로 꼭짓점 찍기 · 더블클릭/우클릭으로 확정 · 버튼 다시 누르면 지우고 종료">면적재기</button>
       </div>
+    </div>
+    <!-- 지우개 줄 — 흰 패널 밖, 오른쪽 끝(면적재기 아래). 되돌리기는 지우개 왼쪽에 필요할 때만 -->
+    <div id="eraseRow">
+      <button type="button" id="eraseUndoBtn" onclick="undoErase()" style="display:none;" title="방금 지운 것부터 하나씩 되살립니다">↩️ 되돌리기</button>
+      <button type="button" id="eraseBtn" onclick="toggleEraseMode()" title="켜고 지도를 클릭하면 그 자리 근처 객체가 지워집니다 · 축소해서 누르면 근처 여러 개가 한 번에 · 버튼 다시 누르면 종료">🧽 지우개</button>
+    </div>
     </div>
     <div id="map"></div>
   </div>
@@ -2435,6 +2441,7 @@ function initializeMap(center) {
 
   kakao.maps.event.addListener(map, 'click', e => {
     if (_blockMapClick) return;
+    if (eraseMode) { eraseAt(e.latLng); return; }       // 지우개 — 누른 자리 근처 삭제
     if (areaMode) { areaAddPoint(e.latLng); return; }   // 면적재기 꼭짓점 추가
     // 로드뷰 지점 선택 모드 — 클릭한 지점의 카카오 로드뷰를 새 창으로 연다
     if (roadviewPickMode) {
@@ -2736,7 +2743,8 @@ function addMarker(latlng, desc) {
   div.innerHTML=`<span>${desc}</span><div style="cursor:pointer;font-weight:bold;margin-left:8px;">✖</div>`;
   const [label,btn]=div.querySelectorAll('span,div');
   const iw=new kakao.maps.InfoWindow({content:div});
-  kakao.maps.event.addListener(marker,'click',()=>{if(drawingMode)return;blockMapClick();selectItemByMarker(marker);});
+  // 지우개 모드에선 마커 선택 대신 삭제 (마커가 클릭을 먹어 지도 click 이 안 오므로 여기서 처리)
+  kakao.maps.event.addListener(marker,'click',()=>{if(drawingMode)return;if(eraseMode){blockMapClick();eraseAt(marker.getPosition());return;}blockMapClick();selectItemByMarker(marker);});
   kakao.maps.event.addListener(marker,'rightclick',()=>{if(drawingMode||Date.now()-_lastDrawFinishTs<400)return;showEditInput({marker,iw,name:desc},label);});
   btn.onclick=()=>iw.close();
   let holdTimer=null;
@@ -2813,6 +2821,115 @@ function clearTextLabels() {
   textLabels = [];
 }
 
+// ══════════════════════════════════════════════════
+//  지우개 (선택 삭제) + 되돌리기
+//
+//  켜고 지도를 클릭하면 그 지점 화면 ERASE_TOL_PX 픽셀 안의 객체를 한 번에 지운다.
+//  → 축소한 상태에서 누르면 같은 반경이 넓은 지역을 덮으므로 근처 여러 개가 한꺼번에.
+//  삭제 단위는 '사이드바 항목 하나'다(선 메뉴의 삭제와 같은 기준) — 묶음선처럼 한
+//  항목이 여러 오버레이를 갖고 있으면 그 항목 전체가 지워진다.
+//  되돌리기 버튼은 지우개로 실제로 지웠을 때만 나타나고, 모드를 끄면 이력과 함께 사라진다.
+//  (앱 전체 Undo 스택과는 섞지 않는다 — Ctrl+Z 와 서로 꼬이지 않게)
+// ══════════════════════════════════════════════════
+const ERASE_TOL_PX = 22;
+let eraseMode = false;
+let eraseHistory = [];   // [ [ {kind:'item',item} | {kind:'text',obj}, ... ], ... ]
+
+function _updateEraseUndoBtn() {
+  const b = document.getElementById('eraseUndoBtn');
+  if (b) b.style.display = (eraseMode && eraseHistory.length) ? '' : 'none';
+}
+function toggleEraseMode() {
+  eraseMode = !eraseMode;
+  const b = document.getElementById('eraseBtn');
+  if (eraseMode) {
+    if (areaMode) stopAreaMeasure();                                        // 면적재기와 동시 사용 방지
+    if (typeof drawingMode !== 'undefined' && drawingMode) finishDrawing(); // 선그리기와 동시 사용 방지
+    if (b) { b.style.background = '#e53935'; b.style.color = '#fff'; }
+    map.setCursor('crosshair');
+    document.getElementById('map').classList.add('erase-cursor');
+  } else {
+    if (b) { b.style.background = ''; b.style.color = ''; }
+    map.setCursor('');
+    document.getElementById('map').classList.remove('erase-cursor');
+    eraseHistory = [];   // 모드를 끝내면 되돌리기 이력도 비운다
+  }
+  _updateEraseUndoBtn();
+}
+
+// 화면 픽셀 반경 → 위도(도) 반경
+function _eraseTolDeg() {
+  const b = map.getBounds(); if (!b) return 0;
+  const h = document.getElementById('map').clientHeight || 800;
+  return (b.getNorthEast().getLat() - b.getSouthWest().getLat()) / h * ERASE_TOL_PX;
+}
+// 오버레이(선/면)가 (px,py) 에서 tol 안에 있나 — 경도는 cos(위도) 보정 후 평면 근사
+function _eraseNearPoly(pl, px, py, cosLat, tol) {
+  if (!pl) return false;
+  const parts = (pl._rings && pl._rings.length) ? pl._rings : pathParts(pl);
+  for (const cs of parts) {
+    if (!cs || cs.length < 1) continue;
+    let ax = (cs[0].getLng() - px) * cosLat, ay = cs[0].getLat() - py;
+    if (Math.hypot(ax, ay) < tol) return true;
+    for (let i = 1; i < cs.length; i++) {
+      const bx = (cs[i].getLng() - px) * cosLat, by = cs[i].getLat() - py;
+      const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+      let t = len2 > 0 ? -(ax * dx + ay * dy) / len2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      if (Math.hypot(ax + dx * t, ay + dy * t) < tol) return true;
+      ax = bx; ay = by;
+    }
+  }
+  return false;
+}
+
+function eraseAt(latLng) {
+  const tol = _eraseTolDeg(); if (!(tol > 0)) return;
+  const py = latLng.getLat(), px = latLng.getLng();
+  const cosLat = Math.cos(py * Math.PI / 180);
+  const near = (lat, lng) => Math.hypot((lng - px) * cosLat, lat - py) <= tol;
+
+  const batch = [];
+  for (const item of allItems.slice()) {
+    if (item.markerObj && item.markerObj.marker && item.markerObj.marker.getMap()) {
+      const p = item.markerObj.marker.getPosition();
+      if (p && near(p.getLat(), p.getLng())) { batch.push({ kind: 'item', item }); continue; }
+    }
+    if (item.type === 'track') {
+      for (const o of _itemOverlays(item)) {
+        if ((o.getMap() || o._viewCulled) && _eraseNearPoly(o, px, py, cosLat, tol)) {
+          batch.push({ kind: 'item', item }); break;
+        }
+      }
+    }
+  }
+  // CAD 문자 라벨은 사이드바 항목이 아니라 따로 처리
+  for (const t of textLabels.slice()) {
+    const p = t.ov && t.ov.getPosition();
+    if (p && t.ov.getMap() && near(p.getLat(), p.getLng())) batch.push({ kind: 'text', obj: t });
+  }
+
+  if (!batch.length) return;
+  for (const b of batch) {
+    if (b.kind === 'item') _removeItemSilent(b.item);
+    else { b.obj.ov.setMap(null); textLabels = textLabels.filter(x => x !== b.obj); }
+  }
+  eraseHistory.push(batch);
+  if (eraseHistory.length > 60) eraseHistory.shift();
+  _updateEraseUndoBtn();
+}
+
+function undoErase() {
+  const batch = eraseHistory.pop();
+  if (!batch) { _updateEraseUndoBtn(); return; }
+  for (const b of batch) {
+    if (b.kind === 'item') _readdItemSilent(b.item);
+    else { b.obj.ov.setMap(map); if (!textLabels.includes(b.obj)) textLabels.push(b.obj); }
+  }
+  try { cullBundlePolys(); updateTextLabelSizes(); } catch (e) {}
+  _updateEraseUndoBtn();
+}
+
 // ── 면적재기 (기본지도.htm 이식) ──
 //    클릭=꼭짓점 추가, 더블클릭/우클릭=확정, 버튼 재클릭=지우고 종료.
 //    확정 후 다시 클릭하면 새 측정 시작(이전 그림 삭제).
@@ -2821,6 +2938,7 @@ let areaMode = false, areaDrawing = false, areaPath = [], areaLine = null,
     _areaEvtReady = false;
 function toggleAreaMeasure() {
   if (areaMode) { stopAreaMeasure(); return; }
+  if (eraseMode) toggleEraseMode();                                         // 지우개와 동시 사용 방지
   if (typeof drawingMode !== 'undefined' && drawingMode) finishDrawing();   // 선그리기와 동시 사용 방지
   areaMode = true;
   const b = document.getElementById('areaBtn');
@@ -2932,6 +3050,8 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate, fileHandle=null) {
   let _clickTimer=null;
   kakao.maps.event.addListener(marker,'click',()=>{
     if(drawingMode)return;
+    // 지우개 모드에선 선택/미리보기 대신 삭제 (마커가 클릭을 먹어 지도 click 이 안 오므로 여기서)
+    if(eraseMode){if(_clickTimer){clearTimeout(_clickTimer);_clickTimer=null;}blockMapClick();eraseAt(marker.getPosition());return;}
     if(_clickTimer){clearTimeout(_clickTimer);_clickTimer=null;
       // 더블클릭: 수정창 열기
       iw.open(map,marker);
@@ -3341,6 +3461,7 @@ function hideDrawCatcher() {
 
 function startDrawing() {
   if (drawingMode) return;
+  if (eraseMode) toggleEraseMode();   // 지우개와 동시 사용 방지
   if (moveLine){moveLine.setMap(null);moveLine=null;}
   if (distanceOverlay){distanceOverlay.setMap(null);distanceOverlay=null;}
   drawingMode=true; currentPath=[];

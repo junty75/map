@@ -2,11 +2,12 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>전태영의 사진지도 (VWorld) [웹]</title>
+<title>전태영의 사진지도 (VWorld)</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>">
 <!-- ── API 키: 사용자별 키를 최초 1회 입력받아 localStorage에 저장 ──
      키 재입력: 주소 뒤에 ?resetkey 를 붙여 열기 -->
 <!-- 키입력_설정.py / 사진위치표시.py 가 생성하는 키 파일 (없으면 조용히 무시됨) -->
+<script src="api_keys.js"></script>
 <script>
 if (location.search.indexOf('resetkey') >= 0) {
   localStorage.removeItem('vworld_key');
@@ -18,18 +19,6 @@ if (location.search.indexOf('resetkey') >= 0) {
 }
 // 데스크톱 키 입력창 연동: URL 해시(#vworld_key=..&kakao_js_key=..)로 받은 키를 localStorage 에 저장
 try { (location.hash||'').replace(/^#/,'').split('&').forEach(function(kv){var p=kv.split('=');if(p.length===2&&p[1]){var k=decodeURIComponent(p[0]);if(k==='kakao_js_key'||k==='vworld_key'||k==='kakao_rest_key')localStorage.setItem(k,decodeURIComponent(p[1]));}}); } catch(e){}
-window.JTY_API_KEYS = {
-  kakao_js_key: '94bf4516825c146467eb2318cd55b782',
-  vworld_key  : '55FD7275-A6F5-3B69-9966-CD4BFA2FD35F'
-};
-try {
-  localStorage.setItem('kakao_js_key', window.JTY_API_KEYS.kakao_js_key);
-  localStorage.setItem('vworld_key',   window.JTY_API_KEYS.vworld_key);
-  ['kakao_js_key', 'vworld_key'].forEach(function(k){
-    sessionStorage.removeItem('badkey_' + k);
-    localStorage.removeItem('badfilekey_' + k);
-  });
-} catch(e){}
 function _askApiKey(storeKey, name, guide){
   // 1순위: 이 기기에 저장된 키 (사용자가 직접 입력했거나 URL 해시로 받은 키).
   //   api_keys.js 파일 키를 1순위로 쓰면 파일 키가 죽은 키일 때 정상 키를 입력해도
@@ -78,10 +67,6 @@ function _apiKeyError(storeKey, name){
     location.reload();
   }
 }
-_apiKeyError = function(storeKey, name){
-  console.warn(name + ' 로딩 실패 - 배포 도메인(' + location.origin
-    + ')이 해당 API 콘솔에 등록돼 있는지 확인하세요.');
-};
 var VWORLD_GUIDE = '[브이월드 인증키 발급]\n'
   + '1. https://www.vworld.kr 회원가입/로그인\n'
   + '2. 오픈API → 인증키 발급 → 개발키 신청\n'
@@ -242,8 +227,15 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 #search-form{position:absolute;top:10px;left:10px;z-index:2000;background:#fff;padding:5px;border-radius:5px;box-shadow:0 2px 6px rgba(0,0,0,.3);display:flex;gap:5px;}
 #address-display{position:absolute;bottom:10px;left:10px;z-index:2000;background:rgba(0,0,0,.6);color:#fff;font-size:12px;padding:6px 10px;border-radius:5px;cursor:pointer;white-space:nowrap;max-width:440px;overflow:hidden;box-shadow:0 2px 6px rgba(0,0,0,.3);}
 #address-display:hover{background:rgba(0,0,0,.82);}
-.controls{position:absolute;top:10px;right:10px;z-index:2000;display:flex;flex-direction:column;align-items:flex-start;gap:4px;background:#fff;padding:6px 8px;border-radius:5px;box-shadow:0 2px 6px rgba(0,0,0,.3);}
+/* 우측 상단 묶음 — 흰 상자(.controls) 아래에 배경 없는 버튼줄(#eraseRow)을 오른쪽 끝으로 */
+#ctrlWrap{position:absolute;top:10px;right:10px;z-index:2000;display:flex;flex-direction:column;align-items:flex-end;gap:6px;}
+/* stretch: 각 줄이 패널 폭(= 가장 긴 줄)에 맞춰 늘어난다 →
+   윗줄 오른쪽에 남던 빈칸을 좌표표시창이 채운다 (#latlng-box 의 flex:1) */
+.controls{display:flex;flex-direction:column;align-items:stretch;gap:4px;background:#fff;padding:6px 8px;border-radius:5px;box-shadow:0 2px 6px rgba(0,0,0,.3);}
 .controls button,.controls select,.controls input{padding:4px 7px;font-size:12px;font-family:inherit;border:1px solid #ccc;border-radius:4px;cursor:pointer;}
+/* 패널 밖 떠 있는 버튼줄 (지우개 / 면적재기 / 지적도) */
+#eraseRow,.float-row{display:flex;gap:6px;align-items:center;}
+#eraseRow button,.float-row button{padding:5px 11px;font-size:12px;font-family:inherit;border:none;border-radius:6px;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.3);cursor:pointer;white-space:nowrap;}
 #polyMenu{display:none;position:fixed;z-index:9999;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);min-width:140px;overflow:hidden;}
 #polyMenu.show{display:block;}
 #polyMenu button{display:block;width:100%;padding:12px 18px;border:none;background:none;text-align:left;font-size:14px;cursor:pointer;font-family:inherit;}
@@ -263,7 +255,8 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 .draw-mode,.draw-mode *{cursor:crosshair !important;}
 /* 선그리기 중 마커 라벨/팝업/핀 등 오버레이가 클릭을 가로채지 않게 + 옅게 (마커 위에도 꼭짓점 찍기) */
 #vmap.draw-mode .ol-overlay-container{pointer-events:none !important;opacity:.35;}
-#cadastralBtn.active{background:#e8f5e9;border-color:#43a047;color:#2e7d32;font-weight:bold;}
+/* 떠 있는 버튼(테두리 없음)이라 켜짐 표시는 배경+그림자로 */
+#cadastralBtn.active{background:#e8f5e9;color:#2e7d32;font-weight:bold;box-shadow:0 2px 8px rgba(67,160,71,.6);}
 
 /* ── 탐색기 연동 배지 ── */
 #explorerBadge{position:absolute;bottom:42px;left:10px;z-index:1001;background:rgba(0,0,0,0.62);color:#fff;font-size:11px;padding:4px 9px;border-radius:5px;white-space:nowrap;user-select:none;pointer-events:none;max-width:260px;overflow:hidden;text-overflow:ellipsis;}
@@ -407,9 +400,10 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
     <label><input type="checkbox" data-col="geohash"> Geohash</label>
   </div>
 
+  <div id="ctrlWrap">
   <div class="controls">
     <div style="display:flex;gap:5px;align-items:center;">
-      <input id="latlng-box" readonly style="width:178px;" title="클릭하여 복사" onclick="copyLL(this)">
+      <input id="latlng-box" readonly style="flex:1;min-width:178px;" title="클릭하여 복사" onclick="copyLL(this)">
       <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
       <button onclick="openHelp()" title="도움말 (F1)">❓ 도움말</button>
       <button id="drawBtn" onclick="toggleDraw()">선 그리기(Alt)</button>
@@ -466,9 +460,20 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
       <select id="airYear" onchange="chgAirYear(this.value)" title="국토지리정보원(국토정보플랫폼) 연도별 항공사진을 배경지도 위에 덮어서 봅니다. 지역에 따라 해당 연도 촬영본이 없으면 빈 화면으로 보일 수 있습니다.">
         <option value="">촬영연도(현재)</option>
       </select>
-      <button id="cadastralBtn" onclick="toggleCadastral()" title="지적도 켜기/끄기">🗺️ 지적도</button>
-      <button id="areaBtn" onclick="toggleAreaMeasure()" title="클릭으로 꼭짓점 찍기 · 우클릭으로 확정 · 버튼 다시 누르면 지우고 종료">면적재기</button>
     </div>
+  </div>
+  <!-- 흰 패널 밖, 오른쪽 끝에 세로로: 지우개 → 면적재기 → 지적도
+       (되돌리기는 지우개 왼쪽에, 지우개로 지운 게 있을 때만) -->
+  <div id="eraseRow">
+    <button id="eraseUndoBtn" onclick="undoErase()" style="display:none;" title="방금 지운 것부터 하나씩 되살립니다">↩️ 되돌리기</button>
+    <button id="eraseBtn" onclick="toggleEraseMode()" title="켜고 지도를 클릭하면 그 자리 근처 객체가 지워집니다 · 축소해서 누르면 근처 여러 개가 한 번에 · 버튼 다시 누르면 종료">🧽 지우개</button>
+  </div>
+  <div class="float-row">
+    <button id="areaBtn" onclick="toggleAreaMeasure()" title="클릭으로 꼭짓점 찍기 · 우클릭으로 확정 · 버튼 다시 누르면 지우고 종료">면적재기</button>
+  </div>
+  <div class="float-row">
+    <button id="cadastralBtn" onclick="toggleCadastral()" title="지적도 켜기/끄기">🗺️ 지적도</button>
+  </div>
   </div>
 
   <div id="vmap"></div>
@@ -1366,6 +1371,7 @@ function mapClick(evt) {
     openRoadview(rll[1], rll[0]);   // lat, lng
     return;
   }
+  if (eraseMode) { eraseAt(coord); return; }        // 지우개 — 누른 자리 근처 삭제
   if (areaMode) { areaAddPointV(coord); return; }   // 면적재기 꼭짓점 추가
   if (drawing) { drawCoords.push(coord); refreshDraw(); return; }
   let hit = false;
@@ -1617,6 +1623,7 @@ function _drawStyle(){
 }
 function startDraw() {
   if (drawing) return;
+  if (eraseMode) toggleEraseMode();   // 지우개와 동시 사용 방지
   drawing=true; drawCoords=[];
   const ds=_drawStyle();
   drawLayer=mkLineLyr([],ds.color,ds.width); drawLayer._color=ds.color; drawLayer._width=ds.width; addLyr(drawLayer);
@@ -1871,8 +1878,117 @@ function _ensureAreaLyr(){
   if(!areaLyr){areaLyr=new ol.layer.Vector({source:new ol.source.Vector(),zIndex:210});addLyr(areaLyr);}
   return areaLyr;
 }
+/* ══════════════════════════════════════════════════
+   지우개 (선택 삭제) + 되돌리기
+
+   켜고 지도를 클릭하면 그 지점 화면 ERASE_TOL_PX 픽셀 안의 객체를 한 번에 지운다.
+   → 축소한 상태에서 누르면 같은 반경이 넓은 지역을 덮으므로 근처 여러 개가 한꺼번에.
+   삭제 단위는 '사이드바 항목 하나'다(선 메뉴의 삭제와 같은 기준).
+   되돌리기 버튼은 지우개로 실제로 지웠을 때만 나타나고, 모드를 끄면 이력과 함께 사라진다.
+   (앱 전체 Undo 스택과는 섞지 않는다 — Ctrl+Z 와 서로 꼬이지 않게)
+══════════════════════════════════════════════════ */
+const ERASE_TOL_PX=22;
+let eraseMode=false;
+let eraseHistory=[];   // [ [ {kind:'mk'|'poly'|'text', ...}, ... ], ... ]
+
+function _updateEraseUndoBtn(){
+  const b=document.getElementById('eraseUndoBtn');
+  if(b) b.style.display=(eraseMode&&eraseHistory.length)?'':'none';
+}
+function toggleEraseMode(){
+  eraseMode=!eraseMode;
+  const b=document.getElementById('eraseBtn');
+  if(eraseMode){
+    if(areaMode) stopAreaMeasure();   // 면적재기와 동시 사용 방지
+    if(drawing) endDraw();            // 선그리기와 동시 사용 방지
+    closeAllPopups();
+    if(b){b.style.background='#e53935';b.style.color='#fff';}
+    vmap.getViewport().style.cursor='crosshair';
+  }else{
+    if(b){b.style.background='';b.style.color='';}
+    vmap.getViewport().style.cursor='';
+    eraseHistory=[];   // 모드를 끝내면 되돌리기 이력도 비운다
+  }
+  _updateEraseUndoBtn();
+}
+// 레이어(선/면)가 좌표 c 에서 tol(지도단위 m) 안에 있나
+function _eraseNearLyr(lyr,c,tol){
+  for(const cs of coordParts(lyr)){
+    if(!cs||!cs.length)continue;
+    if(cs.length===1) { if(Math.hypot(cs[0][0]-c[0],cs[0][1]-c[1])<=tol) return true; continue; }
+    for(let i=0;i<cs.length-1;i++) if(ptSegDist(c,cs[i],cs[i+1])<=tol) return true;
+  }
+  return false;
+}
+function eraseAt(coord){
+  if(!coord)return;
+  let res=0; try{ res=vmap.getView().getResolution(); }catch(e){}
+  if(!(res>0))return;
+  const tol=res*ERASE_TOL_PX;   // 화면 픽셀 반경 → 지도 좌표 반경
+
+  const batch=[];
+  for(const m of markers.slice()){
+    const c=m.feat.getGeometry().getCoordinates();
+    if(Math.hypot(c[0]-coord[0],c[1]-coord[1])<=tol) batch.push({kind:'mk',m});
+  }
+  for(const lyr of polylines.slice()){
+    if(_eraseNearLyr(lyr,coord,tol)) batch.push({kind:'poly',lyr});
+  }
+  if(textLabelLyr){
+    for(const f of textLabelLyr.getSource().getFeatures().slice()){
+      const c=f.getGeometry().getCoordinates();
+      if(Math.hypot(c[0]-coord[0],c[1]-coord[1])<=tol) batch.push({kind:'text',f});
+    }
+  }
+  if(!batch.length)return;
+
+  closeAllPopups();
+  for(const b of batch){
+    if(b.kind==='mk'){
+      const item=allItems.find(i=>i.mkObj===b.m);
+      b.item=item; b.allIdx=item?allItems.indexOf(item):-1;
+      removeLyr(b.m.lyr); if(b.m.ov){vmap.removeOverlay(b.m.ov);b.m.ov=null;}
+      markers=markers.filter(x=>x!==b.m);
+      if(item) allItems=allItems.filter(i=>i!==item);
+    }else if(b.kind==='poly'){
+      const item=allItems.find(i=>i.polyLyr===b.lyr);
+      b.item=item; b.allIdx=item?allItems.indexOf(item):-1;
+      b.polyIdx=polylines.indexOf(b.lyr);
+      removeLyr(b.lyr);
+      polylines=polylines.filter(p=>p!==b.lyr);
+      if(item) allItems=allItems.filter(i=>i!==item);
+    }else{
+      try{ textLabelLyr.getSource().removeFeature(b.f); }catch(e){}
+    }
+  }
+  renderList();
+  eraseHistory.push(batch);
+  if(eraseHistory.length>60) eraseHistory.shift();
+  _updateEraseUndoBtn();
+}
+function undoErase(){
+  const batch=eraseHistory.pop();
+  if(!batch){_updateEraseUndoBtn();return;}
+  for(const b of batch){
+    if(b.kind==='mk'){
+      addLyr(b.m.lyr); markers.push(b.m);
+      if(b.item) allItems.splice(Math.min(b.allIdx<0?allItems.length:b.allIdx,allItems.length),0,b.item);
+    }else if(b.kind==='poly'){
+      addLyr(b.lyr);
+      if(b.polyIdx>=0) polylines.splice(Math.min(b.polyIdx,polylines.length),0,b.lyr); else polylines.push(b.lyr);
+      if(b.item) allItems.splice(Math.min(b.allIdx<0?allItems.length:b.allIdx,allItems.length),0,b.item);
+    }else{
+      try{ _ensureTextLabelLyr().getSource().addFeature(b.f); }catch(e){}
+    }
+  }
+  renderList();
+  if(allItems.length===1) openSidebar();
+  _updateEraseUndoBtn();
+}
+
 function toggleAreaMeasure(){
   if(areaMode){ stopAreaMeasure(); return; }
+  if(eraseMode) toggleEraseMode();             // 지우개와 동시 사용 방지
   if(drawing) endDraw();                       // 선그리기와 동시 사용 방지
   areaMode=true;
   const b=document.getElementById('areaBtn'); if(b){b.style.background='#fb8c00';b.style.color='#fff';}
