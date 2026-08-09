@@ -2863,10 +2863,15 @@ function toggleEraseMode() {
     if (b) { b.style.background = '#e53935'; b.style.color = '#fff'; }
     map.setCursor('crosshair');
     document.getElementById('map').classList.add('erase-cursor');
+    // 드래그를 '영역 선택'으로 쓰므로 지도 끌기는 잠근다 (모드를 끄면 원복)
+    try { map.setDraggable(false); } catch (e) {}
   } else {
     if (b) { b.style.background = ''; b.style.color = ''; }
     map.setCursor('');
     document.getElementById('map').classList.remove('erase-cursor');
+    try { map.setDraggable(true); } catch (e) {}
+    _eraseDragFrom = null;
+    _eraseRectEl().style.display = 'none';
     eraseHistory = [];   // 모드를 끝내면 되돌리기 이력도 비운다
   }
   _updateEraseUndoBtn();
@@ -2898,32 +2903,29 @@ function _eraseNearPoly(pl, px, py, cosLat, tol) {
   return false;
 }
 
-function eraseAt(latLng) {
-  const tol = _eraseTolDeg(); if (!(tol > 0)) return;
-  const py = latLng.getLat(), px = latLng.getLng();
-  const cosLat = Math.cos(py * Math.PI / 180);
-  const near = (lat, lng) => Math.hypot((lng - px) * cosLat, lat - py) <= tol;
-
+// 삭제 대상 모으기 — hitPt(lat,lng) / hitPoly(overlay) 판정만 갈아끼우면
+// '한 점 근처'(클릭)와 '사각형 안'(드래그)이 같은 코드를 쓴다.
+function _eraseCollect(hitPt, hitPoly) {
   const batch = [];
   for (const item of allItems.slice()) {
     if (item.markerObj && item.markerObj.marker && item.markerObj.marker.getMap()) {
       const p = item.markerObj.marker.getPosition();
-      if (p && near(p.getLat(), p.getLng())) { batch.push({ kind: 'item', item }); continue; }
+      if (p && hitPt(p.getLat(), p.getLng())) { batch.push({ kind: 'item', item }); continue; }
     }
     if (item.type === 'track') {
       for (const o of _itemOverlays(item)) {
-        if ((o.getMap() || o._viewCulled) && _eraseNearPoly(o, px, py, cosLat, tol)) {
-          batch.push({ kind: 'item', item }); break;
-        }
+        if ((o.getMap() || o._viewCulled) && hitPoly(o)) { batch.push({ kind: 'item', item }); break; }
       }
     }
   }
   // CAD 문자 라벨은 사이드바 항목이 아니라 따로 처리
   for (const t of textLabels.slice()) {
     const p = t.ov && t.ov.getPosition();
-    if (p && t.ov.getMap() && near(p.getLat(), p.getLng())) batch.push({ kind: 'text', obj: t });
+    if (p && t.ov.getMap() && hitPt(p.getLat(), p.getLng())) batch.push({ kind: 'text', obj: t });
   }
-
+  return batch;
+}
+function _eraseApply(batch) {
   if (!batch.length) return;
   for (const b of batch) {
     if (b.kind === 'item') _removeItemSilent(b.item);
@@ -2932,6 +2934,76 @@ function eraseAt(latLng) {
   eraseHistory.push(batch);
   if (eraseHistory.length > 60) eraseHistory.shift();
   _updateEraseUndoBtn();
+}
+
+function eraseAt(latLng) {
+  const tol = _eraseTolDeg(); if (!(tol > 0)) return;
+  const py = latLng.getLat(), px = latLng.getLng();
+  const cosLat = Math.cos(py * Math.PI / 180);
+  _eraseApply(_eraseCollect(
+    (lat, lng) => Math.hypot((lng - px) * cosLat, lat - py) <= tol,
+    o => _eraseNearPoly(o, px, py, cosLat, tol)));
+}
+
+// ── 드래그로 영역 지우기 ──
+// 지우개 모드에서 지도를 끌면 점선 사각형이 생기고, 놓으면 그 안의 객체가 한 번에 지워진다.
+// (한 번의 드래그 = 되돌리기 한 묶음)
+// 선/면은 꼭짓점이 하나라도 사각형 안에 들면 대상 — 화면에서 보이는 대로 잡힌다.
+function eraseInRect(x1, y1, x2, y2) {
+  const el = document.getElementById('map'), rc = el.getBoundingClientRect();
+  let proj; try { proj = map.getProjection(); } catch (e) { return; }
+  if (!proj) return;
+  const toLL = (x, y) => proj.coordsFromContainerPoint(new kakao.maps.Point(x - rc.left, y - rc.top));
+  const a = toLL(x1, y1), b = toLL(x2, y2);
+  const latMin = Math.min(a.getLat(), b.getLat()), latMax = Math.max(a.getLat(), b.getLat());
+  const lngMin = Math.min(a.getLng(), b.getLng()), lngMax = Math.max(a.getLng(), b.getLng());
+  const inRect = (lat, lng) => lat >= latMin && lat <= latMax && lng >= lngMin && lng <= lngMax;
+  const polyInRect = pl => {
+    const parts = (pl._rings && pl._rings.length) ? pl._rings : pathParts(pl);
+    for (const cs of parts) for (const ll of (cs || []))
+      if (inRect(ll.getLat(), ll.getLng())) return true;
+    return false;
+  };
+  _eraseApply(_eraseCollect(inRect, polyInRect));
+}
+
+let _eraseRect = null, _eraseDragFrom = null;
+function _eraseRectEl() {
+  if (!_eraseRect) {
+    _eraseRect = document.createElement('div');
+    _eraseRect.style.cssText = 'position:fixed;z-index:9998;display:none;pointer-events:none;'
+      + 'border:2px dashed #e53935;background:rgba(229,57,53,0.12);border-radius:2px;';
+    document.body.appendChild(_eraseRect);
+  }
+  return _eraseRect;
+}
+function _installEraseDrag() {
+  const mapEl = document.getElementById('map');
+  mapEl.addEventListener('pointerdown', e => {
+    if (!eraseMode || e.button !== 0) return;
+    // 마커 mousedown 이 setDraggable(true) 로 되돌려 놓는 경우가 있어 매번 다시 잠근다
+    try { map.setDraggable(false); } catch (err) {}
+    _eraseDragFrom = { x: e.clientX, y: e.clientY };
+  });
+  window.addEventListener('pointermove', e => {
+    if (!_eraseDragFrom) return;
+    const dx = e.clientX - _eraseDragFrom.x, dy = e.clientY - _eraseDragFrom.y;
+    if (Math.hypot(dx, dy) < 5) return;      // 손떨림은 클릭으로 취급
+    const r = _eraseRectEl();
+    r.style.display = 'block';
+    r.style.left   = Math.min(e.clientX, _eraseDragFrom.x) + 'px';
+    r.style.top    = Math.min(e.clientY, _eraseDragFrom.y) + 'px';
+    r.style.width  = Math.abs(dx) + 'px';
+    r.style.height = Math.abs(dy) + 'px';
+  });
+  window.addEventListener('pointerup', e => {
+    if (!_eraseDragFrom) return;
+    const s = _eraseDragFrom; _eraseDragFrom = null;
+    _eraseRectEl().style.display = 'none';
+    if (Math.hypot(e.clientX - s.x, e.clientY - s.y) < 5) return;   // 클릭 → 지도 click 이 처리
+    blockMapClick();   // 드래그 끝에 딸려오는 click 이 또 지우지 않게
+    eraseInRect(s.x, s.y, e.clientX, e.clientY);
+  });
 }
 
 function undoErase() {
@@ -5453,7 +5525,47 @@ const LAUNCHER_JS = [
 "  var win=null, timer=null, tries=0, sent=false;",
 "  function say(h){msg.innerHTML=h;}",
 "  function reset(label){clearInterval(timer);btn.disabled=false;btn.textContent=label;}",
-"  // 지도 탭이 '준비됨'을 알려오면 그때 데이터를 넘긴다 (한 번만)",
+"",
+"  // ── ① 공유 대상(share-target)으로 POST — 휴대폰 기본 경로 ──────────────",
+"  // 왜: 안드로이드에 지도 앱이 설치돼 있으면 지도 '주소'를 열 때 브라우저가 아니라 앱이",
+"  //     열린다. 앱은 별개 프로그램이라 이 창과 연결(opener)이 끊겨 데이터를 못 받는다.",
+"  //     폼 POST 는 앱 인텐트로 바뀌지 않으므로 반드시 브라우저에 남고, 서비스워커가",
+"  //     파일을 받아 지도에 그려준다. (연결이 필요 없다)",
+"  //     단, 이 POST 는 지도 페이지의 서비스워커가 이미 설치돼 있어야 성립한다.",
+"  //     워커가 없으면(인터넷 사용기록 삭제 직후, 처음 쓰는 기기) 요청이 깃허브까지 가서",
+"  //     405 Not Allowed 가 뜬다 — 깃허브 페이지는 정적 호스팅이라 POST 를 받지 못한다.",
+"  //     그래서 이 함수는 '지도 페이지를 한 번 연 뒤'에만 부른다(openClassic 참조).",
+"  function sendViaShareTarget(){",
+"    if(sent)return;",
+"    try{",
+"      var txt='<!DOCTYPE html><meta charset=\"utf-8\"><title>'+document.title+'</title>\\n'",
+"        +'<scr'+'ipt>\\n'",
+"        +'var LINES='+JSON.stringify(LINES)+';\\n'",
+"        +'var POLYS='+JSON.stringify(POLYS)+';\\n'",
+"        +'var TEXTS='+JSON.stringify(TEXTS)+';\\n'",
+"        +'var MARKERS='+JSON.stringify(MARKERS)+';\\n'",
+"        +'var PHOTOS='+JSON.stringify(PHOTOS)+';\\n'",
+"        +'</scr'+'ipt>';",
+"      var f=new File([txt],(document.title||'지도')+'.htm',{type:'text/html'});",
+"      var dt=new DataTransfer(); dt.items.add(f);",
+"      var inp=document.createElement('input'); inp.type='file'; inp.name='file'; inp.files=dt.files;",
+"      var form=document.createElement('form');",
+"      form.method='POST'; form.enctype='multipart/form-data'; form.target='jtymap';",
+"      form.action=MAPURL.replace(/\\/?$/,'/')+'share-target';",
+"      form.style.display='none'; form.appendChild(inp);",
+"      document.body.appendChild(form);",
+"      btn.disabled=true; btn.textContent='보내는 중...';",
+"      say('브라우저 탭으로 보냈습니다. 새 탭을 확인하세요.<br>'",
+"        +'새 탭에 <b>405 Not Allowed</b> 가 뜨면 이 브라우저에 지도 준비가 안 된 것입니다 —'",
+"        +' 그 탭을 닫고 <b>지도 열기</b>를 누르면 준비된 뒤 정상 동작합니다.');",
+"      form.submit();",
+"      sent=true; clearInterval(timer); reset('다시 열기');",
+"      try{ if(win&&!win.closed) win.focus(); }catch(e){}",
+"    }catch(e){ sent=false; reset('지도 열기');",
+"      say('전달 실패: '+e.message+'<br><b>지도 열기</b>로 다시 시도해 보세요.'); }",
+"  }",
+"",
+"  // ── ② 새 탭을 열고 postMessage — PC 기본 경로 / 휴대폰 예비 경로 ────────",
 "  function send(target){",
 "    if(sent||!target)return;",
 "    try{target.postMessage({__jtymap:'data',payload:payload},origin);}",
@@ -5466,29 +5578,46 @@ const LAUNCHER_JS = [
 "    if(ev.data.__jtymap==='ready')send(ev.source||win);",
 "    else if(ev.data.__jtymap==='done'){reset('지도 다시 열기');",
 "      say('지도에 표시됐습니다. 이 창은 닫아도 됩니다.');",
-"      // 데이터 전달이 끝났으니 이 창은 스스로 닫는다.",
-"      // 크롬은 '스크립트가 연 창' 또는 '방문기록이 1개뿐인 탭'만 close() 를 허용한다.",
-"      // htm 을 더블클릭해서 연 탭은 기록이 1개라 닫히고, 다른 페이지에서 넘어와",
-"      // 기록이 쌓인 탭이면 거부돼 위 안내문과 함께 그대로 남는다.",
-"      setTimeout(function(){try{window.close();}catch(e){}},400);}",
+"      // 지도 탭을 먼저 앞으로 올린 뒤 이 창을 닫는다. 그냥 닫으면 브라우저가 '직전에",
+"      // 보던 탭'으로 돌아가, 예전에 열어둔 빈 지도 탭이 앞에 나오는 일이 있다.",
+"      try{ if(win&&!win.closed) win.focus(); }catch(e){}",
+"      setTimeout(function(){try{window.close();}catch(e){}},500);}",
 "  });",
-"  btn.onclick=function(){",
+"  function openClassic(){",
 "    sent=false;tries=0;btn.disabled=true;btn.textContent='여는 중...';",
 "    say('지도 페이지(https)를 여는 중...');",
 "    win=window.open(MAPURL+'#link','jtymap');",
 "    if(!win){reset('지도 열기');",
 "      say('<b>팝업이 차단됐습니다.</b> 주소창의 차단 아이콘에서 허용한 뒤 다시 누르세요.');return;}",
 "    try{win.focus();}catch(e){}",
-"    // 지도 탭이 아직 로딩 중일 수 있어 준비될 때까지 0.5초 간격으로 두드린다(최대 30초).",
+"    // 지도 탭이 아직 로딩 중일 수 있어 준비될 때까지 0.5초 간격으로 두드린다.",
 "    clearInterval(timer);",
 "    timer=setInterval(function(){",
 "      if(sent){clearInterval(timer);return;}",
-"      if(++tries>60){reset('다시 시도');",
+"      // 6초를 두드려도 응답이 없으면 앱이 가로챈 것 → 공유 대상으로 우회.",
+"      // 휴대폰만: PC 지도(/map/)에는 서비스워커가 없어 POST 가 405 로 거부된다.",
+"      if(++tries===12&&isMobile){ sendViaShareTarget(); return; }",
+"      if(tries>60){reset('다시 시도');",
 "        say('<b>지도 탭이 응답하지 않습니다.</b> 인터넷 연결을 확인하고,'",
 "          +' 열린 지도 탭을 새로고침한 뒤 다시 누르세요.');return;}",
 "      try{win.postMessage({__jtymap:'ping'},origin);}catch(e){}",
 "    },500);",
-"  };",
+"  }",
+"",
+"  // 휴대폰에서도 지도 페이지를 먼저 연다. 곧바로 공유 POST 를 쏘면 서비스워커가 없는",
+"  // 브라우저에서 405 Not Allowed 로 끝나기 때문이다. 페이지를 한 번 열면 워커가 설치되고,",
+"  // 연결이 살아 있으면 postMessage 로 바로 넘어간다. 앱이 가로채 연결이 끊긴 경우에만",
+"  // 6초 뒤 공유 POST 로 우회하는데, 그때는 방금 연 페이지가 워커를 설치해 둔 상태다.",
+"  btn.onclick=function(){ openClassic(); };",
+"  // 지도 앱이 링크를 가로채 데이터가 안 넘어갈 때 쓰는 예비 버튼 — 공유 대상으로 직접 POST",
+"  if(isMobile){",
+"    var alt=document.createElement('button');",
+"    alt.textContent='공유 방식으로 보내기';",
+"    alt.style.cssText='margin-top:10px;background:#39414f;font-size:14px;padding:11px;';",
+"    alt.onclick=function(){ sent=false; sendViaShareTarget(); };",
+"    btn.parentNode.insertBefore(alt,msg);",
+"    say('브라우저 탭에서 열립니다. 인터넷 연결이 필요합니다.');",
+"  }",
 "})();"
 ].join('\n');
 
@@ -6062,6 +6191,7 @@ window.onload=()=>{
   kakao.maps.load(()=>{
     // 위치 권한 요청(사용자 위치 파악) 제거 — 매번 뜨던 권한 팝업 방지. 기본 중심으로 시작.
     initializeMap(new kakao.maps.LatLng(35.6478,127.5213));
+    _installEraseDrag();      // 지우개 모드의 드래그(영역 지우기) 리스너
     _installLinkReceiver();   // '#link' 로 열렸으면 런처 htm 의 데이터를 기다린다
   });
 };
