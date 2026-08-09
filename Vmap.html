@@ -2,12 +2,11 @@
 <html lang="ko">
 <head>
 <meta charset="utf-8">
-<title>전태영의 사진지도 (VWorld)</title>
+<title>전태영의 사진지도 (VWorld) [웹]</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛰️</text></svg>">
 <!-- ── API 키: 사용자별 키를 최초 1회 입력받아 localStorage에 저장 ──
      키 재입력: 주소 뒤에 ?resetkey 를 붙여 열기 -->
 <!-- 키입력_설정.py / 사진위치표시.py 가 생성하는 키 파일 (없으면 조용히 무시됨) -->
-<script src="api_keys.js"></script>
 <script>
 if (location.search.indexOf('resetkey') >= 0) {
   localStorage.removeItem('vworld_key');
@@ -19,6 +18,18 @@ if (location.search.indexOf('resetkey') >= 0) {
 }
 // 데스크톱 키 입력창 연동: URL 해시(#vworld_key=..&kakao_js_key=..)로 받은 키를 localStorage 에 저장
 try { (location.hash||'').replace(/^#/,'').split('&').forEach(function(kv){var p=kv.split('=');if(p.length===2&&p[1]){var k=decodeURIComponent(p[0]);if(k==='kakao_js_key'||k==='vworld_key'||k==='kakao_rest_key')localStorage.setItem(k,decodeURIComponent(p[1]));}}); } catch(e){}
+window.JTY_API_KEYS = {
+  kakao_js_key: '94bf4516825c146467eb2318cd55b782',
+  vworld_key  : '55FD7275-A6F5-3B69-9966-CD4BFA2FD35F'
+};
+try {
+  localStorage.setItem('kakao_js_key', window.JTY_API_KEYS.kakao_js_key);
+  localStorage.setItem('vworld_key',   window.JTY_API_KEYS.vworld_key);
+  ['kakao_js_key', 'vworld_key'].forEach(function(k){
+    sessionStorage.removeItem('badkey_' + k);
+    localStorage.removeItem('badfilekey_' + k);
+  });
+} catch(e){}
 function _askApiKey(storeKey, name, guide){
   // 1순위: 이 기기에 저장된 키 (사용자가 직접 입력했거나 URL 해시로 받은 키).
   //   api_keys.js 파일 키를 1순위로 쓰면 파일 키가 죽은 키일 때 정상 키를 입력해도
@@ -67,6 +78,10 @@ function _apiKeyError(storeKey, name){
     location.reload();
   }
 }
+_apiKeyError = function(storeKey, name){
+  console.warn(name + ' 로딩 실패 - 배포 도메인(' + location.origin
+    + ')이 해당 API 콘솔에 등록돼 있는지 확인하세요.');
+};
 var VWORLD_GUIDE = '[브이월드 인증키 발급]\n'
   + '1. https://www.vworld.kr 회원가입/로그인\n'
   + '2. 오픈API → 인증키 발급 → 개발키 신청\n'
