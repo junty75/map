@@ -564,6 +564,7 @@ _apiKeyError = function(storeKey, name){
     <!-- 지우개 줄 — 흰 패널 밖, 오른쪽 끝(면적재기 아래). 되돌리기는 지우개 왼쪽에 필요할 때만 -->
     <div id="eraseRow">
       <button type="button" id="eraseUndoBtn" onclick="undoErase()" style="display:none;" title="방금 지운 것부터 하나씩 되살립니다">↩️ 되돌리기</button>
+      <button type="button" id="textBtn" onclick="toggleTextMode()" title="지도에 글자(메모)를 넣습니다 — 단축키 T&#10;켜고 지도를 클릭하면 입력창이 열립니다 · Enter=줄바꿈, Ctrl+Enter=확인&#10;글자 크기(m)는 목록에서 고르거나 직접 입력 (0 = 화면 고정 크기)&#10;이미 있는 글자는 우클릭해서 수정·삭제 · Esc=종료">📝 문자</button>
       <button type="button" id="eraseBtn" onclick="toggleEraseMode()" title="켜고 지도를 클릭하면 그 자리 근처 객체가 지워집니다 · 축소해서 누르면 근처 여러 개가 한 번에 · 버튼 다시 누르면 종료">🧽 지우개</button>
     </div>
     </div>
@@ -2457,6 +2458,8 @@ function initializeMap(center) {
   kakao.maps.event.addListener(map, 'click', e => {
     if (_blockMapClick) return;
     if (eraseMode) { eraseAt(e.latLng); return; }       // 지우개 — 누른 자리 근처 삭제
+    if (textMode) { openTextEditor(e.latLng, null); return; }   // 문자 — 누른 자리에 입력창
+    if (textEditOverlay) { closeTextEditor(); return; }         // 열려 있던 입력창은 지도 클릭으로 닫기
     if (areaMode) { areaAddPoint(e.latLng); return; }   // 면적재기 꼭짓점 추가
     // 로드뷰 지점 선택 모드 — 클릭한 지점의 카카오 로드뷰를 새 창으로 연다
     if (roadviewPickMode) {
@@ -2526,6 +2529,9 @@ function initializeMap(center) {
     if (areaMode) { finishAreaMeasure(); return; }      // 면적재기 확정
     if (drawingMode) { finishDrawing(); return; }
     if (Date.now() - _lastDrawFinishTs < 400) return;   // 그리기 종료 직후 중복 우클릭 무시
+    // 글자 위에서 우클릭 → 그 글자 수정/삭제 (선·마커 판정보다 먼저)
+    const _tl = _textLabelAt(lastClientX, lastClientY);
+    if (_tl) { openTextEditor(null, _tl); return; }
     const proj = map.getProjection(), clickPx = proj.pointFromCoords(e.latLng);
     let nearestPoly=null, nearestDist=Infinity;
     polylines.forEach(pl => {
@@ -2787,18 +2793,29 @@ function _mapMetersPerPixel() {
     return d > 0 ? d / 100 : 0;
   } catch (e) { return 0; }
 }
-function addTextLabel(latlng, text, rot, color, h, ax, ay) {
-  const safe = String(text == null ? '' : text)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+// tw(MTEXT 기준폭 m) > 0 이면 그 폭 안에서 CAD 처럼 자동 줄바꿈. 그 외에는 \n 만 줄로 나눈다.
+// (내보낸 뷰어 htm 의 TEXTS 렌더링과 같은 규칙 — 한쪽만 고치면 지도와 저장본 모양이 달라진다)
+function addTextLabel(latlng, text, rot, color, h, ax, ay, tw) {
   const col = /^#[0-9a-fA-F]{6}$/.test(color || '') ? color : '#FFEB00';
   h = Number(h) || 0;
+  tw = Number(tw) || 0;
   // 앵커(CAD 정렬): ax 0=왼쪽 0.5=중앙 1=오른쪽 / ay 0=아래(베이스라인) 0.5=중간 1=위
   // 화면 yAnchor는 0=위 1=아래라 1-ay 로 반전. h 없는 옛 KMZ는 중심 정렬 13px 고정.
   ax = isFinite(Number(ax)) ? Number(ax) : 0;
   ay = isFinite(Number(ay)) ? Number(ay) : 0;
   const xa = h > 0 ? ax : 0.5;
-  // ay=0(베이스라인)은 글상자 맨아래(1.0)가 아니라 밑선 위치(0.8)에 앵커 — CAD 기준점과 일치
-  const ya = h > 0 ? (ay < 0.25 ? 0.8 : 1 - ay) : 0.5;
+  const wrap = h > 0 && tw > 0;
+  // 여러 줄(메모·MTEXT): \n 을 <br> 로 바꿔 그린다. 줄간격은 여러 줄일 때만 1.4
+  // (한 줄이면 1 — 기존 CAD 문자의 세로 기준점을 그대로 유지하기 위해)
+  const srcLines = String(text == null ? '' : text).split(/\r\n|\r|\n/);
+  const nLine = srcLines.length;
+  const lh = (nLine > 1 || wrap) ? 1.4 : 1;
+  // ay=0(베이스라인)은 글상자 맨아래(1.0)가 아니라 마지막 줄 밑선 위치에 앵커 — CAD 기준점과 일치
+  //   (한 줄: 0.8 — 예전과 동일 / 여러 줄: 전체 높이 대비 같은 비율)
+  const yaBase = 1 - ((lh - 1) / 2 + 0.2) / (nLine * lh);
+  const ya = h > 0 ? ((ay < 0.25 && !wrap) ? yaBase : 1 - ay) : 0.5;
+  const safe = srcLines.map(s =>
+    s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')).join('<br>');
   // CAD 회전(반시계, 도) -> 화면 CSS 회전(시계 양수)이라 부호 반전 (앵커점 중심 회전)
   const el = document.createElement('div');
   el.style.cssText =
@@ -2806,17 +2823,22 @@ function addTextLabel(latlng, text, rot, color, h, ax, ay) {
     // 줌으로 글자 px가 바뀌어도 기준점이 절대 안 움직임
     'transform:translate(' + (-xa * 100) + '%,' + (-ya * 100) + '%) rotate(' + (-(Number(rot) || 0)) + 'deg);' +
     'transform-origin:' + (xa * 100) + '% ' + (ya * 100) + '%;' +
-    'white-space:nowrap;font-weight:bold;line-height:1;color:' + col + ';' +
+    (wrap ? 'white-space:normal;word-break:normal;overflow-wrap:break-word;'
+          : 'white-space:nowrap;') +
+    'text-align:' + (xa >= 0.75 ? 'right' : (xa >= 0.25 ? 'center' : 'left')) + ';' +
+    'font-weight:bold;line-height:' + lh + ';color:' + col + ';' +
     'pointer-events:none;font-size:13px;' +
     'text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 0 2px #000;';
   el.innerHTML = safe;
   const ov = new kakao.maps.CustomOverlay({
     map: textLabelsVisible ? map : null, content: el, position: latlng,
     xAnchor: 0, yAnchor: 0, zIndex: 6 });
-  // t/rot/col/ax/ay 는 HTM 내보내기에서 원본 그대로 다시 써야 해서 함께 보관
-  textLabels.push({ ov, el, h, t: String(text == null ? '' : text),
-                    rot: Number(rot) || 0, col, ax, ay });
-  if (h > 0) _applyTextLabelSize({ el, h }, _mapMetersPerPixel());
+  // t/rot/col/ax/ay/tw 는 저장(HTM·KMZ)에서 원본 그대로 다시 써야 해서 함께 보관
+  const obj = { ov, el, h, t: String(text == null ? '' : text),
+                rot: Number(rot) || 0, col, ax, ay, tw };
+  textLabels.push(obj);
+  if (h > 0) _applyTextLabelSize(obj, _mapMetersPerPixel());
+  return obj;
 }
 // 줌 변경 시 h 있는 라벨의 px 크기 재계산 (h[m] / m/px = 화면 px)
 function _applyTextLabelSize(o, mpp) {
@@ -2824,7 +2846,10 @@ function _applyTextLabelSize(o, mpp) {
   const px = o.h * 1.1 / mpp;   // 크기 보정 x1.1 (사용자 체감 확정값 — 여기 숫자만 바꾸면 됨)
   if (px < 2) { o.el.style.display = 'none'; return; }   // 너무 작으면 숨김
   o.el.style.display = '';
-  o.el.style.fontSize = Math.min(px, 400) + 'px';
+  const fs = Math.min(px, 400);
+  o.el.style.fontSize = fs + 'px';
+  // MTEXT 기준폭도 글자와 같은 배율로 — 글자/폭 비율이 CAD 와 같아 접히는 위치가 유지됨
+  if (o.tw > 0) o.el.style.width = (o.tw * (fs / px) * 1.1 / mpp) + 'px';
 }
 function updateTextLabelSizes() {
   if (!textLabels.some(o => o.h > 0)) return;
@@ -2834,6 +2859,185 @@ function updateTextLabelSizes() {
 function clearTextLabels() {
   textLabels.forEach(o => o.ov.setMap(null));
   textLabels = [];
+}
+
+// ══════════════════════════════════════════════════
+//  문자(메모) 입력 — T 로 켜고 지도를 클릭하면 그 자리에 글자를 넣는다.
+//
+//   · 입력창은 여러 줄(textarea). Enter=줄바꿈, Ctrl+Enter=확인, Esc=취소.
+//   · 이미 있는 글자를 우클릭하면 같은 창이 열려 수정·삭제.
+//   · 만들어진 글자는 KMZ 로 읽어온 CAD 문자(textLabels)와 완전히 같은 객체다
+//     → 저장(KMZ/HTM)·지우개·되돌리기가 전부 그대로 동작한다.
+//   · 크기(m): 지도 실거리 기준이라 확대하면 커진다(CAD 문자와 동일). 0 이면 화면 13px 고정.
+//     목록에서 고르거나 직접 숫자를 넣는다(datalist 콤보 — CAD 에서 온 2.5m 같은 값도 그대로 유지).
+//
+//  단축키를 Ctrl+T 로 두지 않은 이유: 크롬/엣지가 '새 탭'으로 선점한 조합이라 페이지가
+//  가로챌 수 없다(F11 전체화면에서만 동작). 그래서 막히지 않는 T 를 쓴다.
+// ══════════════════════════════════════════════════
+let textMode = false, textEditOverlay = null;
+// 마지막에 쓴 색·글자높이(m) — 프로그램을 다시 켜도 유지된다.
+// 저장은 다른 화면설정과 같은 통로(__saveUi → localStorage + .ui_settings.json)를 쓰고,
+// 되읽기는 applyUi() 의 'map.text_col' / 'map.text_h' 항목이 담당한다.
+let textLastColor = '#FFEB00', textLastHeight = 10;
+function _saveTextPref(key, val) {
+  try { window.__saveUi && window.__saveUi(key, val); } catch (e) {}
+}
+
+function _updateTextBtn() {
+  const b = document.getElementById('textBtn');
+  if (b) { b.style.background = textMode ? '#f39c12' : ''; b.style.color = textMode ? '#fff' : ''; }
+}
+function toggleTextMode(on) {
+  const next = (on === undefined) ? !textMode : !!on;
+  if (next === textMode) { _updateTextBtn(); return; }
+  textMode = next;
+  if (textMode) {
+    if (eraseMode) toggleEraseMode();                                       // 지우개와 동시 사용 방지
+    if (areaMode) stopAreaMeasure();                                        // 면적재기와 동시 사용 방지
+    if (typeof drawingMode !== 'undefined' && drawingMode) finishDrawing(); // 선그리기와 동시 사용 방지
+    try { map.setCursor('crosshair'); } catch (e) {}
+    showSaveStatus('📝 문자(T) — 글자를 넣을 자리를 클릭하세요 (Esc=종료)');
+  } else {
+    try { map.setCursor(''); } catch (e) {}
+    closeTextEditor();
+  }
+  _updateTextBtn();
+}
+function closeTextEditor() {
+  if (textEditOverlay) { textEditOverlay.setMap(null); textEditOverlay = null; }
+}
+
+// 화면 좌표(clientX,clientY) 위에 있는 글자 라벨 — 우클릭 수정 대상 찾기.
+// 라벨은 pointer-events:none 이라 마우스 이벤트가 안 오므로 글상자 위치로 직접 판정한다.
+// (회전된 글자는 getBoundingClientRect 가 '회전 후 감싸는 사각형'이라 조금 넉넉하게 잡힌다)
+function _textLabelAt(cx, cy) {
+  let best = null, bestD = Infinity;
+  const PAD = 6;
+  for (const o of textLabels) {
+    if (!o.ov || !o.ov.getMap() || !o.el) continue;
+    const r = o.el.getBoundingClientRect();
+    if (!r.width && !r.height) continue;
+    if (cx < r.left - PAD || cx > r.right + PAD || cy < r.top - PAD || cy > r.bottom + PAD) continue;
+    const d = Math.hypot(cx - (r.left + r.right) / 2, cy - (r.top + r.bottom) / 2);
+    if (d < bestD) { bestD = d; best = o; }
+  }
+  return best;
+}
+function _removeTextLabel(o) {
+  if (!o) return;
+  o.ov.setMap(null);
+  textLabels = textLabels.filter(x => x !== o);
+}
+function _restoreTextLabel(o) {
+  if (!o) return;
+  o.ov.setMap(textLabelsVisible ? map : null);
+  if (!textLabels.includes(o)) textLabels.push(o);
+}
+
+// 입력창 열기 — target 이 있으면 그 글자를 고치는 모드, 없으면 latlng 자리에 새로 만든다
+function openTextEditor(latlng, target) {
+  if (!map) return;
+  closeTextEditor();
+  const isEdit = !!target;
+  const pos = isEdit ? target.ov.getPosition() : latlng;
+  if (!pos) return;
+
+  // 크기 목록의 id 는 열 때마다 새로 만든다 — 입력창을 닫으면 DOM 에서 통째로 사라지므로
+  // 같은 id 가 남아 겹치는 일이 없게 (datalist 는 id 로 연결된다)
+  const listId = 'textHList_' + Date.now();
+  const c = document.createElement('div');
+  c.style.cssText = 'background:#fff;padding:8px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,.35);'
+    + 'display:flex;flex-direction:column;gap:6px;font-size:12px;font-family:inherit;';
+  c.innerHTML =
+      '<textarea rows="3" lang="ko" placeholder="메모 내용 (Enter=줄바꿈)" '
+    +   'style="width:210px;font-size:13px;font-family:inherit;padding:4px;resize:both;"></textarea>'
+    + '<div style="display:flex;gap:5px;align-items:center;">'
+    +   '<button type="button" data-k="col" title="글자 색"'
+    +     ' style="width:26px;height:23px;padding:0;border:1px solid #ccc;border-radius:4px;cursor:pointer;"></button>'
+    // step=1 : ↑↓·스피너는 1m 씩. 직접 2.5 처럼 소수를 넣는 건 그대로 된다(값을 그냥 읽어 쓴다)
+    +   '<input type="number" data-k="h" list="' + listId + '" min="0" max="100000" step="1"'
+    +     ' title="글자 크기(m) — 지도 실거리 기준이라 확대/축소에 따라 커지고 작아집니다.'
+    +     '&#10;목록에서 고르거나 원하는 숫자를 직접 넣으세요(소수도 가능).  0 = 화면 고정 크기"'
+    +     ' style="width:62px;font-size:12px;font-family:inherit;padding:2px 4px;">'
+    +   '<datalist id="' + listId + '">'
+    +     '<option value="0" label="고정(화면크기)"></option>'
+    +     ['0.5','1','2','3','5','10','20','50','100','200','500']
+            .map(v => '<option value="' + v + '" label="' + v + 'm"></option>').join('')
+    +   '</datalist>'
+    +   '<span data-k="hunit" style="color:#666;">m</span>'
+    +   '<span style="flex:1;color:#888;text-align:right;">Ctrl+Enter</span>'
+    + '</div>'
+    + '<div style="display:flex;gap:5px;">'
+    +   '<button type="button" data-k="ok" style="flex:1;">' + (isEdit ? '수정' : '추가') + '</button>'
+    +   (isEdit ? '<button type="button" data-k="del" style="color:#c0392b;">삭제</button>' : '')
+    +   '<button type="button" data-k="cancel">취소</button>'
+    + '</div>';
+  textEditOverlay = new kakao.maps.CustomOverlay({ position: pos, content: c, yAnchor: 1, zIndex: 20 });
+  textEditOverlay.setMap(map);
+  // 입력창 안에서의 마우스/키보드는 지도(끌기·단축키)로 넘기지 않는다
+  ['mousedown', 'click', 'dblclick', 'wheel'].forEach(ev =>
+    c.addEventListener(ev, e => e.stopPropagation()));
+
+  const ta     = c.querySelector('textarea');
+  const colBtn = c.querySelector('[data-k="col"]');
+  const hInp   = c.querySelector('[data-k="h"]');
+  const hUnit  = c.querySelector('[data-k="hunit"]');
+  let col = isEdit ? (target.col || '#FFEB00') : textLastColor;
+  colBtn.style.background = col;
+  colBtn.onclick = e => { e.stopPropagation(); openColorPalette(colBtn, v => { col = v; colBtn.style.background = v; }); };
+  // CAD 에서 온 글자는 목록에 없는 높이(예: 2.5m)를 갖고 있어도 그 값이 그대로 들어간다
+  const h0 = isEdit ? (Number(target.h) || 0) : textLastHeight;
+  hInp.value = String(h0);
+  const paintUnit = () => { hUnit.textContent = (_readH() > 0) ? 'm' : '고정'; };
+  // 비었거나 이상한 값이면 처음 값(h0)으로 되돌린다 — 실수로 지웠다고 크기가 튀지 않게
+  function _readH() {
+    const v = parseFloat(hInp.value);
+    return (isFinite(v) && v >= 0) ? Math.min(v, 100000) : h0;
+  }
+  hInp.addEventListener('input', paintUnit);
+  paintUnit();
+  ta.value = isEdit ? (target.t || '') : '';
+
+  function done() { closeTextEditor(); }
+  function apply() {
+    const txt = ta.value.replace(/[ \t]+$/gm, '').replace(/\n+$/, '');   // 줄 끝 공백·끝 빈 줄 정리
+    const h = _readH();
+    if (!txt.trim()) { if (isEdit) del(); else done(); return; }
+    // 방금 쓴 색·크기를 다음 입력의 기본값으로 (다시 켜도 유지되게 설정에도 저장)
+    if (textLastHeight !== h)   { textLastHeight = h;   _saveTextPref('text_h',   String(h)); }
+    if (textLastColor !== col)  { textLastColor  = col; _saveTextPref('text_col', col); }
+    if (isEdit) {
+      const old = target;
+      // 글자 수·줄 수에 따라 정렬 기준이 달라져서 style 만 고칠 수 없다 → 같은 자리에 새로 만들고 교체
+      const neu = addTextLabel(pos, txt, old.rot || 0, col, h, old.ax, old.ay, old.tw);
+      _removeTextLabel(old);
+      pushHistory({ undo() { _removeTextLabel(neu); _restoreTextLabel(old); },
+                    redo() { _removeTextLabel(old); _restoreTextLabel(neu); } });
+      showSaveStatus('📝 문자 수정됨');
+    } else {
+      const obj = addTextLabel(pos, txt, 0, col, h, 0.5, 0.5, 0);   // 새 메모는 클릭한 점이 한가운데
+      pushHistory({ undo() { _removeTextLabel(obj); }, redo() { _restoreTextLabel(obj); } });
+      showSaveStatus('📝 문자 추가됨' + (textMode ? ' — 계속 클릭해서 더 넣을 수 있습니다' : ''));
+    }
+    done();
+  }
+  function del() {
+    const o = target; if (!o) { done(); return; }
+    _removeTextLabel(o);
+    pushHistory({ undo() { _restoreTextLabel(o); }, redo() { _removeTextLabel(o); } });
+    showSaveStatus('🗑️ 문자 삭제됨');
+    done();
+  }
+  c.querySelector('[data-k="ok"]').onclick = apply;
+  c.querySelector('[data-k="cancel"]').onclick = done;
+  if (isEdit) c.querySelector('[data-k="del"]').onclick = del;
+  // 입력창 안의 키는 지도 단축키로 넘기지 않는다 (Enter 는 그대로 줄바꿈)
+  c.addEventListener('keydown', e => {
+    e.stopPropagation();
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); apply(); }
+    else if (e.key === 'Escape') { e.preventDefault(); done(); }
+  });
+  setTimeout(() => { try { ta.focus(); ta.select(); } catch (e) {} }, 0);
 }
 
 // ══════════════════════════════════════════════════
@@ -2859,6 +3063,7 @@ function toggleEraseMode() {
   const b = document.getElementById('eraseBtn');
   if (eraseMode) {
     if (areaMode) stopAreaMeasure();                                        // 면적재기와 동시 사용 방지
+    if (textMode) toggleTextMode(false);                                    // 문자와 동시 사용 방지
     if (typeof drawingMode !== 'undefined' && drawingMode) finishDrawing(); // 선그리기와 동시 사용 방지
     if (b) { b.style.background = '#e53935'; b.style.color = '#fff'; }
     map.setCursor('crosshair');
@@ -3026,6 +3231,7 @@ let areaMode = false, areaDrawing = false, areaPath = [], areaLine = null,
 function toggleAreaMeasure() {
   if (areaMode) { stopAreaMeasure(); return; }
   if (eraseMode) toggleEraseMode();                                         // 지우개와 동시 사용 방지
+  if (textMode) toggleTextMode(false);                                      // 문자와 동시 사용 방지
   if (typeof drawingMode !== 'undefined' && drawingMode) finishDrawing();   // 선그리기와 동시 사용 방지
   areaMode = true;
   const b = document.getElementById('areaBtn');
@@ -3549,6 +3755,7 @@ function hideDrawCatcher() {
 function startDrawing() {
   if (drawingMode) return;
   if (eraseMode) toggleEraseMode();   // 지우개와 동시 사용 방지
+  if (textMode) toggleTextMode(false);   // 문자와 동시 사용 방지
   if (moveLine){moveLine.setMap(null);moveLine=null;}
   if (distanceOverlay){distanceOverlay.setMap(null);distanceOverlay=null;}
   drawingMode=true; currentPath=[];
@@ -3615,6 +3822,12 @@ document.addEventListener('keydown', e => {
   if (locPickMode && e.key==='Escape') {
     e.preventDefault(); stopLocationPick(); clearLocationPick(false); showSaveStatus('위치 검색 선택 취소됨'); return;
   }
+  // 문자(메모) — Esc 로 입력창 닫기 / 모드 종료
+  if (e.key === 'Escape' && (textEditOverlay || textMode)) {
+    e.preventDefault();
+    if (textEditOverlay) closeTextEditor(); else toggleTextMode(false);
+    return;
+  }
 
   // 그리기 모드 Backspace/Escape/Ctrl+Z
   if (drawingMode && currentPath.length>0 && !inInput) {
@@ -3644,6 +3857,11 @@ document.addEventListener('keydown', e => {
     // Ctrl+Shift+V 또는 Insert — 임시 객체 영구 삽입(확정)
     if ((e.ctrlKey && e.shiftKey && e.key.toLowerCase()==='v') || e.key==='Insert'){e.preventDefault();insertLiveObjects();return;}
     if (e.key==='F1'){e.preventDefault();window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes');return;}
+    // 문자(메모) 입력 모드 — T (Ctrl+T 는 크롬/엣지가 '새 탭'으로 선점해서 페이지가 못 받는다)
+    // e.code 로 보는 이유: 한글 입력 상태면 e.key 가 'Process'/'ㅅ' 로 와서 't' 비교가 안 됨.
+    if (e.code==='KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey){
+      e.preventDefault(); toggleTextMode(); return;
+    }
     // Alt 키 자체의 '한 번 누름'으로만 토글 (e.repeat = 길게 눌러 자동반복되는 키이벤트 무시).
     // 과거: e.altKey 로 검사 → Alt 를 누르고 있는 동안 keydown 이 자동반복되며 start/finish 가
     //       빠르게 토글되어 손을 떼면 그리기가 꺼져 "안 됨"처럼 보였음.
@@ -3744,8 +3962,8 @@ function changeMapType(value){
 // ══════════════════════════════════════════════════
 //  KMZ→HTM 변환본(내보내기 htm) 읽기
 //  이 프로그램이 만든 단독 실행 htm 은 데이터가 JSON 배열로 박혀 있다:
-//    var LINES=[{c,o,w,p:[[[lat,lng],..],..],z}]   선(멀티파트)
-//    var POLYS=[{c,o,w,fc,fo,p:[링..],z}]          면(첫 링=외곽, 나머지=구멍)
+//    var LINES=[{c,o,w,p:[[[lat,lng],..],..],z,n}] 선(멀티파트, n=이름)
+//    var POLYS=[{c,o,w,fc,fo,p:[링..],z,n}]        면(첫 링=외곽, 나머지=구멍, n=이름)
 //    var TEXTS=[[lat,lng,글자,회전,색,높이m,ax,ay]] CAD 문자
 //    var MARKERS=[[lat,lng,이름]] / var PHOTOS=[[lat,lng,이름,dataURI]]
 //  dmap/캐드 htm(linePathN 방식)과 형식이 다르므로 이쪽을 먼저 시도한다.
@@ -3819,14 +4037,19 @@ function _loadExportedData(D,bounds){
   const _defer=[];   // setBounds 뒤에 한 번만 setMap (이중 렌더 방지 — loadKMZ 와 동일)
   const sigs=_existingExpSigs(); let skipped=0;
 
-  // ── 선: 스타일(색·굵기·투명도)이 같은 것끼리 멀티파트 Polyline 1개로 묶음.
-  //    도형 수천 개짜리 도면을 개별 오버레이로 만들면 pan/zoom 이 버벅임.
+  // ── 선: 파일에 있는 항목 하나 = 지도 객체 하나. 여기서 임의로 합치지 않는다.
+  //    (KMZ 로딩과 같은 단위 — Placemark 하나 = 오버레이 하나)
+  //    파트가 여러 개인 항목은 '묶음객체'로 그대로 살아남아 멀티파트 Polyline 이 되고,
+  //    화면 밖 구간은 cullBundlePolys 가 떼어내므로 큰 도면도 무겁지 않다.
+  //    예전엔 색·굵기가 같은 선을 전부 한 덩어리로 합쳤는데, 그러면 지도에서 따로였던
+  //    객체가 다시 열 때 하나로 뭉치고 이름도 사라졌다. 묶을지 말지는 파일을 만든
+  //    쪽(내보내기·Vector_Convert 의 묶기/따로 옵션)이 정한다.
   const lgrp={};
-  (LINES||[]).forEach(g=>{
+  (LINES||[]).forEach((g,gi)=>{
     const parts=(g.p||[]).map(pt=>pt.map(LL)).filter(p=>p.length>=2);
     if(!parts.length)return;
-    const k=[g.c,g.w,g.o].join('|');
-    (lgrp[k]=lgrp[k]||{c:g.c||'#ff0000',w:(g.w!=null)?g.w:3,o:(g.o!=null)?g.o:1,z:g.z||0,parts:[]}).parts.push(...parts);
+    lgrp['N'+gi]={c:g.c||'#ff0000',w:(g.w!=null)?g.w:3,o:(g.o!=null)?g.o:1,
+                  z:g.z||0,nm:g.n||'',parts};
   });
   Object.values(lgrp).forEach(s=>{
     const sig='L|'+[s.c,s.w,s.o].join('|')+'|'+_sigCoords(s.parts);
@@ -3836,20 +4059,19 @@ function _loadExportedData(D,bounds){
       strokeWeight:s.w,strokeColor:s.c,strokeOpacity:s.o,strokeStyle:'solid',zIndex:s.z});
     if(s.parts.length>1)poly._parts=s.parts;   // getPath()는 멀티파트를 유실 — 내보내기/연장계산용 원본 보관
     poly._origWeight=s.w;poly._origColor=s.c;poly._opacity=s.o;
-    const tn=`경로 ${++trackCounter}`;poly._name=tn;
+    const tn=s.nm||`경로 ${++trackCounter}`;poly._name=tn;
     polylines.push(poly);attachPolylineRightClick(poly);_defer.push(poly);
     addItem({type:'track',name:tn,address:'',polyline:poly,_origColor:s.c});
   });
 
   // ── 면: 같은 스타일끼리 Polygon 1개로 (카카오는 even-odd 채움이라 링을 다 넘겨도 됨)
-  const pgrp={};
-  (POLYS||[]).forEach(g=>{
+  const pgrp={};   // 면도 항목 1개 = Polygon 1개 (선과 같은 이유)
+  (POLYS||[]).forEach((g,gi)=>{
     const rings=(g.p||[]).map(pt=>pt.map(LL)).filter(r=>r.length>=3);
     if(!rings.length)return;
-    const k=[g.c,g.w,g.o,g.fc,g.fo].join('|');
-    (pgrp[k]=pgrp[k]||{c:g.c||'#ff0000',w:(g.w!=null)?g.w:2,o:(g.o!=null)?g.o:1,
-                       fc:g.fc||'#ffff00',fo:(g.fo!=null)?g.fo:0.3,z:g.z||0,rings:[],polys:[]});
-    pgrp[k].rings.push(...rings);pgrp[k].polys.push(rings);
+    pgrp['N'+gi]={c:g.c||'#ff0000',w:(g.w!=null)?g.w:2,o:(g.o!=null)?g.o:1,
+                  fc:g.fc||'#ffff00',fo:(g.fo!=null)?g.fo:0.3,z:g.z||0,
+                  nm:g.n||'',rings,polys:[rings]};
   });
   Object.values(pgrp).forEach(s=>{
     const sig='G|'+[s.c,s.w,s.o,s.fc,s.fo].join('|')+'|'+_sigCoords(s.rings);
@@ -3861,7 +4083,7 @@ function _loadExportedData(D,bounds){
     pgo._origWeight=s.w;pgo._origColor=s.c;pgo._opacity=s.o;
     pgo._isPoly=true;pgo._fillColor=s.fc;pgo._fillOpacity=s.fo;
     pgo._rings=s.rings;pgo._polys=s.polys;
-    const pn=`면 ${++trackCounter}`;pgo._name=pn;
+    const pn=s.nm||`면 ${++trackCounter}`;pgo._name=pn;
     polylines.push(pgo);attachPolylineRightClick(pgo);_defer.push(pgo);
     addItem({type:'track',name:pn,address:'',polyline:pgo,_origColor:s.c});
   });
@@ -3872,7 +4094,7 @@ function _loadExportedData(D,bounds){
     if(!String(t[2]||'').length)return;
     const ll=LL(t), name=String(t[2]);
     if(_hasPtExp(sigs,'T',t[0],t[1],name)){skipped++;return;}
-    _addPtExp(sigs,'T',t[0],t[1],name); addTextLabel(ll,t[2],t[3],t[4],t[5],t[6],t[7]);
+    _addPtExp(sigs,'T',t[0],t[1],name); addTextLabel(ll,t[2],t[3],t[4],t[5],t[6],t[7],t[8]);
   });
   (MARKERS||[]).forEach(m=>{
     const ll=LL(m), name=m[2]||'마커';
@@ -4360,14 +4582,15 @@ async function loadKMZ(file,bounds,kmzDiskPath) {
           const ct=point.getElementsByTagName('coordinates')[0]?.textContent||'';
           const[lng,lat]=ct.trim().split(',').map(Number);
           if(!isNaN(lat)&&!isNaN(lng)){
-            let _rot=0,_col='',_h=0,_ax=0,_ay=0;
+            let _rot=0,_col='',_h=0,_ax=0,_ay=0,_tw=0;
             for(const d of Array.from(pm.getElementsByTagName('Data'))){
               const nm=d.getAttribute('name'); const v=d.getElementsByTagName('value')[0]?.textContent||'';
               if(nm==='rot')_rot=parseFloat(v)||0; else if(nm==='color')_col=v.trim();
               else if(nm==='h')_h=parseFloat(v)||0;
-              else if(nm==='ax')_ax=parseFloat(v)||0; else if(nm==='ay')_ay=parseFloat(v)||0;}
+              else if(nm==='ax')_ax=parseFloat(v)||0; else if(nm==='ay')_ay=parseFloat(v)||0;
+              else if(nm==='tw')_tw=parseFloat(v)||0;}
             const ll=new kakao.maps.LatLng(lat,lng); bounds.extend(ll);
-            addTextLabel(ll,pmName,_rot,_col,_h,_ax,_ay);
+            addTextLabel(ll,pmName,_rot,_col,_h,_ax,_ay,_tw);
           }
           continue;
         }
@@ -5434,17 +5657,25 @@ async function _collectHtmData(selectedOnly){
         const c=pl._origColor||'#ff0000',
               w=(pl._origWeight!=null)?pl._origWeight:3,
               o=(pl._opacity!=null)?pl._opacity:1;
+        // n = 이름(KMZ Placemark 이름 = 사이드바 항목명). 이게 빠지면 받는 쪽에서
+        // 이름이 사라질 뿐 아니라 '스타일이 같은 선'끼리 한 덩어리로 합쳐져
+        // 25개짜리 KMZ 가 선 1개 + 마커 8개 로 줄어 보인다. 이름 없는 도면 선은
+        // 예전처럼 생략해서 (DXF 수천 선) 파일 크기를 늘리지 않는다.
+        const nm=pl._name||it.name||'';
         if(pl._isPoly){
           const groups=(pl._polys&&pl._polys.length)?pl._polys:[pathParts(pl)];
           for(const rings of groups){
             const p=rings.map(r=>r.map(ll=>[R(ll.getLat()),R(ll.getLng())])).filter(r=>r.length>=3);
-            if(p.length)D.POLYS.push({c,o,w,fc:pl._fillColor||'#ffff00',
-                                      fo:(pl._fillOpacity!=null)?pl._fillOpacity:0.3,p});
+            if(!p.length)continue;
+            const g={c,o,w,fc:pl._fillColor||'#ffff00',
+                     fo:(pl._fillOpacity!=null)?pl._fillOpacity:0.3,p};
+            if(nm)g.n=nm;
+            D.POLYS.push(g);
           }
         }else{
           const p=pathParts(pl).map(part=>part.map(ll=>[R(ll.getLat()),R(ll.getLng())]))
                                .filter(a=>a.length>=2);
-          if(p.length)D.LINES.push({c,o,w,p});
+          if(p.length)D.LINES.push(nm?{c,o,w,p,n:nm}:{c,o,w,p});
         }
       }
       continue;
@@ -5471,7 +5702,7 @@ async function _collectHtmData(selectedOnly){
     if(!o.ov||!o.ov.getMap())return;
     const p=o.ov.getPosition(); if(!p)return;
     D.TEXTS.push([R(p.getLat()),R(p.getLng()),o.t||'',o.rot||0,o.col||'#FFEB00',
-                  o.h||0,o.ax||0,o.ay||0]);
+                  o.h||0,o.ax||0,o.ay||0,o.tw||0]);
   });
   return D;
 }
@@ -5813,6 +6044,26 @@ function markAllInsertedLive() {
   if (n) { try { renderList(); } catch (e) {} }
   return n;
 }
+// 지도 위 문자(메모·CAD 문자) → KML Placemark. 사이드바 항목이 아니라 따로 모은다.
+// ExtendedData kind=text 는 이 프로그램의 KMZ 리더가 그대로 다시 읽는 형식이다
+// (이게 없으면 KMZ 로 저장할 때 메모가 통째로 사라진다).
+function _textKmlPlacemarks(){
+  let out='';
+  for(const t of textLabels){
+    if(!t.ov||!t.ov.getMap())continue;
+    const p=t.ov.getPosition(); if(!p)continue;
+    out+=`  <Placemark><name>${_hesc(t.t||'')}</name><ExtendedData>`
+       + `<Data name="kind"><value>text</value></Data>`
+       + `<Data name="rot"><value>${t.rot||0}</value></Data>`
+       + `<Data name="color"><value>${t.col||'#FFEB00'}</value></Data>`
+       + `<Data name="h"><value>${t.h||0}</value></Data>`
+       + `<Data name="ax"><value>${t.ax||0}</value></Data>`
+       + `<Data name="ay"><value>${t.ay||0}</value></Data>`
+       + (t.tw>0?`<Data name="tw"><value>${t.tw}</value></Data>`:'')
+       + `</ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;
+  }
+  return out;
+}
 async function exportKMZ() {
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   // 파일을 만들기 전에 저장 위치·파일명을 먼저 받는다 → KMZ 안 사진 이름도 확정된 이름 기준
@@ -5827,6 +6078,7 @@ async function exportKMZ() {
   // 사이드바 순서대로 KML 작성
   const lnStyles=new Map();
   for(const item of expItems){if(item.polyline){kml+=_lineKmlPlacemarks(item,nnm,null,lnStyles);}else if(item.markerObj){const m=item.markerObj;if(!m.marker.getMap())continue;const p=m.marker.getPosition();const nm=newNames.get(m)||nnm?.get(m)||m.name||'';const sf=photoFileMap.get(m);if(sf)kml+=`  <Placemark><name>${nm}</name><description><![CDATA[<img src="files/${sf}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${sf}</value></Data></ExtendedData><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;else kml+=`  <Placemark><name>${nm}</name><Point><coordinates>${p.getLng()},${p.getLat()},0</coordinates></Point></Placemark>\n`;}}
+  kml+=_textKmlPlacemarks();
   kml+=_lineKmlStyleDefs(lnStyles)+'</Document>\n</kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   // 저장이 실제로 끝난 뒤에만 사진번호 반영·_live 표시 (저장 실패 시엔 안 함)
@@ -6013,6 +6265,9 @@ async function downloadPhotoWithGPS(imgSrc,name,lat,lng){
     if(s['map.sb_w'])  sidebar.style.width  = s['map.sb_w'];
     if(s['map.prev_h'])ps.style.height      = s['map.prev_h'];
     if(s['map.meta_h'])ms.style.height      = s['map.meta_h'];
+    // 문자(메모) 글자 크기·색 — 마지막에 쓴 값을 다음 입력의 기본값으로 (크기 0 = 화면 고정)
+    if(s['map.text_h']!=null){ const _th=parseFloat(s['map.text_h']); if(isFinite(_th)&&_th>=0) textLastHeight=_th; }
+    if(/^#[0-9a-fA-F]{6}$/.test(s['map.text_col']||'')) textLastColor=s['map.text_col'];
     if(s['map.colvis']){ try{ colVis = Object.assign(colVis, JSON.parse(s['map.colvis'])); }catch(e){} }
     if(s['map.colw']){ try{ colW = Object.assign(colW, JSON.parse(s['map.colw'])); }catch(e){} }
     if((s['map.colvis']||s['map.colw'])){ if(typeof applyColHeaders==='function') applyColHeaders(); if(typeof renderList==='function') renderList(); }

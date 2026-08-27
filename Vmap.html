@@ -481,6 +481,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
        (되돌리기는 지우개 왼쪽에, 지우개로 지운 게 있을 때만) -->
   <div id="eraseRow">
     <button id="eraseUndoBtn" onclick="undoErase()" style="display:none;" title="방금 지운 것부터 하나씩 되살립니다">↩️ 되돌리기</button>
+    <button id="textBtn" onclick="toggleTextMode()" title="지도에 글자(메모)를 넣습니다 — 단축키 T&#10;켜고 지도를 클릭하면 입력창이 열립니다 · Enter=줄바꿈, Ctrl+Enter=확인&#10;글자 크기(m)는 목록에서 고르거나 직접 입력 (0 = 화면 고정 크기)&#10;이미 있는 글자는 우클릭해서 수정·삭제 · Esc=종료">📝 문자</button>
     <button id="eraseBtn" onclick="toggleEraseMode()" title="켜고 지도를 클릭하면 그 자리 근처 객체가 지워집니다 · 축소해서 누르면 근처 여러 개가 한 번에 · 버튼 다시 누르면 종료">🧽 지우개</button>
   </div>
   <div class="float-row">
@@ -1388,6 +1389,8 @@ function mapClick(evt) {
     return;
   }
   if (eraseMode) { if(!_eraseJustDragged) eraseAt(coord); return; }   // 지우개 — 누른 자리 근처 삭제
+  if (textMode) { openTextEditor(coord,null); return; }   // 문자 — 누른 자리에 입력창
+  if (textEditOv) { closeTextEditor(); return; }          // 열려 있던 입력창은 지도 클릭으로 닫기
   if (areaMode) { areaAddPointV(coord); return; }   // 면적재기 꼭짓점 추가
   if (drawing) { drawCoords.push(coord); refreshDraw(); return; }
   let hit = false;
@@ -1464,6 +1467,9 @@ function mapRightClick(e) {
   const px = evtScaledPixel(e), coord = vmap.getCoordinateFromPixel(px);
   if (areaMode) { finishAreaMeasureV(); return; }   // 면적재기 확정
   if (drawing) { endDraw(); return; }
+  // 글자 위에서 우클릭 → 그 글자 수정/삭제 (마커·선 판정보다 먼저)
+  const _tf = _textFeatAtV(px, coord);
+  if (_tf) { openTextEditor(null, _tf); return; }
   if (searchMarker) {
     const hit = vmap.forEachFeatureAtPixel(px, feat => feat===searchMarker.feat, { hitTolerance:14 });
     if (hit) { vmap.removeLayer(searchMarker.lyr); searchMarker=null; return; }
@@ -1640,6 +1646,7 @@ function _drawStyle(){
 function startDraw() {
   if (drawing) return;
   if (eraseMode) toggleEraseMode();   // 지우개와 동시 사용 방지
+  if (textMode) toggleTextMode(false);   // 문자와 동시 사용 방지
   drawing=true; drawCoords=[];
   const ds=_drawStyle();
   drawLayer=mkLineLyr([],ds.color,ds.width); drawLayer._color=ds.color; drawLayer._width=ds.width; addLyr(drawLayer);
@@ -1839,16 +1846,41 @@ function _ensureTextLabelLyr(){
   if(!textLabelLyr){textLabelLyr=new ol.layer.Vector({source:new ol.source.Vector(),zIndex:120});addLyr(textLabelLyr);}
   return textLabelLyr;
 }
-function addTextLabelV(coord,text,rot,color,h,ax,ay){
+function addTextLabelV(coord,text,rot,color,h,ax,ay,tw){
   const col=/^#[0-9a-fA-F]{6}$/.test(color||'')?color:'#FFEB00';
   const f=new ol.Feature(new ol.geom.Point(coord));
   const txt=String(text==null?'':text);
+  const lines=txt.split(/\r\n|\r|\n/);
   const rad=-(Number(rot)||0)*Math.PI/180;   // CAD 반시계 -> OL 시계(부호 반전)
   h=Number(h)||0;
+  tw=Number(tw)||0;   // MTEXT 기준폭(m) — 저장/복원용으로 보관만 (OL 쪽 자동 줄바꿈은 아직 없음)
   // 앵커(CAD 정렬): ax 0=왼쪽 0.5=중앙 1=오른쪽 / ay 0=아래(베이스라인) 0.5=중간 1=위
   ax=isFinite(Number(ax))?Number(ax):0; ay=isFinite(Number(ay))?Number(ay):0;
   const tAlign=ax<0.25?'left':(ax>0.75?'right':'center');
   const tBase =ay<0.25?'alphabetic':(ay>0.75?'top':'middle');
+  // ── 여러 줄 ──
+  // OpenLayers 3 의 ol.style.Text 는 \n 을 못 그린다(캔버스 fillText 는 한 줄짜리).
+  // 그래서 줄마다 스타일을 따로 만들어 화면 픽셀 offset 으로 쌓는다.
+  // ⚠ OL 은 offset 을 '회전 전' 화면좌표에 더한 뒤 그 점을 중심으로 글자를 돌린다.
+  //   그래서 offset 벡터도 같은 각도로 직접 돌려 줘야 한다. 안 돌리면 기울어진 글자의
+  //   줄들이 화면 세로로만 쌓여 글자와 따로 논다. (한 줄이면 offset 0 — 예전과 동일)
+  const _lineStyles=(px,sw)=>{
+    const n=lines.length;
+    const lh=px*1.4;                                   // 줄간격 (뷰어 htm 과 같은 1.4)
+    const base=(ay<0.25)?(n-1):((ay>0.75)?0:(n-1)/2);  // 기준줄: 아래(베이스라인)/위/가운데
+    const sin=Math.sin(rad), cos=Math.cos(rad);
+    return lines.map((s,i)=>{
+      const dy=(i-base)*lh;
+      return new ol.style.Style({text:new ol.style.Text({
+        text:s,
+        font:'bold '+px+'px sans-serif',
+        fill:new ol.style.Fill({color:col}),
+        stroke:new ol.style.Stroke({color:'#000',width:sw}),
+        textAlign:tAlign, textBaseline:tBase,   // CAD 정렬 반영
+        offsetX:-sin*dy, offsetY:cos*dy,
+        rotation:rad, rotateWithView:true, overflow:true })});
+    });
+  };
   if(h>0){
     // h(CAD 문자 높이 m) 있으면 줌 연동 크기(dmap 방식).
     // 웹메르카토르는 위도만큼 축척 왜곡 -> 실제 m/px = resolution×cos(lat)
@@ -1864,27 +1896,188 @@ function addTextLabelV(coord,text,rot,color,h,ax,ay){
       if(!(res>0))return null;
       const px=h*1.1/(res*cosLat);            // 크기 보정 x1.1 (사용자 체감 확정값 — 여기 숫자만 바꾸면 됨)
       if(!(px>=2))return null;                // 너무 작으면 숨김
-      return new ol.style.Style({text:new ol.style.Text({
-        text:txt,
-        font:'bold '+Math.min(px,400)+'px sans-serif',
-        fill:new ol.style.Fill({color:col}),
-        stroke:new ol.style.Stroke({color:'#000',width:Math.max(1,px/10)}),
-        textAlign:tAlign, textBaseline:tBase,   // CAD 정렬 반영
-        rotation:rad, rotateWithView:true, overflow:true })});
+      const fs=Math.min(px,400);
+      return _lineStyles(fs,Math.max(1,fs/10));
     });
   }else{
-    // 옛 KMZ(h 없음) — 기존 고정 13px 중심 정렬 유지
-    f.setStyle(new ol.style.Style({text:new ol.style.Text({
-      text:txt,
-      font:'bold 13px sans-serif',
-      fill:new ol.style.Fill({color:col}),
-      stroke:new ol.style.Stroke({color:'#000',width:3}),
-      rotation:rad, rotateWithView:true, overflow:true })}));
+    // h 없음(옛 KMZ · '고정' 크기 메모) — 화면 13px 고정
+    f.setStyle(_lineStyles(13,3));
   }
-  f._t={txt,rot:Number(rot)||0,col,h,ax,ay};   // HTM 내보내기에서 원본 그대로 다시 쓰려고 보관
+  f._t={txt,rot:Number(rot)||0,col,h,ax,ay,tw};   // 저장(HTM·KMZ)에서 원본 그대로 다시 쓰려고 보관
   _ensureTextLabelLyr().getSource().addFeature(f);
+  return f;
 }
 function clearTextLabelsV(){ if(textLabelLyr){textLabelLyr.getSource().clear();} }
+
+/* ══════════════════════════════════════════════════
+   문자(메모) 입력 — T 로 켜고 지도를 클릭하면 그 자리에 글자를 넣는다. (map.html 과 같은 조작)
+
+    · 입력창은 여러 줄(textarea). Enter=줄바꿈, Ctrl+Enter=확인, Esc=취소.
+    · 이미 있는 글자를 우클릭하면 같은 창이 열려 수정·삭제.
+    · 만들어진 글자는 KMZ 로 읽어온 CAD 문자와 완전히 같은 피처다
+      → 저장(KMZ/HTM)·지우개·되돌리기가 전부 그대로 동작한다.
+    · 크기(m)는 지도 실거리 기준이라 확대하면 커진다. 0 이면 화면 13px 고정.
+      마지막에 쓴 색·크기는 다른 화면설정과 같은 통로(__saveUi)로 저장돼 다시 켜도 유지된다.
+
+   단축키를 Ctrl+T 로 두지 않은 이유: 크롬/엣지가 '새 탭'으로 선점한 조합이라 페이지가
+   가로챌 수 없다(F11 전체화면에서만 동작). 그래서 막히지 않는 T 를 쓴다.
+══════════════════════════════════════════════════ */
+let textMode=false, textEditOv=null;
+let textLastColor='#FFEB00', textLastHeight=10;
+function _saveTextPref(key,val){ try{ window.__saveUi&&window.__saveUi(key,val); }catch(e){} }
+
+function _updateTextBtnV(){
+  const b=document.getElementById('textBtn');
+  if(b){ b.style.background=textMode?'#f39c12':''; b.style.color=textMode?'#fff':''; }
+}
+function toggleTextMode(on){
+  const next=(on===undefined)?!textMode:!!on;
+  if(next===textMode){ _updateTextBtnV(); return; }
+  textMode=next;
+  if(textMode){
+    if(eraseMode) toggleEraseMode();      // 지우개와 동시 사용 방지
+    if(areaMode) stopAreaMeasure();       // 면적재기와 동시 사용 방지
+    if(drawing) endDraw();                // 선그리기와 동시 사용 방지
+    vmap.getViewport().style.cursor='crosshair';
+    showSaveStatus('📝 문자(T) — 글자를 넣을 자리를 클릭하세요 (Esc=종료)');
+  }else{
+    vmap.getViewport().style.cursor='';
+    closeTextEditor();
+  }
+  _updateTextBtnV();
+}
+function closeTextEditor(){ if(textEditOv){ vmap.removeOverlay(textEditOv); textEditOv=null; } }
+
+// 우클릭한 자리의 글자 피처 찾기.
+//  ① OL 히트 판정(글자 획 위) → ② 기준점에서 22px 안 (획을 살짝 빗나가도 잡히게)
+function _textFeatAtV(px,coord){
+  if(!textLabelLyr) return null;
+  let hit=null;
+  try{
+    vmap.forEachFeatureAtPixel(px,(feat,lyr)=>{
+      if(!hit&&feat&&feat._t&&lyr===textLabelLyr) hit=feat;
+    },{hitTolerance:6, layerFilter:l=>l===textLabelLyr});
+  }catch(e){}
+  if(hit) return hit;
+  if(!coord) return null;
+  let res=0; try{ res=vmap.getView().getResolution(); }catch(e){}
+  if(!(res>0)) return null;
+  const tol=res*ERASE_TOL_PX;
+  let best=null,bestD=Infinity;
+  for(const f of textLabelLyr.getSource().getFeatures()){
+    if(!f._t) continue;
+    const c=f.getGeometry().getCoordinates();
+    const d=Math.hypot(c[0]-coord[0],c[1]-coord[1]);
+    if(d<=tol&&d<bestD){ bestD=d; best=f; }
+  }
+  return best;
+}
+function _removeTextFeat(f){ try{ textLabelLyr.getSource().removeFeature(f); }catch(e){} }
+function _restoreTextFeat(f){
+  try{ const s=_ensureTextLabelLyr().getSource(); if(!s.getFeatures().includes(f)) s.addFeature(f); }catch(e){}
+}
+
+// 입력창 열기 — target(피처)이 있으면 그 글자를 고치는 모드, 없으면 coord 자리에 새로 만든다
+function openTextEditor(coord,target){
+  if(!vmap) return;
+  closeInputOv(); closeTextEditor();
+  const isEdit=!!target;
+  const pos=isEdit?target.getGeometry().getCoordinates():coord;
+  if(!pos) return;
+  const old=isEdit?(target._t||{}):null;
+  // 크기 목록의 id 는 열 때마다 새로 — 입력창을 닫으면 DOM 에서 사라지므로 겹칠 일이 없다
+  const listId='textHList_'+Date.now();
+  const c=document.createElement('div');
+  c.className='mpopup';
+  c.style.cssText='display:flex;flex-direction:column;gap:6px;font-size:12px;';
+  c.innerHTML=
+      '<textarea rows="3" lang="ko" placeholder="메모 내용 (Enter=줄바꿈)" '
+    +   'style="width:210px;font-size:13px;font-family:inherit;padding:4px;resize:both;"></textarea>'
+    + '<div style="display:flex;gap:5px;align-items:center;">'
+    +   '<button type="button" data-k="col" title="글자 색"'
+    +     ' style="width:26px;height:23px;padding:0;border:1px solid #ccc;border-radius:4px;cursor:pointer;"></button>'
+    // step=1 : ↑↓·스피너는 1m 씩. 직접 2.5 처럼 소수를 넣는 건 그대로 된다(값을 그냥 읽어 쓴다)
+    +   '<input type="number" data-k="h" list="'+listId+'" min="0" max="100000" step="1"'
+    +     ' title="글자 크기(m) — 지도 실거리 기준이라 확대/축소에 따라 커지고 작아집니다.'
+    +     '&#10;목록에서 고르거나 원하는 숫자를 직접 넣으세요(소수도 가능).  0 = 화면 고정 크기"'
+    +     ' style="width:62px;font-size:12px;font-family:inherit;padding:2px 4px;">'
+    +   '<datalist id="'+listId+'">'
+    +     '<option value="0" label="고정(화면크기)"></option>'
+    +     ['0.5','1','2','3','5','10','20','50','100','200','500']
+            .map(v=>'<option value="'+v+'" label="'+v+'m"></option>').join('')
+    +   '</datalist>'
+    +   '<span data-k="hunit" style="color:#666;">m</span>'
+    +   '<span style="flex:1;color:#888;text-align:right;">Ctrl+Enter</span>'
+    + '</div>'
+    + '<div class="brow" style="display:flex;gap:5px;">'
+    +   '<button type="button" data-k="ok" style="flex:1;">'+(isEdit?'수정':'추가')+'</button>'
+    +   (isEdit?'<button type="button" data-k="del" style="color:#c0392b;">삭제</button>':'')
+    +   '<button type="button" data-k="cancel">취소</button>'
+    + '</div>';
+  // stopEvent:true 로 지도 인터랙션과 분리되지만, 지도 클릭/단축키까지는 직접 막는다
+  ['mousedown','click','dblclick','wheel'].forEach(ev=>c.addEventListener(ev,e=>e.stopPropagation()));
+  textEditOv=new ol.Overlay({element:c,positioning:'bottom-center',offset:[0,-12],stopEvent:true});
+  vmap.addOverlay(textEditOv); textEditOv.setPosition(pos);
+
+  const ta=c.querySelector('textarea');
+  const colBtn=c.querySelector('[data-k="col"]');
+  const hInp=c.querySelector('[data-k="h"]');
+  const hUnit=c.querySelector('[data-k="hunit"]');
+  let col=isEdit?(old.col||'#FFEB00'):textLastColor;
+  colBtn.style.background=col;
+  colBtn.onclick=e=>{ e.stopPropagation(); openColorPalette(colBtn,v=>{ col=v; colBtn.style.background=v; }); };
+  // CAD 에서 온 글자는 목록에 없는 높이(예: 2.5m)를 갖고 있어도 그 값이 그대로 들어간다
+  const h0=isEdit?(Number(old.h)||0):textLastHeight;
+  hInp.value=String(h0);
+  // 비었거나 이상한 값이면 처음 값(h0)으로 되돌린다 — 실수로 지웠다고 크기가 튀지 않게
+  function _readH(){
+    const v=parseFloat(hInp.value);
+    return (isFinite(v)&&v>=0)?Math.min(v,100000):h0;
+  }
+  const paintUnit=()=>{ hUnit.textContent=(_readH()>0)?'m':'고정'; };
+  hInp.addEventListener('input',paintUnit); paintUnit();
+  ta.value=isEdit?(old.txt||''):'';
+
+  function done(){ closeTextEditor(); }
+  function apply(){
+    const txt=ta.value.replace(/[ \t]+$/gm,'').replace(/\n+$/,'');   // 줄 끝 공백·끝 빈 줄 정리
+    const h=_readH();
+    if(!txt.trim()){ if(isEdit) del(); else done(); return; }
+    // 방금 쓴 색·크기를 다음 입력의 기본값으로 (다시 켜도 유지되게 설정에도 저장)
+    if(textLastHeight!==h)  { textLastHeight=h;   _saveTextPref('text_h',String(h)); }
+    if(textLastColor!==col) { textLastColor=col;  _saveTextPref('text_col',col); }
+    if(isEdit){
+      // 줄 수·크기에 따라 스타일이 통째로 달라져서 고쳐 쓸 수 없다 → 같은 자리에 새로 만들고 교체
+      const neu=addTextLabelV(pos,txt,old.rot||0,col,h,old.ax,old.ay,old.tw);
+      _removeTextFeat(target);
+      pushHistory({ undo(){ _removeTextFeat(neu); _restoreTextFeat(target); },
+                    redo(){ _removeTextFeat(target); _restoreTextFeat(neu); } });
+      showSaveStatus('📝 문자 수정됨');
+    }else{
+      const f=addTextLabelV(pos,txt,0,col,h,0.5,0.5,0);   // 새 메모는 클릭한 점이 한가운데
+      pushHistory({ undo(){ _removeTextFeat(f); }, redo(){ _restoreTextFeat(f); } });
+      showSaveStatus('📝 문자 추가됨'+(textMode?' — 계속 클릭해서 더 넣을 수 있습니다':''));
+    }
+    done();
+  }
+  function del(){
+    if(!target){ done(); return; }
+    _removeTextFeat(target);
+    pushHistory({ undo(){ _restoreTextFeat(target); }, redo(){ _removeTextFeat(target); } });
+    showSaveStatus('🗑️ 문자 삭제됨');
+    done();
+  }
+  c.querySelector('[data-k="ok"]').onclick=apply;
+  c.querySelector('[data-k="cancel"]').onclick=done;
+  if(isEdit) c.querySelector('[data-k="del"]').onclick=del;
+  // 입력창 안의 키는 지도 단축키로 넘기지 않는다 (Enter 는 그대로 줄바꿈)
+  c.addEventListener('keydown',e=>{
+    e.stopPropagation();
+    if(e.key==='Enter'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); apply(); }
+    else if(e.key==='Escape'){ e.preventDefault(); done(); }
+  });
+  setTimeout(()=>{ try{ ta.focus(); ta.select(); }catch(e){} },30);
+}
 
 /* ── 면적재기 (기본지도.htm 이식 — OpenLayers 버전) ──
    클릭=꼭짓점 추가, 우클릭=확정, 버튼 재클릭=지우고 종료.
@@ -1921,6 +2114,7 @@ function toggleEraseMode(){
   const b=document.getElementById('eraseBtn');
   if(eraseMode){
     if(areaMode) stopAreaMeasure();   // 면적재기와 동시 사용 방지
+    if(textMode) toggleTextMode(false);   // 문자와 동시 사용 방지
     if(drawing) endDraw();            // 선그리기와 동시 사용 방지
     closeAllPopups();
     if(b){b.style.background='#e53935';b.style.color='#fff';}
@@ -2084,6 +2278,7 @@ function undoErase(){
 function toggleAreaMeasure(){
   if(areaMode){ stopAreaMeasure(); return; }
   if(eraseMode) toggleEraseMode();             // 지우개와 동시 사용 방지
+  if(textMode) toggleTextMode(false);          // 문자와 동시 사용 방지
   if(drawing) endDraw();                       // 선그리기와 동시 사용 방지
   areaMode=true;
   const b=document.getElementById('areaBtn'); if(b){b.style.background='#fb8c00';b.style.color='#fff';}
@@ -2261,6 +2456,15 @@ document.addEventListener('keydown', e => {
       e.preventDefault();return;
     }
     if(inputOv){closeInputOv();e.preventDefault();return;}
+    // 문자(메모) — Esc 로 입력창 닫기 / 모드 종료
+    if(textEditOv){closeTextEditor();e.preventDefault();return;}
+    if(textMode){toggleTextMode(false);e.preventDefault();return;}
+  }
+  // 문자(메모) 입력 모드 — T (Ctrl+T 는 크롬/엣지가 '새 탭'으로 선점해서 페이지가 못 받는다)
+  // e.code 로 보는 이유: 한글 입력 상태면 e.key 가 'Process'/'ㅅ' 로 와서 't' 비교가 안 됨.
+  if (e.code==='KeyT' && !e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey
+      && !e.target.matches('input,textarea,select')){
+    e.preventDefault(); toggleTextMode(); return;
   }
   if (e.key==='Alt' && !e.repeat){e.preventDefault();toggleDraw();return;}   // Alt 한 번 누름만 토글(자동반복 무시)
   if (e.ctrlKey&&e.key.toLowerCase()==='s'){e.preventDefault();doExport();return;}
@@ -3441,25 +3645,24 @@ function _loadExportedDataV(D,pts){
   const C=a=>{const c=toMerc(a[1],a[0]);pts.push(c);return c;};
   const sigs=_existingExpSigsV(); let skipped=0;
 
-  // 스타일(색·굵기·투명도·채움)이 같은 도형끼리 레이어 1개로 — 도형 수천 개짜리 도면 대비
+  // 파일에 있는 항목 하나 = 지도 객체 하나. 여기서 임의로 합치지 않는다.
+  // (파트가 여러 개인 항목은 '묶음객체'로 그대로 남는다. 묶을지 말지는 파일을 만든
+  //  쪽이 정한다 — 예전엔 색·굵기가 같으면 전부 합쳐서 객체가 뭉개졌다.)
   const grp={};
-  const key=g=>[g.c,g.o,g.w,g.fc,g.fo].join('|');
-  (LINES||[]).forEach(g=>{
+  (LINES||[]).forEach((g,gi)=>{
     const parts=(g.p||[]).map(pt=>pt.map(C)).filter(p=>p.length>=2);
     if(!parts.length)return;
-    const k='L|'+key(g);
-    (grp[k]=grp[k]||{st:{color:g.c||'#ff0000',opacity:(g.o!=null)?g.o:1,
-                         lw:(g.w!=null)?g.w:3,pw:(g.w!=null)?g.w:2,fill:null},
-                    lines:[],polys:[],nm:'경로'}).lines.push(...parts);
+    grp['LN'+gi]={st:{color:g.c||'#ff0000',opacity:(g.o!=null)?g.o:1,
+                      lw:(g.w!=null)?g.w:3,pw:(g.w!=null)?g.w:2,fill:null},
+                  lines:parts,polys:[],nm:'경로',fixed:g.n||''};
   });
-  (POLYS||[]).forEach(g=>{
+  (POLYS||[]).forEach((g,gi)=>{
     const rings=(g.p||[]).map(pt=>pt.map(C)).filter(r=>r.length>=3);
     if(!rings.length)return;
-    const k='P|'+key(g);
-    (grp[k]=grp[k]||{st:{color:g.c||'#ff0000',opacity:(g.o!=null)?g.o:1,
-                         lw:(g.w!=null)?g.w:3,pw:(g.w!=null)?g.w:2,
-                         fill:{c:g.fc||'#ffff00',o:(g.fo!=null)?g.fo:0.3}},
-                    lines:[],polys:[],nm:'면'}).polys.push(rings);
+    grp['PN'+gi]={st:{color:g.c||'#ff0000',opacity:(g.o!=null)?g.o:1,
+                      lw:(g.w!=null)?g.w:3,pw:(g.w!=null)?g.w:2,
+                      fill:{c:g.fc||'#ffff00',o:(g.fo!=null)?g.fo:0.3}},
+                  lines:[],polys:[rings],nm:'면',fixed:g.n||''};
   });
   Object.values(grp).forEach(s=>{
     // mkShapeLyr 이 만들 레이어와 같은 기준으로 시그니처를 계산 (coordParts 순서 = 선들 뒤 폴리곤 링들)
@@ -3469,7 +3672,7 @@ function _loadExportedDataV(D,pts){
     if(sigs.lines.has(sig)){skipped++;return;}
     sigs.lines.add(sig);
     const lyr=mkShapeLyr(s.lines,s.polys,s.st);addLyr(lyr);polylines.push(lyr);
-    const item={type:'track',name:`${s.nm} ${++trackCounter}`,address:'',polyLyr:lyr};
+    const item={type:'track',name:s.fixed||`${s.nm} ${++trackCounter}`,address:'',polyLyr:lyr};
     allItems.push(item);fetchAddrForItem(item);
   });
 
@@ -3478,7 +3681,7 @@ function _loadExportedDataV(D,pts){
     if(!String(t[2]||'').length)return;
     const c=C(t), name=String(t[2]);
     if(_hasPtV(sigs,'T',c,name)){skipped++;return;}
-    _addPtV(sigs,'T',c,name); addTextLabelV(c,t[2],t[3],t[4],t[5],t[6],t[7]);
+    _addPtV(sigs,'T',c,name); addTextLabelV(c,t[2],t[3],t[4],t[5],t[6],t[7],t[8]);
   });
   (MARKERS||[]).forEach(m=>{
     const c=C(m), name=m[2]||'마커';
@@ -3604,9 +3807,9 @@ async function loadKMZ(file){
           const raw=pt.getElementsByTagName('coordinates')[0]?.textContent||'';
           const p=raw.trim().split(',');const lo=parseFloat(p[0]),la=parseFloat(p[1]);
           if(!isNaN(lo)&&!isNaN(la)&&Math.abs(lo)<=180&&Math.abs(la)<=90){
-            let _rot=0,_col='',_h=0,_ax=0,_ay=0;
-            for(const d of Array.from(pm.getElementsByTagName('Data'))){const nm=d.getAttribute('name');const v=d.getElementsByTagName('value')[0]?.textContent||'';if(nm==='rot')_rot=parseFloat(v)||0;else if(nm==='color')_col=v.trim();else if(nm==='h')_h=parseFloat(v)||0;else if(nm==='ax')_ax=parseFloat(v)||0;else if(nm==='ay')_ay=parseFloat(v)||0;}
-            const c=toMerc(lo,la);pts.push(c);addTextLabelV(c,name,_rot,_col,_h,_ax,_ay);
+            let _rot=0,_col='',_h=0,_ax=0,_ay=0,_tw=0;
+            for(const d of Array.from(pm.getElementsByTagName('Data'))){const nm=d.getAttribute('name');const v=d.getElementsByTagName('value')[0]?.textContent||'';if(nm==='rot')_rot=parseFloat(v)||0;else if(nm==='color')_col=v.trim();else if(nm==='h')_h=parseFloat(v)||0;else if(nm==='ax')_ax=parseFloat(v)||0;else if(nm==='ay')_ay=parseFloat(v)||0;else if(nm==='tw')_tw=parseFloat(v)||0;}
+            const c=toMerc(lo,la);pts.push(c);addTextLabelV(c,name,_rot,_col,_h,_ax,_ay,_tw);
           }
           continue;
         }
@@ -4531,13 +4734,18 @@ async function _collectHtmData(selectedOnly){
       const c=l._color||it._origColor||'#1e8449',
             w=l._width||it._origWeight||3,
             o=(l._opacity!=null)?l._opacity:1;
+      // n = 이름(KMZ Placemark 이름 = 사이드바 항목명). 빠지면 받는 쪽에서 이름이
+      // 사라지고 같은 스타일끼리 한 덩어리로 합쳐져 객체 수가 줄어 보인다.
+      const nm=it.name||'';
       const rings=polyParts(l);            // 면(폴리곤) 링 [[외곽,구멍..],..]
       if(rings.length){
         const fill=l._fill||{};
         for(const rg of rings){
           const p=rg.map(r=>r.map(LL)).filter(r=>r.length>=3);
-          if(p.length)D.POLYS.push({c,o,w,fc:fill.c||'#ffff00',
-                                    fo:(fill.o!=null)?fill.o:0.3,p});
+          if(!p.length)continue;
+          const g={c,o,w,fc:fill.c||'#ffff00',fo:(fill.o!=null)?fill.o:0.3,p};
+          if(nm)g.n=nm;
+          D.POLYS.push(g);
         }
       }
       // 선(면이 아닌 LineString 피처들)
@@ -4545,10 +4753,10 @@ async function _collectHtmData(selectedOnly){
         .filter(f=>f.getGeometry() instanceof ol.geom.LineString)
         .map(f=>f.getGeometry().getCoordinates().map(LL))
         .filter(a=>a.length>=2);
-      if(lines.length)D.LINES.push({c,o,w,p:lines});
+      if(lines.length)D.LINES.push(nm?{c,o,w,p:lines,n:nm}:{c,o,w,p:lines});
       else if(!rings.length){
         const p=coordParts(l).map(cs=>cs.map(LL)).filter(a=>a.length>=2);
-        if(p.length)D.LINES.push({c,o,w,p});
+        if(p.length)D.LINES.push(nm?{c,o,w,p,n:nm}:{c,o,w,p});
       }
       continue;
     }
@@ -4571,7 +4779,7 @@ async function _collectHtmData(selectedOnly){
     for(const f of textLabelLyr.getSource().getFeatures()){
       const t=f._t; if(!t)continue;
       const ll=LL(f.getGeometry().getCoordinates());
-      D.TEXTS.push([ll[0],ll[1],t.txt||'',t.rot||0,t.col||'#FFEB00',t.h||0,t.ax||0,t.ay||0]);
+      D.TEXTS.push([ll[0],ll[1],t.txt||'',t.rot||0,t.col||'#FFEB00',t.h||0,t.ax||0,t.ay||0,t.tw||0]);
     }
   }
   return D;
@@ -4831,6 +5039,27 @@ async function exportCSV(){
   for(const m of ms){const ll=fromMerc(m.feat.getGeometry().getCoordinates());const addr=m.addr||await new Promise(r=>reverseGeocode(ll[0],ll[1],r));csv+=`"${nnm?.get(m)||m.name}",${ll[1]},${ll[0]},"${addr}"\n`;}
   saveBlobTo(dest,new Blob([csv],{type:'text/csv;charset=utf-8;'}));
 }
+// 지도 위 문자(메모·CAD 문자) → KML Placemark. 사이드바 항목이 아니라 따로 모은다.
+// ExtendedData kind=text 는 이 프로그램의 KMZ 리더가 그대로 다시 읽는 형식이다
+// (이게 없으면 KMZ 로 저장할 때 메모가 통째로 사라진다).
+function _textKmlPlacemarksV(){
+  let out='';
+  if(!textLabelLyr) return out;
+  for(const f of textLabelLyr.getSource().getFeatures()){
+    const t=f._t; if(!t)continue;
+    const ll=fromMerc(f.getGeometry().getCoordinates());
+    out+=`<Placemark><name>${esc(t.txt||'')}</name><ExtendedData>`
+       + `<Data name="kind"><value>text</value></Data>`
+       + `<Data name="rot"><value>${t.rot||0}</value></Data>`
+       + `<Data name="color"><value>${t.col||'#FFEB00'}</value></Data>`
+       + `<Data name="h"><value>${t.h||0}</value></Data>`
+       + `<Data name="ax"><value>${t.ax||0}</value></Data>`
+       + `<Data name="ay"><value>${t.ay||0}</value></Data>`
+       + (t.tw>0?`<Data name="tw"><value>${t.tw}</value></Data>`:'')
+       + `</ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;
+  }
+  return out;
+}
 async function exportKMZ(){
   // 사이드바에 보이는 객체(필터 켜면 화면 안 객체만), 사이드바 순서 유지
   const visItems=getFilteredItems();
@@ -4844,6 +5073,7 @@ async function exportKMZ(){
   let kml=`<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>${esc(fname)}</name>\n`;
   const lnStyles=new Map();
   for(const item of visItems){if(item.polyLyr){kml+=_lineKmlPlacemarksV(item,nnm,null,lnStyles);}else if(item.mkObj){const m=item.mkObj;const ll=fromMerc(m.feat.getGeometry().getCoordinates());const nm=newNames.get(m)||nnm?.get(m)||m.name;const fn=photoFileMap.get(m);if(fn){kml+=`<Placemark><name>${esc(nm)}</name><description><![CDATA[<img src="files/${fn}" style="max-width:400px">]]></description><ExtendedData><Data name="photoFile"><value>${fn}</value></Data></ExtendedData><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}else{kml+=`<Placemark><name>${esc(nm)}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}}}
+  kml+=_textKmlPlacemarksV();
   kml+=_lineKmlStyleDefsV(lnStyles)+'</Document></kml>';zip.file('doc.kml',kml);
   const blob=await zip.generateAsync({type:'blob'});
   // 저장이 실제로 끝난 뒤에만 사진번호 반영·_live 표시 (저장 실패 시엔 안 함)
@@ -5633,6 +5863,9 @@ function initResizers(){
     if(s['vmap.sb_w'])  sidebar.style.width  = s['vmap.sb_w'];
     if(s['vmap.prev_h'])ps.style.height      = s['vmap.prev_h'];
     if(s['vmap.meta_h'])ms.style.height      = s['vmap.meta_h'];
+    // 문자(메모) 글자 크기·색 — 마지막에 쓴 값을 다음 입력의 기본값으로 (크기 0 = 화면 고정)
+    if(s['vmap.text_h']!=null){ const _th=parseFloat(s['vmap.text_h']); if(isFinite(_th)&&_th>=0) textLastHeight=_th; }
+    if(/^#[0-9a-fA-F]{6}$/.test(s['vmap.text_col']||'')) textLastColor=s['vmap.text_col'];
     if(s['vmap.colvis']){ try{ colVis = Object.assign(colVis, JSON.parse(s['vmap.colvis'])); }catch(e){} }
     if(s['vmap.colw']){ try{ colW = Object.assign(colW, JSON.parse(s['vmap.colw'])); }catch(e){} }
     if((s['vmap.colvis']||s['vmap.colw'])){ if(typeof applyColHeaders==='function') applyColHeaders(); if(typeof renderList==='function') renderList(); }
