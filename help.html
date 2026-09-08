@@ -80,6 +80,7 @@
 <button class="tab" data-tab="list" id="btn-list">📑 목록 관리</button>
 <button class="tab" data-tab="meta" id="btn-meta">🔎 메타 검색</button>
 <button class="tab" data-tab="report" id="btn-report">📄 보고서</button>
+<button class="tab" data-tab="vmap" id="btn-vmap">🛰 브이월드 지도</button>
 <button class="tab" data-tab="mobile" id="btn-mobile">📱 휴대폰 설치</button>
 <button class="tab" data-tab="keys" id="btn-keys">⌨️ 단축키</button></nav>
 
@@ -147,6 +148,54 @@
     <li><b>좌표 · 주소 표시</b> — 클릭한 지점의 위도·경도·주소. 누르면 클립보드로 복사</li>
   </ol>
   <p class="tip">사이드바와 지도 사이의 <b>◀</b> 버튼으로 목록을 접고 펼 수 있고, 경계선을 드래그해 너비를 조절합니다.</p>
+  <p class="tip">위 그림은 기본 화면입니다. 아래 도구들은 지도 오른쪽 아래에 세로로 붙어 있습니다.</p>
+</div>
+
+<div class="card">
+  <h3>지도 종류 바꾸기</h3>
+  <ul>
+    <li><b>위성+지도</b> — 위성사진 위에 도로·지명을 겹쳐 표시 (기본값)</li>
+    <li><b>위성사진</b> — 글자 없는 항공 영상만</li>
+    <li><b>일반지도</b> — 흔히 보는 도로 지도</li>
+    <li><b>🏔️ 지형도</b> — 등고선·산지 음영을 현재 배경 위에 덧입힘</li>
+    <li><b>🗺️ 지적도</b> — 필지 경계와 지목을 덧입힘. 현장 위치를 <b>지번과 맞춰 볼 때</b> 씁니다</li>
+  </ul>
+  <p class="tip">지형도·지적도는 <b>덧입히기</b>라 위성+지도/위성사진/일반지도 중 마지막에 고른 배경 위에 얹힙니다.</p>
+</div>
+
+<div class="card">
+  <h3>면적재기 · 거리 확인</h3>
+  <ul>
+    <li><b>면적재기</b> 버튼을 켜고 지도를 클릭해 꼭짓점을 찍습니다. <b>더블클릭 또는 우클릭</b>으로 확정하면 면적이 표시됩니다</li>
+    <li>버튼을 다시 누르면 잰 것을 지우고 종료합니다</li>
+    <li><b>거리</b>는 따로 재지 않아도 됩니다 — <a href="#tab-line" class="jump">선 그리기</a> 중에는 실시간으로 표시되고, 이미 그린 선은 목록의 <b>연장</b> 칸에 나옵니다 (여러 개를 선택하면 합계)</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>📝 문자 — 지도에 글자(메모) 쓰기</h3>
+  <ul>
+    <li><b>📝 문자</b> 버튼 또는 <kbd>T</kbd> 키로 켜고, 지도를 클릭하면 입력창이 열립니다</li>
+    <li>입력창에서 <kbd>Enter</kbd> = 줄바꿈, <kbd>Ctrl+Enter</kbd> = 확인</li>
+    <li><b>글자 크기(m)</b>를 목록에서 고르거나 직접 입력합니다. <b>0</b>으로 두면 확대·축소해도 <b>화면상 크기가 고정</b>되고, 숫자를 넣으면 실제 거리 기준이라 지도를 확대하면 글자도 함께 커집니다</li>
+    <li>글자 색을 고를 수 있고, 이미 넣은 글자는 <b>우클릭</b>해서 수정·삭제합니다. <kbd>Esc</kbd> 로 종료</li>
+    <li>넣은 글자는 KMZ·HTM으로 저장할 때 <b>함께 담깁니다</b></li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>🧽 지우개 · ↩️ 되돌리기</h3>
+  <ul>
+    <li><b>🧽 지우개</b>를 켜고 지도를 클릭하면 <b>그 자리 근처의 객체</b>가 지워집니다. 지도를 축소한 상태로 누르면 근처 여러 개가 한 번에 지워집니다</li>
+    <li>잘못 지웠으면 <b>↩️ 되돌리기</b> — 방금 지운 것부터 하나씩 되살립니다 (지운 것이 있을 때만 나타납니다)</li>
+    <li>지우개 말고 목록에서 지운 것까지 포함해 <kbd>Ctrl+Z</kbd> = 되돌리기, <kbd>Ctrl+Y</kbd> = 다시하기</li>
+    <li>버튼을 다시 누르면 지우개 모드가 끝납니다</li>
+  </ul>
+</div>
+
+<div class="card">
+  <h3>지도창이 두 개 열립니다</h3>
+  <p>프로그램을 실행하면 <b>카카오맵 지도창</b>과 <b>브이월드 지도창</b>이 함께 열립니다. 목록·저장·검색·선 그리기 등 <b>기능은 서로 같고</b>, 배경지도와 일부 도구만 다릅니다. 자세한 것은 <a href="#tab-vmap" class="jump">브이월드 지도</a> 탭을 보세요.</p>
 </div>
 
 </section>
@@ -311,7 +360,32 @@
 </section>
 <section class="panel" id="panel-save">
 
-<h2>사진 저장 옵션</h2>
+<h2>내보내기 형식 · 저장 옵션</h2>
+<div class="card">
+  <h3>내보내기 형식 — 무엇으로 저장할까</h3>
+  <p class="lead">저장 형식은 <b>받는 사람이 무엇으로 여는가</b>에 맞춰 고르면 됩니다.</p>
+  <ul>
+    <li><b>KMZ 내보내기</b> — 기본. 마커 · 선 · 면 · 문자 · 사진이 한 파일에 담기고, 이 프로그램이나 구글어스에서 다시 열어 <b>이어서 편집</b>할 수 있습니다</li>
+    <li><b>GPX 내보내기</b> — 트랙과 지점만. GPS 기기·등산앱에서 읽는 표준 형식입니다 (사진은 담기지 않습니다)</li>
+    <li><b>CSV 내보내기</b> — 이름 · 위도 · 경도 · 주소를 표로. 엑셀에서 바로 열립니다</li>
+    <li><b>HTM 내보내기</b> — <b>프로그램 없이 브라우저로 바로 열리는 단독 지도 파일</b>. 받는 사람이 아무것도 설치하지 않아도 되고, 사진도 파일 안에 함께 담깁니다. 대신 사진이 많으면 파일이 커집니다</li>
+    <li><b>HTM(모바일) 내보내기</b> — 휴대폰으로 보낼 때. 열면 <b>[지도 열기]</b> 버튼 하나가 뜨고, 누르면 인터넷 지도에서 열립니다. https 로 열리므로 <b>내위치(GPS)가 동작</b>합니다</li>
+    <li><b>사진</b> — 지도에 올려둔 사진들만 파일로 내려받습니다</li>
+  </ul>
+  <p class="warn"><b>HTM(모바일)</b>은 <b>인터넷 연결이 필요</b>합니다. 인터넷이 안 되는 곳에서 열어야 한다면 <b>HTM 내보내기</b>(단독 파일)를 쓰세요.</p>
+</div>
+
+<div class="card">
+  <h3>저장 범위</h3>
+  <p class="btnrow"><img class="btnimg" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAOUAAABTCAIAAADvOFcpAAAIoElEQVR4nO2cP2za2hrAT54ihacO4U04EhFOUinuVLZLo6Bwp+cMVcgEG9yhKp2uo0oP3sZWWBK/paFTnKlmCp1Cpzogtdzpkum6UkscdcBMl0ylE0+2CeGfCX9s7EO/3xKCHQ5f/OM73/lss9BsNhEAYMI/rH4DADAG4CuAE4t6G+Lx+GzfCQDckU6n0SAW+utXMBWwrbW99QDICtiHfhu78mvPZr2cDACmMsTDwfUrmApYiKbfwKn+rh5obwZZAVvRKS70swCbMjBvgq8AToCvAE6ArwBOgK8AToCvAE6ArwBOgK8AToCvAE6ArwBOgK8AToCvAE6ArwBOgK8AToCvAE5g4qvAECp0RjJvEClDa6MwghEv16jLKvXGbAORjA3DXmDia0OuqUidx14fOZ+KqnBlvV3y4QUVir0TpyFpo8ijjXIPQmxFxdep5liB2CIMTO7nNo5GvTvFjIDDSTgd0wwpcqenn5UHYS6KDEIu50r3J0XSF/QSBo1oShh4Y76vUsa3dqD808dg8+hKZEhkL8qp/f3svXuFzps8PZP381OCST1gAyRRHGGvTR81g/fy82J+fiXozBlZ731WSO3/7w/lgSt0nAn3TqBOyqgp1ThIptxk9DZKLKVNItPVMYD1vjqoQLA/5zh4pPnq9NHB4HRTv8AQYb77qXpN+5kNE0K3QGFeZgPIaMolreJx+SYvXm0Qhv2ZwXrLdNQ1t862m1rtpusJUxbNpXxOexAIePs2eikSkzAwwCpf2/9uSZQRmi6/EnQk0p196mX+3eUPhJBnJxLofvGACZWGwHHKYAjtBQfkvFIqGm3nTalk3zBwwCJf2wkJ/RBKEvKRw+dF1NBLPAreKNfT7pHY0ju1nPQlOM7s1XqdT71RdV16zoQHVK/XF6enFyO8jsVh4IE1/YFyLqclJITQZzbTvfC+bal30j0Z2opSIvZefeBhmMEV5bLrjmU0BxweHuqXLiNRq9VYlsUkvzbyKbYj2ms2mU/ytEN/XkRIEk4vrkcfQRZNPG3bST0fpt+oH6blSCY5uJUV4uW7jmw+vLB7fxN31mGMw/Hx8cuXL1+/fl0sFldWVtD4VKtVv9//9evXBw8ePHv2zO6+lpOxrJpd946PGy9evEc/suFoVOJpp968qBzm8Xytt9K3KEqINu3Eg8gGdrOarSGevfvEGcWMwhiP/f39w8PDL1++bG9vf/z40eVyjfXntVpte3u7Uqk8fPjw6dOndq8H6vlwIK2a54knYzH21aby+Ca7G2BHacePhijenm+/LIu9Z9pbjJ7l9AbhAr6DS/Wh6/d8+9NmIDMJY2wIgigWiyRJViqVra2tsQqDWq22tbWlyVosFgmCsLWvDTHVTkiRTNKLEJXIHT1Wt10ePPIlSnVDhikL7fO/eUH3UpEpqOdj5KPfLlqp9VxkfSYMYn4Ys1V2ellnWg/Iuahv/1Sb1JcjfKY1fVKMcF4iVYv/SD8hS0f5HOObLlcJOW0BpFDLCVLKS/aXxWNWxG0aUi4WuI0DuSJnImdCajU9jGlxu93FYtHv92vK3lsYGCKrQvOW/9zSNJy/Px39+y6Y5b231Z4dqm/3OhbOS48jJ39Wv3fucB7SNm0eXd032Pe3e+qut/8/T/yvQbsNeMWro832NSuDXrj64TjU2kONY+f4r643qTNC16uNHIhpYRjJt2/fSFL5FK2vr8uyrLebLMvr6+vKOW2SrFZ7D/4Q+p00ux6QclFq4V9PDt63pgxX5EzK9V0vQIRz0qejnZazPy5Pk7w84epF5jPvlJ9LQY7du20/TH0ySMzQxD9Xfn2Rbc3Qrr2TK1mIUaZdLGBOGOZk2eGFQTuzkiQ5VWZVMdtXkvK2j+lm5OxK4oKDZ0+njxHkq/P4nguh5ed8qv+85kiU2aTam/cwDB2MhZYU/bOx5LTVHxUM3zarNiMnf/4t56KkmRe2mBTGzJXtkdXtdk85nOnrLYrhX/3i2vn97Oq7yAWHH2QHSadycvO7nJlw/SJzjNZ8+CXBUMhBJxmP8tt1OpyasvtARPmTiGJqU+Si3pEK1kCmqpLpPIvgTZypZGjCijBmqqzhss6mP0AlSrLA3qNqJ44JM5fI0r+pWWkplIyqOlDJTEQtMj7/1xfOT9d8IJS28Gimajic2m1UXVcYEt6gSkC/lDA3jFkpa4as83S9dj0fvm2H7mTavXsHzfIh9VDfZHe9McGoY93TBR2fzvutrAvDSNxud6FQWFtbq1QqT1QqlcrGxoaBslrhq8RSw4/YJNSFmLfV2EWPjzgtK2k4aY6PaEvs6ze/kgHWmB6vKeAexurq6ocPH1ZXV69UNjY2BEEwUNa5uP61XkrQT9Lqtd9q817ovfHLQXPiOaJ2T2sI3Vwc0IxX5gJTLpaUMjQ8yR+276uwRRjG4/F4CoWC3+9fXFw0XFZ8fFXWLsrlPA5n/zKlLrUWIcs7J6XB50WdNCd+8gbpgwv0PG/EUVbK0Ik6GO37KmwRhimQJFkoFBYXFw2XFR9flbWLziYnzZdelR9x9HmJHXKmSe2XBcU6adP7AeckDI21tTVkDpj4OhwqITYTI+znIG14H+PchWEqc9MfAH4KwFcAJ6yrB+qlfC43wbzmpOghzXZgvrHO11r2xQhf7zP4u4pGvEMamDvmYr1ldIcMIwLzEYZ9fSUZUf9rfSzukDlIl0s5bUSYV244CO2CVqOu7nJYE4Zl/LT5dQBkLC/HTB4jwMryJPcx2ywMy4D+AIAT4CuAE+ArgBPgK4AT4CuAE+ArgBPgK4AT4CuAE+ArgBPgK4AT4CuAE+ArgBPgK4AT4CuAE+ArgBPgK4C5r/F43Ip3AgD3e3jnazqd7t8MAJbTaebiELXBYMAShszwC81mc8RdAWD29CTN3voVcipgH/pt7M2vbSDRAhailzd1fQUAGwL9VwAnwFcAYcT/ARR6IvF3zD59AAAAAElFTkSuQmCC" alt="저장 범위"> <img class="btnimg" src="data:image/png;base64,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" alt="저장"></p>
+  <ul>
+    <li><b>전체객체</b> — 목록에 보이는 객체 전부. <a href="#tab-list" class="jump">필터</a>를 켜 두면 <b>화면 안에 있는 것만</b> 저장됩니다</li>
+    <li><b>선택객체</b> — 사이드바에서 선택(Ctrl·Shift 클릭)한 것만</li>
+    <li><b>각각저장</b> — 서로 멀리 떨어진 것끼리 묶어 <b>여러 파일로 나눠</b> 저장합니다</li>
+  </ul>
+  <p class="tip"><b>💾 저장</b> 버튼 또는 <kbd>Ctrl+S</kbd>. KMZ로 저장하면 <b>저장한 파일의 전체 경로가 클립보드에 복사</b>되어 엑셀에 바로 붙여넣을 수 있습니다.</p>
+</div>
+
 <div class="card">
   <h3>사진 용량(압축) 조정</h3>
   <p class="btnrow"><img class="btnimg" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAN8AAABTCAIAAACQ6UXYAAAKE0lEQVR4nO2dP1Da/BvA09/1Tn4TdCI96RFPe8QJOhX1LLyTcegVJ9KJdJKt8Xr3Qje34lLyTqXXQZwKk3QiTqViT5yKk3j1D961FSZhEiffQ/JPTDCYCF98n88EhCeE5OPz/fN8g/fOz88xAECS//X7AABAE7ATQJf7WhsikUhvjwT477K0tKT6+r2r/U7wEkDE0faWHdQE+sVV9y7lzrbNWvkWAEykg3Xq/U7wEugZLdlUG225ZZc2g5pAH1FqCjNKABKo5kSwE0AXsBNAF7ATQBewE0AXsBNAF7ATQBewE0AXsBNAF7ATQBewE0AXsBNAF7ATQBewE0AXsBNAF7ATQBewE0AXsBNAF7ATQJde2lkrJqOUB8ct90RsuIeKJouVhq5g1k/KsTbSz3B8WUfkDWJ5WnwrzevYPU/bpK90D2f42tX9aGPDST+t8yT85zgX+Vvk/BY42Yw87XQUTyObJ9rRO8sz9ptF3jA2GxTfEsxe982yIcX+nfNfT1T3owfX62zHr3LXuWpgL3JnjaeJiaUt8anV5QuGQqFQ0OccEl/bWpogaDnnKClxnvFXa9XWkyHnRawidGtpwsMWNPKOkVh934whZ1eE/WPuyGYx4bfdeG+7/8xqnYQ2KnyMYWJ8BbvrdDDXHE4+z0gf5pzPHp8qN54eroac0mbf8nF79M47l7jVfTnTKdOxNZS9tFujsbpy58nXefnQ2z9B535OT44Pf6xGFOl9KKj2Vdo4jLswzBU/PL9T9CF3lmLRNUGDYLaYoHCLcquFCCSL2aC19exbeLFwKbiRir7dFYNzMa8yL9m8sYLoX32FTZTbPthI7PXUcmHPXx+PhGfudzuFy5+gE4sNJzyBGF+SzsFZejF593OiTm7bzgLHCZfwRSJJqV4/G8XFhEx2lskUFVsqSe5L69HTGKcWTEYT861mejcauyy2kdgu1YzvFKPkpT+6rlGcA2wrk4MBUk/sLBcKZ61HvoBf8wLi/oDQBlfLijRW4VNCZ9UXDuDqoX6GaSl2lkwqFTMS25laIeqX1Xwa3ymyJGYc+Rxg5QpSyfP9+/fVqti3vhHVapXjOPTsrFlsLrvdbsUwHNdwpIlFErdSk69Mgf/WeuCivJrBXirQenCWKyjMNhJ7jZoTS9utJ1bf8k7BFDUvnwNjadhcPnz48ObNm6mpqT9//txsD8fHx1NTUwsLC58+fULMTk84V6pUKrXz8xSl/a5GgW/1EDGMkCUulcRW3kN2UID0CDlnt1DCzIjVrWYhx5ilpvIc2Ck/gaHC3NwcQRD7+/uTk5O/f//uNrxarfp8vv39/cePHz9//nwQa0WVVEIYOGEzlF96uVwULxfR6WrZJJ+LpbIZseo0SjGFmi8+l8xUszk1FRbOgS/GejBkwHE8n88TBHF0dDQ1NfXr1y/9sdVqdXJy8ufPn2NjY+vr6x1bT1TtrPEsK7TC2AsmILfxUu/LhncaDat9aSOxajRKMe/4W0FNzB0vZuiuz7TGnmvlYpL1krPpurDvBGPSrs3C4XDk8/mRkZGjo6Pp6WmdgrbUPDg4GBsby+fzN1ATATtrmXBAuDCYO87Rcp+roeiB6kNuno3EXqXEKdTEMGx7MaprzlxJela9jvn/ByNPXv2zdTHosM8smzTEMhuHw7G+vk4QRLlcfvbs2bWCVqvV6elpg2r2285mEWkuLQzq3fEMi05/S6LIecYXFGo2qadn6VS3fl7HkDtAexBLm1cy6PDw8OHhYecMKjXoBEEYUbOvdl5UAcW02ZwwR9FNLP1WVLNZQt+cF+bMsbWXfk7HQKoLzrY/vnryAKeS5u7WRBwOx/fv34eHh8vlspagUoNuXM3+2VlJBQipQG0NZssp9Zl6VBBK6N5ELiJWL7cXAjH9ImlWRE9Pjne+fgi5hdp/de3VuIfrvnbVI5xOp1JQuX+vpqbD4TD4cX2ws1HivA9ffhGypnP+q7qaON5tLnV5SRNir+KObEqVUE+Ml6r3u2+9DG+0rGNprqALJ4u1nXdu4aXthbDp/YbbF9R0NftgZzNpji+I65WexndKWqt6LDbp9UYnBeS/X4spsR3UvICMZuKiR/UVWrGa0xAWMpqS8vLaYhLZ9KkUdG9vryXobajZ69XHhajn4csvQntuf/H5uMB2qE8T0lR5sdOlqkmGkSRhRuwlgrGrqztINiX7aeIAiWTCUlrWUx3oJ06nc2Njw+Fw7O3tTU5OTkxMHBwcjI6OmqhmL+2sZRhSms1urvstXTdnSJLirHSxqH2tGsWcMPHuVjTORmJ1QLJy/jRxgCQXM6+vDvQfKU0eXjA6OprL5UxUs2d2XkwdSYOgZtLUs97MS/laD3ZzRc32uZjLtR4Meb2EObF6IFh+WfiEZkeRNsVPRS/Eo5HL0YIgiI2NjeHhYYIgTFezR3aWOL80ddQcBOkttOAULawqW+O01jzmksnWfOkQw3hNitUHzmTkddXbC95wd6vwVCglE7s6Bmlo4XQ68/n8+vq66Wr2ws4aT3vFKcOL9cdd3NqA06xw/beirNrooxhlPrYEc7Ks17RYndjo1GpQvAuk/pHSd9eFFiWOXpLW5bH0IKROgZGRkUePHg3k6uMoLRcqC93OatromDCOradnyUCq0jbGeiJcT2sosUiaGKv7+AKJjLioHaunA+FM7UaV9kyUwuWKlDW0iFqtvU/crp2VBPuxLrd+49ffP0u2zUR7Yrw4/qh+efnwns1DMQxD+wnLA2mMZQ+lOEpl7G8kVi82KpkKiX6epef8GjPpWnX2VqV9bkm8Nc/4Ed0lbtVOeYG6AUi2sPNBui2svr22srKS/nYkVOcx1+uvJY1bQozF6sVCJXmpwNmsIBkYINln4pvGj+jucKt2dr9USBULGeYrJz+WX/tcdukeY6vLF4pnD09LXMeOrJFY3SgLnNj2AhVV3hx1LVa73T3zOr764/i0wrOqcxk8Q9KJgnavoVHmowGc0fHLEIOF/P/Z4X8Mo0slFSCbtV/X62yheQtfmSNHFrD4YYklGuVMmJpb2b1YEW3astO+cNXAfq/vBPSA05nyatDa/D2GBwSTEX/UptGsC4801bSHsron6gaI+/0+AEAftkCqvIoRc+mjlbmHGWuzl7LofVhvjjmtwewd7axC7hwcbIFUoTUJUa+fYdiZqCbqyw9vDtg5UJBsTvrVkCaud13PIQ8SYOeAYaNS0gSW610mOigVzxsBdg4eXi7VLKA6I6m77SaMigYSC8VlIl7bIkL3vd8OYOdAglMxFrv7QMsOoAvYCaAL2AmgC9gJoAvYCaAL2AmgC9gJoAvYCaAL2AmgC9gJoAvYCQyUndLtHQDQM1Stk+2Em90AFFB6eL+DyOAr0AM6tNXyHcPXvhUAbpu2hNje74R8CfSLq+61504JSKJAz9DKiZp2AkDfgflOAF3ATgBDln8BBRajYGfdXesAAAAASUVORK5CYII=" alt="사진 용량"></p>
@@ -465,6 +539,59 @@
 </div>
 
 </section>
+<section class="panel" id="panel-vmap">
+
+<h2>브이월드 지도 <span class="badge">두 번째 지도창</span></h2>
+<div class="card good">
+  <p>프로그램을 실행하면 지도창이 <b>두 개</b> 열립니다.</p>
+  <ul>
+    <li><b>카카오맵 지도창</b> — 이 설명서의 나머지 부분이 설명하는 기본 지도</li>
+    <li><b>브이월드 지도창</b> — 국토교통부 브이월드 배경지도를 쓰는 같은 프로그램</li>
+  </ul>
+  <p><b>목록 · 저장 · 검색 · 선 그리기 · 사진 · 문자 · 지우개는 두 창이 똑같습니다.</b> 배경지도와 아래 몇 가지 도구만 다릅니다. 필요한 쪽을 골라 쓰고, 안 쓰는 창은 닫아도 됩니다.</p>
+</div>
+
+<div class="card">
+  <h3>지도 종류</h3>
+  <ul>
+    <li><b>일반지도</b> — 브이월드 기본 지도</li>
+    <li><b>백지도</b> — 배경을 최대한 비운 지도. 그려 넣은 선·문자가 잘 보여 <b>도면을 얹어 볼 때</b> 좋습니다</li>
+    <li><b>야간지도</b> — 어두운 배경</li>
+    <li><b>항공사진</b> — 글자 없는 항공 영상</li>
+    <li><b>하이브리드</b> — 항공사진 + 도로·지명 (기본값)</li>
+  </ul>
+</div>
+
+<div class="card good">
+  <h3>촬영연도 — 과거 항공사진 보기</h3>
+  <p>지도 종류 옆의 <b>촬영연도</b> 목록에서 연도를 고르면, 그 해에 찍은 <b>국토지리정보원(국토정보플랫폼) 항공사진</b>이 배경지도 위에 덮여 표시됩니다.</p>
+  <ul>
+    <li>공사 전·후 비교, 예전에는 무엇이 있었는지 확인, 무단 형질변경 시점 추정 등에 씁니다</li>
+    <li><b>촬영연도(현재)</b>로 되돌리면 최신 영상으로 돌아옵니다</li>
+    <li>그려 둔 선·마커·사진은 그대로 남아 있어, 과거 영상 위에 겹쳐 놓고 볼 수 있습니다</li>
+  </ul>
+  <p class="warn">전국을 매년 찍는 것이 아니라서, <b>지역에 따라 해당 연도 촬영본이 없으면 빈 화면</b>으로 보일 수 있습니다. 그럴 때는 앞뒤 연도를 눌러 보세요.</p>
+</div>
+
+<div class="card">
+  <h3>브이월드에만 있는 버튼</h3>
+  <ul>
+    <li><b>지적도</b> — 필지 경계를 켜고 끕니다 (카카오는 지도 종류에서 고름)</li>
+    <li><b>확대 / 축소</b> — 지도의 최대 배율을 넘어서면 <b>화면을 그대로 확대</b>해 더 크게 볼 수 있습니다. 좁은 골목이나 작은 구조물 위치를 찍을 때 씁니다</li>
+  </ul>
+  <p class="tip">카카오맵은 배경지도 종류가 다르고 로드뷰가 있습니다. <b>지번·필지 확인과 과거 영상은 브이월드</b>, <b>현장 사진 같은 거리 모습은 카카오 로드뷰</b> 식으로 나눠 쓰면 편합니다.</p>
+</div>
+
+<div class="card">
+  <h3>두 창을 같이 쓸 때</h3>
+  <ul>
+    <li>탐색기·엑셀 연동(<a href="#tab-load" class="jump">방법 2 · 3</a>)은 <b>열려 있는 지도창 모두</b>에 표시됩니다</li>
+    <li>드래그 앤 드롭이나 그리기는 <b>그 창에만</b> 반영됩니다 — 두 창의 목록은 따로입니다</li>
+    <li>한쪽에서 KMZ로 저장한 뒤 다른 창에 끌어다 놓으면 그대로 옮겨집니다</li>
+  </ul>
+</div>
+
+</section>
 <section class="panel" id="panel-mobile">
 
 <h2>휴대폰에서 앱으로 설치하기 <span class="badge">모바일</span></h2>
@@ -513,10 +640,15 @@
 <h2>단축키 / 조작 방법</h2>
 <div class="keys"><div class="krow"><div class="kk"><kbd>F1</kbd></div><div class="kd">도움말 열기</div></div>
 <div class="krow"><div class="kk"><kbd>Alt</kbd></div><div class="kd">선 그리기 시작 / 종료</div></div>
-<div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>C</kbd></div><div class="kd">현재 위치의 위도·경도·주소 복사 + 번호 마커 생성 (엑셀에 세 칸으로 붙여넣기)</div></div>
+<div class="krow"><div class="kk"><kbd>T</kbd></div><div class="kd">문자(메모) 입력 모드 시작 / 종료 — 켠 뒤 지도를 클릭</div></div>
+<div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>Enter</kbd></div><div class="kd">문자 입력창에서 확인 (Enter 는 줄바꿈)</div></div>
+<div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>C</kbd></div><div class="kd">목록에서 고른 것이 있으면 — 그 사진·KMZ 원본 파일을 복사</div></div>
+<div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>C</kbd></div><div class="kd">고른 것이 없으면 — 현재 위치의 위도·경도·주소 복사 + 번호 마커 생성 (엑셀에 세 칸으로 붙여넣기)</div></div>
 <div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>S</kbd></div><div class="kd">선택한 형식·범위로 저장</div></div>
 <div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>V</kbd></div><div class="kd">클립보드 이미지를 지도에 사진 마커로 추가</div></div>
 <div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>A</kbd></div><div class="kd">목록 현재 탭 전체 선택</div></div>
+<div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>Z</kbd></div><div class="kd">되돌리기 — 지운 객체·지우개 작업을 하나씩 되살림</div></div>
+<div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>Y</kbd></div><div class="kd">다시하기 (Ctrl+Shift+Z 도 같음)</div></div>
 <div class="krow"><div class="kk"><kbd>Insert</kbd></div><div class="kd">탐색기·엑셀에서 임시로 표시된 객체를 지도에 영구 삽입 (어느 창에서든 동작)</div></div>
 <div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>V</kbd></div><div class="kd">임시 객체 영구 삽입 (⬇ 삽입 버튼과 같음)</div></div>
 <div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>I</kbd></div><div class="kd">엑셀에서 선택한 여러 셀의 사진·KMZ를 한꺼번에 삽입</div></div>
@@ -524,9 +656,10 @@
 <div class="krow"><div class="kk"><kbd>Shift</kbd><kbd>↑↓</kbd></div><div class="kd">이동하면서 연속 선택</div></div>
 <div class="krow"><div class="kk"><kbd>Enter</kbd></div><div class="kd">선택 항목 이름 수정</div></div>
 <div class="krow"><div class="kk"><kbd>Delete</kbd></div><div class="kd">선택된 항목 삭제</div></div>
-<div class="krow"><div class="kk"><kbd>Ctrl</kbd><kbd>Z</kbd></div><div class="kd">선 그리기 중 — 마지막 점 취소</div></div>
-<div class="krow"><div class="kk"><kbd>Esc</kbd></div><div class="kd">마지막 점 취소 / 이동 취소</div></div>
-<div class="krow"><div class="kk"><kbd>우클릭</kbd></div><div class="kd">(빈 곳) 마커 추가 / (선·마커 위) 수정·삭제 — 모바일은 길게 누르기</div></div>
+<div class="krow"><div class="kk"><kbd>Esc</kbd></div><div class="kd">선 그리기 중 — 마지막 점 취소</div></div>
+<div class="krow"><div class="kk"><kbd>Esc</kbd></div><div class="kd">검색(위치로·메타) 중단 · 로드뷰/위치 선택 취소 · 문자 입력 종료</div></div>
+<div class="krow"><div class="kk"><kbd>Backspace</kbd></div><div class="kd">선 그리기 중 — 마지막 점 취소</div></div>
+<div class="krow"><div class="kk"><kbd>우클릭</kbd></div><div class="kd">(빈 곳) 마커 추가 / (선·마커·문자 위) 수정·삭제 — 모바일은 길게 누르기</div></div>
 <div class="krow"><div class="kk"><kbd>1초 길게 누르기</kbd></div><div class="kd">마커 위치 이동 모드 시작</div></div></div>
 </section>
 </main>
