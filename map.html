@@ -4031,7 +4031,21 @@ function _existingExpSigs(){
 
 // 위 형식의 데이터 객체를 지도에 그린다.
 // 파일에서 읽은 경우(_loadExportedHtm)와 런처 htm 이 postMessage 로 보낸 경우가 공유한다.
+// 대량으로 들어온 객체의 좌표→주소 조회 상한. 도면에서 나온 htm 은 면·선이 수천 개라
+// 전부 조회하면 몇 분 동안 배경에서 REST 를 두드리며 목록을 계속 다시 그려 지도가 굼뜨다.
+// 주소가 쓸모 있는 크기(=KMZ 수준)일 때만 조회한다. 조절은 이 숫자만 고치면 된다.
+const EXP_ADDR_MAX=500;
 function _loadExportedData(D,bounds){
+  // 도면에서 나온 htm 은 면·선이 수천 개다. 그대로 두면 addItem 이 항목마다
+  // renderList()(=목록 전체 다시 그리기, O(n^2))를 부르고 주소 조회까지 즉시 띄워
+  // 지도가 몇 분씩 멈춘다. loadKMZ 와 같게 '대량 로드'로 묶고, 표·주소·되돌리기는
+  // 끝나고 한 번에 처리한다. (휴대폰용 img/index.html 은 목록이 없어 원래 빨랐다)
+  const _bulkStart=allItems.length, _prevBulk=bulkLoading;
+  bulkLoading=true;
+  try{ return _loadExportedData1(D,bounds,_bulkStart); }
+  finally{ bulkLoading=_prevBulk; }
+}
+function _loadExportedData1(D,bounds,_bulkStart){
   const LINES=D.LINES, POLYS=D.POLYS, TEXTS=D.TEXTS, MARKERS=D.MARKERS, PHOTOS=D.PHOTOS;
   const LL=a=>{const l=new kakao.maps.LatLng(a[0],a[1]);bounds.extend(l);return l;};
   const _defer=[];   // setBounds 뒤에 한 번만 setMap (이중 렌더 방지 — loadKMZ 와 동일)
@@ -4108,6 +4122,19 @@ function _loadExportedData(D,bounds){
     _addPtExp(sigs,'M',p[0],p[1],name); addPhotoMarker(ll,p[3],name,'');
   });
 
+  // 대량 로드 마무리 — loadKMZ 와 같은 순서(표 1회, 주소는 큐로 12건/초, 되돌리기 1건)
+  const _added=allItems.slice(_bulkStart);
+  if(_added.length){
+    if(allItems.length===_added.length)openSidebar();
+    renderList();
+    if(_added.length<=EXP_ADDR_MAX)queueAddrFetch(_added);
+    else console.log('[주소] 객체 '+_added.length+'개 — 도면 데이터로 보고 주소 조회는 건너뜀');
+    const _set=new Set(_added);
+    pushHistory({
+      undo(){_added.forEach(_hideItemOnMap);allItems=allItems.filter(i=>!_set.has(i));selectedItems.clear();anchorIdx=-1;lastClickedIdx=-1;clearPreview();renderList();},
+      redo(){_added.forEach(it=>{_showItemOnMap(it);if(!allItems.includes(it))allItems.push(it);});renderList();}
+    });
+  }
   if(!bounds.isEmpty())map.setBounds(bounds);
   _defer.forEach(p=>{if(!p._parts)p.setMap(map);});   // 묶음선(_parts)은 컬링이 화면 교차 구간만 붙임
   cullBundlePolys();
