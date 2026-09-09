@@ -93,6 +93,29 @@ var KAKAO_GUIDE = '[카카오 JavaScript 키 발급]\n'
   + '3. 앱 설정 → 앱 키 → "JavaScript 키" 복사\n'
   + '4. 앱 설정 → 플랫폼 → Web 플랫폼(사이트 도메인) 등록\n'
   + '5. 제품 설정 → 카카오맵 → 활성화 ON';
+// ── 로컬(file://)에서 뜨는 브이월드 '인증실패' 알림 억제 ──────────────────
+// 브이월드는 인증키에 등록한 '활용 URL' 과 브라우저가 보낸 Referer 를 대조한다.
+// 이 파일은 사진위치표시(open_maps)가 file:///C:/... 로 열기 때문에 브라우저가
+// Referer 를 아예 보내지 않는다 → 대조할 값이 없어 무조건 인증실패로 뜬다.
+// 활용 URL 에 무엇을 등록해도(localhost 포함) file:// 은 통과시킬 수 없다.
+// 지도·타일·주소검색은 KEY 파라미터로 그대로 동작하므로 알림만 지우고 콘솔에 남긴다.
+// 로컬일 때만 건드린다 — 배포본(https://junty75.github.io)에서 키가 진짜 만료되면
+// 알림이 그대로 떠야 원인을 알 수 있다.
+(function(){
+  var isLocal = (location.protocol === 'file:')
+    || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  if (!isLocal) return;
+  var _alert = window.alert;
+  window.alert = function(msg){
+    var s = String(msg == null ? '' : msg);
+    if (/인증실패|API\s*Key와\s*URI/.test(s)) {
+      console.warn('[VWorld] 로컬(file://)이라 인증 대조 불가 — 알림 생략: '
+                   + s.replace(/\s+/g, ' ').trim());
+      return;
+    }
+    return _alert.apply(window, arguments);
+  };
+})();
 var VWORLD_KEY = _askApiKey('vworld_key', '브이월드(VWorld)', VWORLD_GUIDE);
 document.write('<script src="https://map.vworld.kr/js/vworldMapInit.js.do?version=2.0&apiKey=' + VWORLD_KEY
   + '" onerror="_apiKeyError(\'vworld_key\',\'브이월드 지도\')"><\/script>');
