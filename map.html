@@ -2049,7 +2049,8 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
         <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="srSelectAll"> 전체 선택</label>
         <span id="srSelCount" style="color:#888;">0개 선택</span>
         <button id="srMapToggle" title="검색 결과 전체를 지도에 마커로 표시 — 다시 누르면 해제. 마커 클릭 시 목록에서 해당 항목 선택" style="padding:3px 10px;border:1px solid #27ae60;border-radius:4px;background:#fff;color:#27ae60;font-size:12px;font-weight:bold;cursor:pointer;">🗺 지도삽입</button>
-        <button id="srSelectMode" title="켜면 행을 클릭해서 선택할 수 있습니다 (끄면 체크박스로만 선택)" style="margin-left:auto;padding:3px 10px;border:1px solid #1a5276;border-radius:4px;background:#fff;color:#1a5276;font-size:12px;font-weight:bold;cursor:pointer;">선택하기</button>
+        <button id="srCopyPath" title="체크한 항목의 전체 경로를 클립보드로 복사합니다 (체크가 없으면 미리보기 중인 한 줄).&#10;엑셀에 붙여넣으면 한 경로가 한 행이 됩니다." style="margin-left:auto;padding:3px 10px;border:1px solid #b9770e;border-radius:4px;background:#fff;color:#b9770e;font-size:12px;font-weight:bold;cursor:pointer;">📋 경로복사</button>
+        <button id="srSelectMode" title="켜면 행을 클릭해서 선택할 수 있습니다 (끄면 체크박스로만 선택)" style="padding:3px 10px;border:1px solid #1a5276;border-radius:4px;background:#fff;color:#1a5276;font-size:12px;font-weight:bold;cursor:pointer;">선택하기</button>
       </div>
       <div id="srList" style="overflow:auto;padding:6px 0;flex:1;min-height:0;"></div>
       <div id="srFooter" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 14px;border-top:1px solid #e0e0e0;flex:0 0 auto;">
@@ -2347,6 +2348,36 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
     });
     if (modal._srMapOn) renderRows();   // 마커를 선택 상태에 맞춰 다시 그림
     updateCount();
+  };
+
+  // 📋 경로복사 — 체크된 항목(체크가 없으면 미리보기 중인 행)의 전체 경로를 줄바꿈으로 이어 복사.
+  //    엑셀은 CRLF 를 행 구분으로 읽으므로, 그대로 붙여넣으면 한 경로가 한 행이 된다.
+  const copyBtn = modal.querySelector('#srCopyPath');
+  copyBtn.onclick = () => {
+    let sel = [...list.querySelectorAll('.sr-check')].filter(c => c.checked).map(c => c._item);
+    if (!sel.length && curIdx >= 0 && rows[curIdx]) sel = [rows[curIdx].it];   // 체크가 없으면 지금 보고 있는 한 줄
+    const paths = sel.map(it => it.path).filter(Boolean);
+    if (!paths.length) { alert('복사할 항목을 체크하세요 (전체 선택 가능).'); return; }
+    const text = paths.join('\r\n');
+    const done = () => {
+      copyBtn.textContent = '✓ ' + paths.length + '개 복사됨';
+      clearTimeout(copyBtn._t);
+      copyBtn._t = setTimeout(() => { copyBtn.textContent = '📋 경로복사'; }, 1500);
+    };
+    // file:// 등 보안 컨텍스트가 아니면 clipboard API 가 없다 → textarea 로 복사
+    const fallback = () => {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;top:-2000px;left:-2000px;';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      ta.remove();
+      if (ok) done(); else alert('클립보드 복사에 실패했습니다.');
+    };
+    if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, fallback);
+    else fallback();
   };
   saveBtn.style.display = onSaveItems ? '' : 'none';
   saveBtn.onclick = () => {
@@ -3294,13 +3325,12 @@ function _calcArea(path) {
   }
   return Math.abs(a * R * R / 2);
 }
-// 면적 포맷 (m² + 평 / 큰 경우 ha·km²)
+// 면적 포맷 (㎡ + 평 / 큰 경우 ㎢)
 function _fmtArea(m2) {
   const py = m2 / 3.305785;
   let main;
-  if (m2 >= 1e6) main = (m2 / 1e6).toFixed(3) + ' km²';
-  else if (m2 >= 1e4) main = (m2 / 1e4).toFixed(2) + ' ha';
-  else main = Math.round(m2).toLocaleString() + ' m²';
+  if (m2 >= 1e6) main = (m2 / 1e6).toFixed(3) + ' ㎢';
+  else main = Math.round(m2).toLocaleString() + ' ㎡';
   return main + ' (' + Math.round(py).toLocaleString() + '평)';
 }
 function _clearAreaShapes() {
@@ -5415,13 +5445,12 @@ const BASEMAP_HTM = [
 "function fmtDist(m) {",
 "  return m >= 1000 ? (m / 1000).toFixed(3) + ' km' : m.toFixed(1) + ' m';",
 "}",
-"// 면적 포맷 (m^2 + 평 / 큰 경우 ha·km^2)",
+"// 면적 포맷 (㎡ + 평 / 큰 경우 ㎢)",
 "function fmtArea(m2) {",
 "  var pyeong = m2 / 3.305785;",
 "  var main;",
-"  if (m2 >= 1000000) main = (m2 / 1000000).toFixed(3) + ' km²';",
-"  else if (m2 >= 10000) main = (m2 / 10000).toFixed(2) + ' ha';",
-"  else main = Math.round(m2).toLocaleString() + ' m²';",
+"  if (m2 >= 1000000) main = (m2 / 1000000).toFixed(3) + ' ㎢';",
+"  else main = Math.round(m2).toLocaleString() + ' ㎡';",
 "  return main + ' (' + Math.round(pyeong).toLocaleString() + '평)';",
 "}",
 "",
