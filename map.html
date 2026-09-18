@@ -4711,9 +4711,10 @@ function haversineDistance(lat1, lng1, lat2, lng2) {
 }
 
 // ══════════════════════════════════════════════════
-//  거리 기준 클러스터 각각저장 (KMZ)
+//  거리 기준 클러스터 각각저장 (KMZ · HTM · HTM(모바일))
 // ══════════════════════════════════════════════════
-async function exportClusteredKMZ(scope) {
+// 각각저장 대상 객체 (scope: all=사이드바 목록 / visible=화면 안 / selected=선택)
+function _clusterScopeItems(scope) {
   let scopeItems;
   if (scope === 'all') {
     // 사이드바에 보이는 객체(필터 켜면 화면 안 객체만)
@@ -4730,16 +4731,21 @@ async function exportClusteredKMZ(scope) {
       return false;
     });
   } else {
-    if (selectedItems.size === 0) { alert('선택된 항목이 없습니다.'); return; }
+    if (selectedItems.size === 0) { alert('선택된 항목이 없습니다.'); return null; }
     const filtered = getFilteredItems();
     const selSet = new Set([...selectedItems].map(i => filtered[i]).filter(Boolean));
     scopeItems = allItems.filter(i => selSet.has(i));
   }
+  if (!scopeItems.length) { alert('저장할 항목이 없습니다.'); return null; }
+  return scopeItems;
+}
 
-  if (!scopeItems.length) { alert('저장할 항목이 없습니다.'); return; }
-
+// 거리 기준으로 묶는다. 반환 [{name, items}] / 취소 null
+//  name = 파일명(확장자 없음). 묶음 이름이 겹치면 _2, _3 … 을 붙인다
+//  (저장이 덮어쓰기라 같은 이름이면 앞 파일이 사라진다).
+function _askClusters(scopeItems) {
   const threshStr = prompt('같은 파일로 묶을 거리 (m)\n이 거리 안에 있는 객체끼리 한 파일로 저장됩니다', '100');
-  if (threshStr === null) return;
+  if (threshStr === null) return null;
   const threshold = Math.max(1, parseFloat(threshStr) || 100);
 
   // Union-Find 클러스터링
@@ -4766,23 +4772,35 @@ async function exportClusteredKMZ(scope) {
   }
 
   const clusterArr = [...clustersMap.values()];
-  if (!confirm(`${clusterArr.length}개 파일로 저장됩니다.\n계속하시겠습니까?`)) return;
+  if (!confirm(`${clusterArr.length}개 파일로 저장됩니다.\n계속하시겠습니까?`)) return null;
+
+  const used = new Set();
+  return clusterArr.map(items => {
+    // 클러스터 이름: marker → photo → track 순으로 우선
+    const nameItem = items.find(i => i.type === 'marker') ||
+                     items.find(i => i.type === 'photo') ||
+                     items[0];
+    const base = (nameItem?.name || '지도').replace(/[\/\\:*?"<>|]/g, '_');
+    let name = base, k = 2;
+    while (used.has(name.toLowerCase())) name = `${base}_${k++}`;
+    used.add(name.toLowerCase());
+    return { name, items };
+  });
+}
+
+async function exportClusteredKMZ(scope) {
+  const scopeItems = _clusterScopeItems(scope); if (!scopeItems) return;
+  const clusters = _askClusters(scopeItems); if (!clusters) return;
 
   // 각각저장은 파일이 여러 개 — 파일명은 클러스터 이름 그대로 쓰고 폴더만 고른다
-  const clusterDir = await askSaveFolder(`KMZ ${clusterArr.length}개를 저장할 폴더 선택`, 'kmz_save_dir');
+  const clusterDir = await askSaveFolder(`KMZ ${clusters.length}개를 저장할 폴더 선택`, 'kmz_save_dir');
   if (clusterDir === '') return;   // 취소
 
   const nnm = buildNumNameMap();
   const clusterRenames = [];   // 디스크 원본 rename 누적 (마지막에 1회 전송)
   const clusterNewNames = new Map();   // '사진명 변경'으로 바뀐 이름 누적
 
-  for (const clusterItems of clusterArr) {
-    // 클러스터 이름: marker → photo → track 순으로 우선
-    const nameItem = clusterItems.find(i => i.type === 'marker') ||
-                     clusterItems.find(i => i.type === 'photo') ||
-                     clusterItems[0];
-    const clusterName = (nameItem?.name || '지도').replace(/[\/\\:*?"<>|]/g, '_');
-
+  for (const { name: clusterName, items: clusterItems } of clusters) {
     const zip = new JSZip(), photoFileMap = new Map(), usedNames = new Set(), seqRef = { n: 0 };
 
     for (const item of clusterItems) {
@@ -4817,7 +4835,53 @@ async function exportClusteredKMZ(scope) {
 
   _sendPhotoRenames(clusterRenames);
   _applyPhotoNewNames(clusterNewNames);
-  setTimeout(() => alert(`✅ ${clusterArr.length}개 파일 저장 완료!`), 500);
+  setTimeout(() => alert(`✅ ${clusters.length}개 파일 저장 완료!`), 500);
+}
+
+// 문자(메모·CAD 문자)는 사이드바 항목이 아니라 묶음에 안 들어간다 →
+// 가장 가까운 객체가 속한 묶음 파일에 넣는다. 반환 Map(textLabel → 묶음 번호)
+function _textClusterIndex(clusters) {
+  const pts = [];
+  clusters.forEach((c, ci) => c.items.forEach(it => {
+    const p = getItemLatLng(it); if (p) pts.push([p.getLat(), p.getLng(), ci]);
+  }));
+  const idx = new Map();
+  if (!pts.length) return idx;
+  textLabels.forEach(o => {
+    if (!o.ov || !o.ov.getMap()) return;
+    const p = o.ov.getPosition(); if (!p) return;
+    let best = -1, bd = Infinity;
+    for (const [la, ln, ci] of pts) {
+      const d = haversineDistance(p.getLat(), p.getLng(), la, ln);
+      if (d < bd) { bd = d; best = ci; }
+    }
+    idx.set(o, best);
+  });
+  return idx;
+}
+
+// 각각저장 — HTM / HTM(모바일). link=true 면 모바일(런처) 형식
+async function exportClusteredHTM(scope, link) {
+  const scopeItems = _clusterScopeItems(scope); if (!scopeItems) return;
+  const clusters = _askClusters(scopeItems); if (!clusters) return;
+  const kind = link ? 'HTM(모바일)' : 'HTM';
+  const dir = await askSaveFolder(`${kind} ${clusters.length}개를 저장할 폴더 선택`, 'kmz_save_dir');
+  if (dir === '') return;   // 취소
+  const textOf = _textClusterIndex(clusters);
+  let saved = 0;
+  for (let ci = 0; ci < clusters.length; ci++) {
+    const { name, items } = clusters[ci];
+    const D = await _collectHtmData(false, items, o => textOf.get(o) === ci);
+    if (!D) continue;
+    const n = D.LINES.length + D.POLYS.length + D.TEXTS.length + D.MARKERS.length + D.PHOTOS.length;
+    if (!n) continue;
+    const html = link ? buildLauncherHtm(name, D) : buildStandaloneHtm(name, D);
+    // dir 이 undefined(서버 미연결)면 saveBlobTo 가 브라우저 다운로드로 폴백
+    saveBlobTo({ folder: dir, filename: name + '.htm' }, new Blob([html], { type: 'text/html;charset=utf-8' }));
+    saved++;
+    await new Promise(r => setTimeout(r, 400));
+  }
+  setTimeout(() => alert(`✅ ${kind} ${saved}개 파일 저장 완료!`), 500);
 }
 
 // ══════════════════════════════════════════════════
@@ -4952,7 +5016,13 @@ function saveBlob(blob, filename, chooseDir, onSaved){
 function exportByFormat(){
   // 저장 대상: 전체객체(=사이드바 목록 그대로, '필터' 켜면 화면 안 객체만) / 선택객체 / 각각저장
   const fmt=document.getElementById('exportFormat').value,area=document.getElementById('exportArea').value;
-  if(area==='clustered'){exportClusteredKMZ('all');return;}
+  if(area==='clustered'){
+    // 각각저장도 고른 형식대로 — 예전엔 형식과 상관없이 무조건 KMZ 로 저장됐다
+    if(fmt==='kmz')exportClusteredKMZ('all');
+    else if(fmt==='htm'||fmt==='htmlink')exportClusteredHTM('all',fmt==='htmlink');
+    else alert('각각저장은 KMZ · HTM · HTM(모바일) 형식에서만 됩니다.\n형식을 바꾸거나 저장 범위를 전체객체/선택객체로 고르세요.');
+    return;
+  }
   if(fmt==='kmz'){if(area==='selected')exportSelectedKMZ();else exportKMZ();}
   else if(fmt==='gpx'){if(area==='selected')exportSelectedGPX();else exportGPX();}
   else if(fmt==='csv'){if(area==='selected')exportSelectedCSV();else exportCSV();}
@@ -5701,8 +5771,9 @@ function _htmItems(selectedOnly){
   return [...selectedItems].sort((a,b)=>a-b).map(i=>filtered[i]).filter(Boolean);
 }
 // 지도 위 객체 → 뷰어용 배열 (사진은 '사진화질' 설정대로 압축해 data URI 로 내장)
-async function _collectHtmData(selectedOnly){
-  const items=_htmItems(selectedOnly); if(!items)return null;
+// items 를 주면 그 목록만(각각저장), textPred(textLabel) 가 false 인 문자는 뺀다.
+async function _collectHtmData(selectedOnly, items, textPred){
+  if(!items){items=_htmItems(selectedOnly); if(!items)return null;}
   const nnm=buildNumNameMap();
   const R=n=>+Number(n).toFixed(7);
   const D={LINES:[],POLYS:[],TEXTS:[],MARKERS:[],PHOTOS:[]};
@@ -5756,6 +5827,7 @@ async function _collectHtmData(selectedOnly){
   // CAD 문자 — 지도에 표시 중인 것만
   textLabels.forEach(o=>{
     if(!o.ov||!o.ov.getMap())return;
+    if(textPred&&!textPred(o))return;
     const p=o.ov.getPosition(); if(!p)return;
     D.TEXTS.push([R(p.getLat()),R(p.getLng()),o.t||'',o.rot||0,o.col||'#FFEB00',
                   o.h||0,o.ax||0,o.ay||0,o.tw||0]);
