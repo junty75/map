@@ -900,6 +900,8 @@ window.onload = () => {
       }
       if(lotIdx<0)lotIdx=parts.length;
       const addrParts=parts.slice(0,lotIdx);
+      // 앞쪽 시·도·시·군·구는 버림 → 읍면(동) 부터 시작 (예: 장수군 장수읍 송천리 → 장수읍 / 송천리)
+      while(addrParts.length>1&&/(특별자치도|특별자치시|특별시|광역시|도|시|군|구)$/.test(addrParts[0]))addrParts.shift();
       const eup=addrParts[0]||'';
       const ri=addrParts.slice(1).join(' ')||'';
       const bunji=parts.slice(lotIdx).join(' ')||'';
