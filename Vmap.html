@@ -6629,6 +6629,9 @@ function _pcLinkEnabled(){
           insertLiveObjects();
         } else if(d.type==='close_maps'){
           // 서버 '재실행' — beforeunload 경고 없이 지도창 스스로 닫기
+          // 깃허브 배포본(https)은 닫지 않는다 — 서버가 다시 뜨면 자동 재접속되고,
+          // 런처가 연 'jtymap' 탭은 실제로 닫혀 작업 중인 내용이 경고 없이 사라진다.
+          if(location.protocol==='https:')return;
           window.__skipUnloadGuard=true;
           try{window.close();}catch(e){}
         } else if(d.type==='resolved_paths'){
