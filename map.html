@@ -6573,6 +6573,18 @@ window.onload=()=>{
 // ══════════════════════════════════════════════════
 //  탐색기 연동 WebSocket (사진위치표시.py 와 통신)
 // ══════════════════════════════════════════════════
+// GitHub Pages(https://)에서는 'PC 연동'을 켠 브라우저에서만 사진위치표시.py 에 붙는다.
+//   켜기: 주소 뒤에 ?pc  (예: https://junty75.github.io/map/map?pc)  → 이 브라우저에 기억됨
+//   끄기: ?nopc
+//   낯선 방문자에게 접속 실패 로그·'로컬 네트워크 접근' 권한 창이 뜨지 않게 하려는 것.
+function _pcLinkEnabled(){
+  var q=(location.search||'')+'&'+(location.hash||'').replace(/^#/,'');
+  try{
+    if(/(^|[?&])nopc(=|&|$)/.test(q)){localStorage.removeItem('jty_pc_link');return false;}
+    if(/(^|[?&])pc(=1)?(&|$)/.test(q)){localStorage.setItem('jty_pc_link','1');return true;}
+    return localStorage.getItem('jty_pc_link')==='1';
+  }catch(e){return /(^|[?&])pc(=1)?(&|$)/.test(q);}
+}
 (function(){
   const WS_URL = 'ws://localhost:8765';
   let ws = null, liveOvs = [], retryTimer = null;
@@ -7412,9 +7424,9 @@ window.onload=()=>{
 
   // (Ctrl+Z/Y는 메인 keydown 핸들러의 통합 undo/redo 시스템에서 처리)
 
-  // 로컬(http:// 또는 file://)에서만 연결 시도 — GitHub Pages(https://)에서는 숨김
-  if (location.protocol !== 'https:') {
-    setTimeout(connect, 3000);
+  // 로컬(http:// 또는 file://)은 항상 연결, GitHub Pages(https://)는 PC 연동을 켠 경우만
+  if (location.protocol !== 'https:' || _pcLinkEnabled()) {
+    setTimeout(connect, location.protocol === 'https:' ? 300 : 3000);
   } else {
     badge.style.display = 'none';
   }
