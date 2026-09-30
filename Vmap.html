@@ -3810,6 +3810,41 @@ function loadHTM(file){
   r.readAsText(file,'utf-8');
 }
 
+// GPX → KML 텍스트. 위치로 검색·탐색기에서 온 GPX(임시트랙 등)를 KMZ 로더로 그대로 읽기 위함.
+//  트랙(trk/trkseg)·경로(rte) → LineString, 웨이포인트(wpt) → Point.
+//  선 색·굵기는 gpx_style 확장(<color>RRGGBB</color><width>)이 있으면 살린다(임시트랙 자동저장이 씀).
+function _gpxToKml(text){
+  const xml=new DOMParser().parseFromString(text,'application/xml');
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const child=(el,tag)=>Array.from(el.children).find(c=>c.localName===tag);
+  const all=(el,tag)=>Array.from(el.getElementsByTagNameNS('*',tag));
+  const ll=p=>`${p.getAttribute('lon')},${p.getAttribute('lat')},0`;
+  let styles='',pms='',sn=0;
+  const line=(el,segs,idx)=>{
+    segs=segs.filter(s=>s.length>=2);
+    if(!segs.length)return;
+    let su='';
+    const ex=child(el,'extensions');
+    if(ex){
+      const c=((all(ex,'color')[0]||{}).textContent||'').trim().replace('#','');
+      const w=parseFloat((all(ex,'width')[0]||{}).textContent)||3;
+      if(/^[0-9a-f]{6}$/i.test(c)){
+        const id='gs'+(sn++);
+        styles+=`<Style id="${id}"><LineStyle><color>ff${c.slice(4,6)}${c.slice(2,4)}${c.slice(0,2)}</color><width>${w}</width></LineStyle></Style>\n`;
+        su=`<styleUrl>#${id}</styleUrl>`;
+      }
+    }
+    const g=segs.map(s=>`<LineString><coordinates>${s.map(ll).join(' ')}</coordinates></LineString>`);
+    const nm=esc((child(el,'name')||{}).textContent||('경로'+idx));
+    pms+=`<Placemark><name>${nm}</name>${su}${g.length===1?g[0]:'<MultiGeometry>'+g.join('')+'</MultiGeometry>'}</Placemark>\n`;
+  };
+  all(xml,'trk').forEach((t,i)=>line(t,all(t,'trkseg').map(s=>all(s,'trkpt')),i+1));
+  all(xml,'rte').forEach((r,i)=>line(r,[all(r,'rtept')],i+1));
+  all(xml,'wpt').forEach(p=>{
+    pms+=`<Placemark><name>${esc((child(p,'name')||{}).textContent||'')}</name><Point><coordinates>${ll(p)}</coordinates></Point></Placemark>\n`;
+  });
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n${styles}${pms}</Document></kml>`;
+}
 async function loadKMZ(file){
   try{
     let zip=null,keys=[],kmlText=null;
@@ -3823,6 +3858,7 @@ async function loadKMZ(file){
       if(!kmlText){alert('KMZ 안에 .kml 파일이 없습니다.');return;}
     } else {
       kmlText=await file.text();   // 평문 KML (내부 임베드 사진 없음 — 마커/트랙만)
+      if(/<gpx[\s>]/i.test(kmlText))kmlText=_gpxToKml(kmlText);   // GPX(임시트랙 등) → KML 로 바꿔 같은 방식으로 읽음
     }
     const xml=new DOMParser().parseFromString(kmlText,'application/xml'),pts=[];
     const _bulkStart=allItems.length;
@@ -3947,6 +3983,8 @@ async function loadKMZ(file){
 function doExport(){
   // 저장 대상: 전체객체(=사이드바 목록 그대로, '필터' 켜면 화면 안 객체만) / 선택객체 / 각각저장
   const fmt=document.getElementById('exportFmt').value,area=document.getElementById('exportArea').value;
+  // 다음에 열 때 이 형식·범위·사진용량으로 시작
+  try{localStorage.setItem('jty_export_fmt',fmt);localStorage.setItem('jty_export_area',area);localStorage.setItem('jty_export_q',document.getElementById('photoQuality').value);}catch(e){}
   if(area==='clustered'){
     // 각각저장도 고른 형식대로 — 예전엔 형식과 상관없이 무조건 KMZ 로 저장됐다
     if(fmt==='kmz')exportClusteredKMZ_V();
@@ -3962,6 +4000,9 @@ function doExport(){
   else if(fmt==='photos'){if(area==='selected')downloadSelectedPhotos();else downloadAllPhotos();}
 }
 function onFmtChange(val){const q=document.getElementById('photoQuality');q.style.display=(val==='photos'||val==='kmz'||val==='htm'||val==='htmlink')?'':'none';const pn=document.getElementById('photoNumWrap');if(pn)pn.style.display=(val==='kmz')?'inline-flex':'none';}
+// 저장 형식·범위·사진용량: 마지막으로 저장했던 값으로 시작 (map/Vmap 공용 키)
+try{const _f=localStorage.getItem('jty_export_fmt'),_s=document.getElementById('exportFmt');if(_f&&_s.querySelector('option[value="'+_f+'"]')){_s.value=_f;onFmtChange(_f);}}catch(e){}
+try{[['exportArea','jty_export_area'],['photoQuality','jty_export_q']].forEach(function(p){const v=localStorage.getItem(p[1]),s=document.getElementById(p[0]);if(v!==null&&s&&s.querySelector('option[value="'+v+'"]'))s.value=v;});}catch(e){}
 // KMZ 저장 시 사진 파일명에 _NNN 번호를 붙일지 여부
 function getAddPhotoNum(){const el=document.getElementById('addPhotoNum');return !!(el&&el.checked);}
 // 사진 1장을 zip에 추가하고 KMZ 내부 파일명(fn) 반환.

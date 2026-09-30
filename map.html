@@ -517,6 +517,7 @@ _apiKeyError = function(storeKey, name){
           <option value="8">8px</option>
           <option value="12">12px</option>
         </select>
+        <button type="button" onclick="setTempTrackDir()" title="임시트랙 저장폴더 지정 — 지도에서 그린 선이 따로 저장하지 않아도 이 폴더에 자동 저장됩니다 (파일명: 날짜시각_읍면리번지.gpx)">📁</button>
         <button type="button" onclick="resetPolylines()">선 초기화</button>
         <button type="button" onclick="resetAll()">화면 초기화</button>
       </div>
@@ -3555,6 +3556,7 @@ document.getElementById('polyEditBtn').onclick=()=>{
   const _ecolor=poly._origColor||'#FF0000', _eweight=poly._origWeight||3;
   currentPolyline=new kakao.maps.Polyline({map,path:currentPath,strokeWeight:_eweight,strokeColor:_ecolor,strokeOpacity:1});
   currentPolyline._name=oldName; currentPolyline._origColor=_ecolor; currentPolyline._origWeight=_eweight;
+  currentPolyline._autoSave=poly._autoSave; currentPolyline._autoFile=poly._autoFile;   // 자동저장된 선이면 수정 후 같은 파일에 덮어씀
   polylines.push(currentPolyline); attachPolylineRightClick(currentPolyline);
   document.getElementById('map').classList.add('drawing-cursor');
   setMarkersClickThrough(true);
@@ -3714,10 +3716,98 @@ function finishDrawing() {
         }
       }
     }
+    if (currentPolyline._autoSave) autoSaveTrack(newItem);   // 임시트랙 저장폴더에 자동 저장
   } else {
     currentPolyline.setMap(null);
     polylines = polylines.filter(p=>p!==currentPolyline);
   }
+}
+
+// ══════════════════════════════════════════════════
+//  임시트랙 자동저장
+//  새로 그린 선(과 그 선을 수정한 것)을 따로 저장하지 않아도 '임시트랙 저장폴더'에 GPX 로 저장한다.
+//   · 파일명: 날짜시각_읍면리번지.gpx (예: 202609301359_장수수분790-1.gpx)
+//     주소는 사이드바 주소와 같은 기준점(선의 중점)
+//   · 폴더는 PC 서버가 기억(UI설정 temp_track_dir). 지정 안 됐으면 서버가 안내 후 지정받는다.
+//   · 서버 미연결이면 조용히 건너뜀. 폴더 지정을 취소하면 이번 창에서는 다시 묻지 않는다(📁 로 다시 켬).
+// ══════════════════════════════════════════════════
+let _trackAutoSaveOff = false;
+const _trackSaveWaiters = new Map(); let _trackSaveSeq = 0;
+
+// 카카오 지번주소 → '장수수분790-1' (읍·면·리 글자는 떼고 동·가는 그대로, 산번지는 '산')
+function _trackPlaceName(ll){
+  return new Promise(res=>{
+    if(!geocoder||!ll){res('');return;}
+    geocoder.coord2Address(ll.getLng(),ll.getLat(),(r,st)=>{
+      const a=(st===kakao.maps.services.Status.OK&&r&&r[0])?r[0].address:null;
+      if(!a){res('');return;}
+      const toks=(a.address_name||'').trim().split(/\s+/);
+      while(toks.length&&/^(산|\d[\d-]*)$/.test(toks[toks.length-1]))toks.pop();   // 번지 떼기
+      const place=[];
+      for(let i=toks.length-1;i>0;i--){            // 뒤에서부터 읍·면·동·리·가 까지만
+        if(!/(읍|면|동|리|가)$/.test(toks[i]))break;
+        place.unshift(toks[i]);
+      }
+      const nm=place.map(t=>(t.length>=3&&/(읍|면|리)$/.test(t))?t.slice(0,-1):t).join('');
+      const sub=parseInt(a.sub_address_no||'0',10)||0;
+      const lot=a.main_address_no?((a.mountain_yn==='Y'?'산':'')+a.main_address_no+(sub?'-'+sub:'')):'';
+      res(nm+lot);
+    });
+  });
+}
+
+async function autoSaveTrack(item){
+  const pl=item&&item.polyline;
+  if(!pl||_trackAutoSaveOff||!(window.__wsReady&&window.__wsReady()))return;
+  try{
+    let fname=pl._autoFile;                      // 이미 자동저장된 선을 수정 → 같은 파일에 덮어씀
+    if(!fname){
+      const d=new Date(),p2=n=>(n+'').padStart(2,'0');
+      const ts=d.getFullYear()+p2(d.getMonth()+1)+p2(d.getDate())+p2(d.getHours())+p2(d.getMinutes());
+      const place=await _trackPlaceName(getItemLatLng(item));
+      fname=(ts+'_'+(place||'경로')).replace(/[\\/:*?"<>|]/g,'_')+'.gpx';
+    }
+    // GPX 1.1 — 선 색·굵기는 gpx_style 확장에 담아 다시 열 때(위치로 검색 등) 그대로 보이게
+    const base=fname.replace(/\.gpx$/i,'');
+    const hex=((pl._origColor||'#FF0000')+'').replace('#','').toUpperCase(), w=pl._origWeight||3;
+    const segs=pathParts(pl).filter(s=>s.length>=2).map(s=>'  <trkseg>\n'
+      +s.map(p=>`   <trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+'  </trkseg>\n').join('');
+    const gpx='<?xml version="1.0" encoding="UTF-8"?>\n'
+      +'<gpx version="1.1" creator="JtyMap" xmlns="http://www.topografix.com/GPX/1/1"'
+      +' xmlns:gpx_style="http://www.topografix.com/GPX/gpx_style/0/2">\n'
+      +` <metadata><name>${_hesc(base)}</name></metadata>\n`
+      +` <trk>\n  <name>${_hesc(item.name||base)}</name>\n`
+      +`  <extensions><gpx_style:line><gpx_style:color>${hex}</gpx_style:color><gpx_style:width>${w}</gpx_style:width></gpx_style:line></extensions>\n`
+      +segs+' </trk>\n</gpx>\n';
+    const b64=btoa(unescape(encodeURIComponent(gpx)));   // UTF-8(한글 이름) → base64
+    const reqid='t'+(++_trackSaveSeq);
+    _trackSaveWaiters.set(reqid,pl);
+    window.__wsSend({type:'autosave_track',reqid,filename:fname,overwrite:!!pl._autoFile,data:b64});
+  }catch(e){console.warn('[임시트랙 자동저장] 실패',e);}
+}
+
+// 서버 응답 — track_autosaved(자동저장 결과) / temp_track_dir(📁 폴더 지정 결과)
+window.__onTrackAutoSaved=d=>{
+  const say=t=>{if(window.__setBadge)window.__setBadge(true,t);};
+  if(d.type==='temp_track_dir'){
+    if(d.folder){_trackAutoSaveOff=false;say('📁 임시트랙 저장폴더: '+d.folder);}
+    else say(d.current?'📁 임시트랙 저장폴더 그대로: '+d.current:'임시트랙 저장폴더 지정 취소');
+    return;
+  }
+  const pl=_trackSaveWaiters.get(d.reqid); _trackSaveWaiters.delete(d.reqid);
+  if(d.cancelled){_trackAutoSaveOff=true;say('⚠️ 임시트랙 자동저장 꺼짐 — 📁 버튼으로 폴더를 지정하면 다시 켜집니다');return;}
+  if(!d.ok){say('❌ 임시트랙 저장 실패: '+(d.filename||''));return;}
+  if(pl)pl._autoFile=d.filename;
+  say('💾 임시트랙 저장: '+d.filename);
+  showSaveStatus('💾 임시트랙 저장: '+d.folder+'\\'+d.filename);
+};
+
+// 📁 버튼 — 임시트랙 저장폴더 지정/변경
+function setTempTrackDir(){
+  if(!(window.__wsReady&&window.__wsReady())){
+    alert('임시트랙 저장폴더는 PC 프로그램(사진위치표시)과 연결된 상태에서 지정할 수 있습니다.');return;}
+  if(window.__setBadge)window.__setBadge(true,'📁 임시트랙 저장폴더 선택...');
+  window.__wsSend({type:'set_temp_track_dir'});
 }
 
 // ── 선그리기 클릭 수신 레이어 ──
@@ -3797,6 +3887,7 @@ function startDrawing() {
   const _drawWidth=Math.max(1,parseInt((_dw&&_dw.value)||'3',10)||3);
   currentPolyline=new kakao.maps.Polyline({map,path:currentPath,strokeWeight:_drawWidth,strokeColor:_drawColor,strokeOpacity:1});
   currentPolyline._origColor=_drawColor; currentPolyline._origWeight=_drawWidth;
+  currentPolyline._autoSave=true;   // 새로 그린 선 → 임시트랙 자동저장 대상
   polylines.push(currentPolyline); attachPolylineRightClick(currentPolyline);
   document.getElementById('map').classList.add('drawing-cursor');
   setMarkersClickThrough(true);
@@ -4505,6 +4596,41 @@ function handleDroppedFiles(files,_fhPromises){
 // ══════════════════════════════════════════════════
 //  KMZ 로딩
 // ══════════════════════════════════════════════════
+// GPX → KML 텍스트. 위치로 검색·탐색기에서 온 GPX(임시트랙 등)를 KMZ 로더로 그대로 읽기 위함.
+//  트랙(trk/trkseg)·경로(rte) → LineString, 웨이포인트(wpt) → Point.
+//  선 색·굵기는 gpx_style 확장(<color>RRGGBB</color><width>)이 있으면 살린다(임시트랙 자동저장이 씀).
+function _gpxToKml(text){
+  const xml=new DOMParser().parseFromString(text,'application/xml');
+  const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const child=(el,tag)=>Array.from(el.children).find(c=>c.localName===tag);
+  const all=(el,tag)=>Array.from(el.getElementsByTagNameNS('*',tag));
+  const ll=p=>`${p.getAttribute('lon')},${p.getAttribute('lat')},0`;
+  let styles='',pms='',sn=0;
+  const line=(el,segs,idx)=>{
+    segs=segs.filter(s=>s.length>=2);
+    if(!segs.length)return;
+    let su='';
+    const ex=child(el,'extensions');
+    if(ex){
+      const c=((all(ex,'color')[0]||{}).textContent||'').trim().replace('#','');
+      const w=parseFloat((all(ex,'width')[0]||{}).textContent)||3;
+      if(/^[0-9a-f]{6}$/i.test(c)){
+        const id='gs'+(sn++);
+        styles+=`<Style id="${id}"><LineStyle><color>ff${c.slice(4,6)}${c.slice(2,4)}${c.slice(0,2)}</color><width>${w}</width></LineStyle></Style>\n`;
+        su=`<styleUrl>#${id}</styleUrl>`;
+      }
+    }
+    const g=segs.map(s=>`<LineString><coordinates>${s.map(ll).join(' ')}</coordinates></LineString>`);
+    const nm=esc((child(el,'name')||{}).textContent||('경로'+idx));
+    pms+=`<Placemark><name>${nm}</name>${su}${g.length===1?g[0]:'<MultiGeometry>'+g.join('')+'</MultiGeometry>'}</Placemark>\n`;
+  };
+  all(xml,'trk').forEach((t,i)=>line(t,all(t,'trkseg').map(s=>all(s,'trkpt')),i+1));
+  all(xml,'rte').forEach((r,i)=>line(r,[all(r,'rtept')],i+1));
+  all(xml,'wpt').forEach(p=>{
+    pms+=`<Placemark><name>${esc((child(p,'name')||{}).textContent||'')}</name><Point><coordinates>${ll(p)}</coordinates></Point></Placemark>\n`;
+  });
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n${styles}${pms}</Document></kml>`;
+}
 async function loadKMZ(file,bounds,kmzDiskPath) {
   // 선은 파싱 중엔 지도에 안 붙이고 모아뒀다가 setBounds 후 한 번에 붙인다.
   // (파싱 중 map 에 붙이면 현재 줌에서 그리고, setBounds 로 화면이 바뀌며 전부
@@ -4523,6 +4649,7 @@ async function loadKMZ(file,bounds,kmzDiskPath) {
       if(!kmlText){alert('KMZ 안에 .kml 파일이 없습니다.');return;}
     } else {
       kmlText=await file.text();   // 평문 KML (내부 임베드 사진 없음 — 마커/트랙만)
+      if(/<gpx[\s>]/i.test(kmlText))kmlText=_gpxToKml(kmlText);   // GPX(임시트랙 등) → KML 로 바꿔 같은 방식으로 읽음
     }
     const xml=new DOMParser().parseFromString(kmlText,'application/xml');
     const placemarks=Array.from(xml.getElementsByTagName('Placemark'));
@@ -5018,6 +5145,8 @@ function saveBlob(blob, filename, chooseDir, onSaved){
 function exportByFormat(){
   // 저장 대상: 전체객체(=사이드바 목록 그대로, '필터' 켜면 화면 안 객체만) / 선택객체 / 각각저장
   const fmt=document.getElementById('exportFormat').value,area=document.getElementById('exportArea').value;
+  // 다음에 열 때 이 형식·범위·사진용량으로 시작
+  try{localStorage.setItem('jty_export_fmt',fmt);localStorage.setItem('jty_export_area',area);localStorage.setItem('jty_export_q',document.getElementById('photoQuality').value);}catch(e){}
   if(area==='clustered'){
     // 각각저장도 고른 형식대로 — 예전엔 형식과 상관없이 무조건 KMZ 로 저장됐다
     if(fmt==='kmz')exportClusteredKMZ('all');
@@ -5033,6 +5162,9 @@ function exportByFormat(){
   else if(fmt==='photos'){if(area==='selected')downloadSelectedPhotos();else downloadAllPhotos();}
 }
 document.getElementById('exportFormat').addEventListener('change',function(){document.getElementById('photoQuality').style.display=(this.value==='photos'||this.value==='kmz'||this.value==='htm'||this.value==='htmlink')?'':'none';document.getElementById('photoNumWrap').style.display=(this.value==='kmz')?'inline-flex':'none';});
+// 저장 형식·범위·사진용량: 마지막으로 저장했던 값으로 시작 (map/Vmap 공용 키)
+try{const _f=localStorage.getItem('jty_export_fmt'),_s=document.getElementById('exportFormat');if(_f&&_s.querySelector('option[value="'+_f+'"]')){_s.value=_f;_s.dispatchEvent(new Event('change'));}}catch(e){}
+try{[['exportArea','jty_export_area'],['photoQuality','jty_export_q']].forEach(function(p){const v=localStorage.getItem(p[1]),s=document.getElementById(p[0]);if(v!==null&&s&&s.querySelector('option[value="'+v+'"]'))s.value=v;});}catch(e){}
 // KMZ 저장 시 사진 파일명에 _NNN 번호를 붙일지 여부
 function getAddPhotoNum(){ const el=document.getElementById('addPhotoNum'); return !!(el&&el.checked); }
 // 사진 1장을 zip에 추가하고 KMZ 내부 파일명(sf) 반환.
@@ -6942,6 +7074,8 @@ function _pcLinkEnabled(){
               : (d.folder || ''));
           if ((d.type === 'save_path' && !d.path) || (d.type === 'save_folder' && !d.folder))
             setBadge(true, '저장 취소됨');
+        } else if (d.type === 'track_autosaved' || d.type === 'temp_track_dir') {
+          if (window.__onTrackAutoSaved) window.__onTrackAutoSaved(d);   // 임시트랙 자동저장
         } else if (d.type === 'file_saved') {
           if (d.silent) {
             // 사진 여러 장 저장 중 — 낱개 결과는 배지에 띄우지 않음
