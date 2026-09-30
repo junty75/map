@@ -6580,7 +6580,7 @@ function _pcLinkEnabled(){
     if(!vmap||!items.length)return;
 
     const coords=[];
-    items.forEach(({lat,lng,name,path})=>{
+    items.forEach(({lat,lng,name,path,pnu})=>{
       // 유효 좌표만 처리
       if (typeof lat !== 'number' || typeof lng !== 'number' ||
           isNaN(lat) || isNaN(lng)) return;
@@ -6595,6 +6595,10 @@ function _pcLinkEnabled(){
       if (isPhoto) {
         el.innerHTML='<div class="live-pin-ring"></div>'
                     +'<div class="live-pin-dot"></div>';   // 사진마커 이름 라벨 제거
+      } else if (pnu) {
+        // 엑셀 PNU(필지/행정구역 중심) → 노란 점 + 노란 라벨 (사진·좌표 마커와 구분)
+        el.innerHTML='<div class="live-pin-label" style="background:#ffd600;color:#000;font-weight:bold;">'+name+'</div>'
+                    +'<div class="live-pin-dot" style="background:#ffd600;border-color:#333;"></div>';
       } else {
         el.innerHTML='<div class="live-pin-label">'+name+'</div>'
                     +'<div class="live-pin-dot" style="background:#2196f3;"></div>';

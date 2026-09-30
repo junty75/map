@@ -6950,9 +6950,18 @@ function _pcLinkEnabled(){
       new kakao.maps.Size(22, 22),
       { offset: new kakao.maps.Point(11, 11) }
     );
+    // 노란 점 (엑셀 PNU: 필지/행정구역 중심, 정적) — 사진·좌표 마커와 구분
+    const yellowSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22">'
+                    + '<circle cx="11" cy="11" r="7" fill="#ffd600" stroke="#333" stroke-width="2"/>'
+                    + '</svg>';
+    const yellowImg = new kakao.maps.MarkerImage(
+      'data:image/svg+xml;base64,' + btoa(yellowSvg),
+      new kakao.maps.Size(22, 22),
+      { offset: new kakao.maps.Point(11, 11) }
+    );
 
     const bounds = new kakao.maps.LatLngBounds();
-    items.forEach(({ lat, lng, name, path }) => {
+    items.forEach(({ lat, lng, name, path, pnu }) => {
       const pos = new kakao.maps.LatLng(lat, lng);
       const isPhoto = !!path;
 
@@ -6961,7 +6970,8 @@ function _pcLinkEnabled(){
       ringEl.className = 'live-pin' + (isPhoto ? '' : ' coord-only');
       ringEl.style.pointerEvents = 'none';
       ringEl.innerHTML = isPhoto ? `<div class="live-pin-ring"></div>`
-                                 : `<div class="live-pin-label">${name}</div>`;
+                                 : (pnu ? `<div class="live-pin-label" style="background:#ffd600;color:#000;font-weight:bold;">${name}</div>`
+                                        : `<div class="live-pin-label">${name}</div>`);
       const ringOv = new kakao.maps.CustomOverlay({
         map, content: ringEl, position: pos,
         xAnchor: 0.5, yAnchor: 0.5, zIndex: 998
@@ -6970,7 +6980,7 @@ function _pcLinkEnabled(){
       // ② 마커 — 사진은 드래그 가능 (초록), 좌표는 정적 (파랑)
       const marker = new kakao.maps.Marker({
         map: map, position: pos,
-        image: isPhoto ? greenImg : blueImg,
+        image: isPhoto ? greenImg : (pnu ? yellowImg : blueImg),
         clickable: !drawingMode,   // 선그리기 중 생성 시 클릭 통과
         draggable: isPhoto && !drawingMode,
         title: isPhoto ? '드래그해서 GPS 위치 수정' : (name || '좌표'),
