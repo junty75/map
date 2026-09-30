@@ -454,6 +454,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
         <option value="8">8px</option>
         <option value="12">12px</option>
       </select>
+      <button type="button" onclick="setTempTrackDir()" title="임시트랙 저장폴더 지정 — 지도에서 그린 선이 따로 저장하지 않아도 이 폴더에 자동 저장됩니다 (파일명: 날짜시각_읍면리번지.gpx)">📁</button>
       <button onclick="resetLines()">선 초기화</button>
       <button onclick="resetAll()">화면 초기화</button>
     </div>
@@ -1675,6 +1676,7 @@ function startDraw() {
   drawing=true; drawCoords=[];
   const ds=_drawStyle();
   drawLayer=mkLineLyr([],ds.color,ds.width); drawLayer._color=ds.color; drawLayer._width=ds.width; addLyr(drawLayer);
+  drawLayer._autoSave=true;   // 새로 그린 선 → 임시트랙 자동저장 대상
   document.getElementById('vmap').classList.add('draw-mode');
   document.getElementById('drawBtn').textContent='선 그리기 중지';
   setMarkersDimmed(true);
@@ -1705,6 +1707,7 @@ function endDraw() {
     if (allItems.length===1) openSidebar();
     renderList();
     fetchAddrForItem(item);
+    if (drawLayer._autoSave) autoSaveTrackV(item);   // 임시트랙 저장폴더에 자동 저장
     const addedLyr=drawLayer;
     pushHistory({
       undo(){removeLyr(addedLyr);polylines=polylines.filter(p=>p!==addedLyr);allItems=allItems.filter(i=>i!==item);},
@@ -1713,6 +1716,90 @@ function endDraw() {
   } else if (drawLayer) removeLyr(drawLayer);
   drawLayer=null; drawCoords=[];
 }
+// ══════════════════════════════════════════════════
+//  임시트랙 자동저장 (map.html 과 같은 동작)
+//  새로 그린 선(과 그 선을 수정한 것)을 따로 저장하지 않아도 '임시트랙 저장폴더'에 GPX 로 저장한다.
+//   · 파일명: 날짜시각_읍면리번지.gpx (예: 202609301359_장수수분790-1.gpx)
+//     주소는 사이드바 주소와 같은 기준점(선의 중간 꼭짓점)
+//   · 폴더는 PC 서버가 기억(UI설정 temp_track_dir). 지정 안 됐으면 서버가 안내 후 지정받는다.
+//   · 서버 미연결이면 조용히 건너뜀. 폴더 지정을 취소하면 이번 창에서는 다시 묻지 않는다(📁 로 다시 켬).
+// ══════════════════════════════════════════════════
+let _trackAutoSaveOff = false;
+const _trackSaveWaiters = new Map(); let _trackSaveSeq = 0;
+
+// 지번주소 문자열 → '장수수분790-1' (읍·면·리 글자는 떼고 동·가는 그대로, 산번지는 '산')
+function _trackPlaceName(addr){
+  const toks=String(addr||'').trim().replace(/산\s+(\d)/g,'산$1').replace(/번지$/,'').split(/\s+/);
+  let lot='';
+  while(toks.length&&/^(산)?\d[\d-]*$/.test(toks[toks.length-1]))lot=toks.pop()+lot;   // 번지 떼기
+  const place=[];
+  for(let i=toks.length-1;i>0;i--){            // 뒤에서부터 읍·면·동·리·가 까지만
+    if(!/(읍|면|동|리|가)$/.test(toks[i]))break;
+    place.unshift(toks[i]);
+  }
+  return place.map(t=>(t.length>=3&&/(읍|면|리)$/.test(t))?t.slice(0,-1):t).join('')+lot;
+}
+
+async function autoSaveTrackV(item){
+  const lyr=item&&item.polyLyr;
+  if(!lyr||_trackAutoSaveOff||!(window.__wsReady&&window.__wsReady()))return;
+  try{
+    let fname=lyr._autoFile;                     // 이미 자동저장된 선을 수정 → 같은 파일에 덮어씀
+    if(!fname){
+      const d=new Date(),p2=n=>(n+'').padStart(2,'0');
+      const ts=d.getFullYear()+p2(d.getMonth()+1)+p2(d.getDate())+p2(d.getHours())+p2(d.getMinutes());
+      const cs=getCoords(lyr);
+      let place='';
+      if(cs.length){
+        const ll=fromMerc(cs[Math.floor(cs.length/2)]);
+        place=_trackPlaceName(await new Promise(r=>reverseGeocode(ll[0],ll[1],a=>r(a))));
+      }
+      fname=(ts+'_'+(place||'경로')).replace(/[\\/:*?"<>|]/g,'_')+'.gpx';
+    }
+    // GPX 1.1 — 선 색·굵기는 gpx_style 확장에 담아 다시 열 때(위치로 검색 등) 그대로 보이게
+    const base=fname.replace(/\.gpx$/i,'');
+    const hex=((lyr._color||item._origColor||'#FF0000')+'').replace('#','').toUpperCase(), w=lyr._width||item._origWeight||3;
+    const segs=coordParts(lyr).filter(s=>s.length>=2).map(s=>'  <trkseg>\n'
+      +s.map(c=>{const ll=fromMerc(c);return `   <trkpt lat="${ll[1]}" lon="${ll[0]}"></trkpt>\n`;}).join('')+'  </trkseg>\n').join('');
+    if(!segs)return;
+    const gpx='<?xml version="1.0" encoding="UTF-8"?>\n'
+      +'<gpx version="1.1" creator="JtyMap" xmlns="http://www.topografix.com/GPX/1/1"'
+      +' xmlns:gpx_style="http://www.topografix.com/GPX/gpx_style/0/2">\n'
+      +` <metadata><name>${_hesc(base)}</name></metadata>\n`
+      +` <trk>\n  <name>${_hesc(item.name||base)}</name>\n`
+      +`  <extensions><gpx_style:line><gpx_style:color>${hex}</gpx_style:color><gpx_style:width>${w}</gpx_style:width></gpx_style:line></extensions>\n`
+      +segs+' </trk>\n</gpx>\n';
+    const b64=btoa(unescape(encodeURIComponent(gpx)));   // UTF-8(한글 이름) → base64
+    const reqid='t'+(++_trackSaveSeq);
+    _trackSaveWaiters.set(reqid,lyr);
+    window.__wsSend({type:'autosave_track',reqid,filename:fname,overwrite:!!lyr._autoFile,data:b64});
+  }catch(e){console.warn('[임시트랙 자동저장] 실패',e);}
+}
+
+// 서버 응답 — track_autosaved(자동저장 결과) / temp_track_dir(📁 폴더 지정 결과)
+window.__onTrackAutoSaved=d=>{
+  const say=t=>{if(window.__setBadge)window.__setBadge(true,t);};
+  if(d.type==='temp_track_dir'){
+    if(d.folder){_trackAutoSaveOff=false;say('📁 임시트랙 저장폴더: '+d.folder);}
+    else say(d.current?'📁 임시트랙 저장폴더 그대로: '+d.current:'임시트랙 저장폴더 지정 취소');
+    return;
+  }
+  const lyr=_trackSaveWaiters.get(d.reqid); _trackSaveWaiters.delete(d.reqid);
+  if(d.cancelled){_trackAutoSaveOff=true;say('⚠️ 임시트랙 자동저장 꺼짐 — 📁 버튼으로 폴더를 지정하면 다시 켜집니다');return;}
+  if(!d.ok){say('❌ 임시트랙 저장 실패: '+(d.filename||''));return;}
+  if(lyr)lyr._autoFile=d.filename;
+  say('💾 임시트랙 저장: '+d.filename);
+  showSaveStatus('💾 임시트랙 저장: '+d.folder+'\\'+d.filename);
+};
+
+// 📁 버튼 — 임시트랙 저장폴더 지정/변경
+function setTempTrackDir(){
+  if(!(window.__wsReady&&window.__wsReady())){
+    alert('임시트랙 저장폴더는 PC 프로그램(사진위치표시)과 연결된 상태에서 지정할 수 있습니다.');return;}
+  if(window.__setBadge)window.__setBadge(true,'📁 임시트랙 저장폴더 선택...');
+  window.__wsSend({type:'set_temp_track_dir'});
+}
+
 function refreshDraw() {
   if (!drawLayer) return;
   const src=drawLayer.getSource(); src.clear();
@@ -2453,6 +2540,7 @@ document.getElementById('polyEditBtn').onclick=()=>{
   allItems=allItems.filter(i=>i.polyLyr!==lyr);
   drawing=true;drawCoords=coords.slice();
   drawLayer=mkLineLyr(drawCoords,_ec,_ew);drawLayer._color=_ec;drawLayer._width=_ew;addLyr(drawLayer);
+  drawLayer._autoSave=lyr._autoSave;drawLayer._autoFile=lyr._autoFile;   // 자동저장된 선이면 수정 후 같은 파일에 덮어씀
   document.getElementById('vmap').classList.add('draw-mode');
   document.getElementById('drawBtn').textContent='선 그리기 중지';
   setMarkersDimmed(true);
@@ -6791,6 +6879,8 @@ function _pcLinkEnabled(){
               : (d.folder||''));
           if((d.type==='save_path'&&!d.path)||(d.type==='save_folder'&&!d.folder))
             setBadge(true,'저장 취소됨');
+        } else if(d.type==='track_autosaved'||d.type==='temp_track_dir'){
+          if(window.__onTrackAutoSaved)window.__onTrackAutoSaved(d);   // 임시트랙 자동저장
         } else if(d.type==='file_saved'){
           if(d.silent){
             // 사진 여러 장 저장 중 — 낱개 결과는 배지에 띄우지 않음
