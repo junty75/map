@@ -6970,8 +6970,7 @@ function _pcLinkEnabled(){
       ringEl.className = 'live-pin' + (isPhoto ? '' : ' coord-only');
       ringEl.style.pointerEvents = 'none';
       ringEl.innerHTML = isPhoto ? `<div class="live-pin-ring"></div>`
-                                 : (pnu ? `<div class="live-pin-label" style="background:#ffd600;color:#000;font-weight:bold;">${name}</div>`
-                                        : `<div class="live-pin-label">${name}</div>`);
+                                 : `<div class="live-pin-label">${name}</div>`;
       const ringOv = new kakao.maps.CustomOverlay({
         map, content: ringEl, position: pos,
         xAnchor: 0.5, yAnchor: 0.5, zIndex: 998

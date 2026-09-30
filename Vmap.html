@@ -6596,8 +6596,8 @@ function _pcLinkEnabled(){
         el.innerHTML='<div class="live-pin-ring"></div>'
                     +'<div class="live-pin-dot"></div>';   // 사진마커 이름 라벨 제거
       } else if (pnu) {
-        // 엑셀 PNU(필지/행정구역 중심) → 노란 점 + 노란 라벨 (사진·좌표 마커와 구분)
-        el.innerHTML='<div class="live-pin-label" style="background:#ffd600;color:#000;font-weight:bold;">'+name+'</div>'
+        // 엑셀 PNU(필지/행정구역 중심) → 노란 점 (사진·좌표 마커와 구분, 라벨은 기본 그대로)
+        el.innerHTML='<div class="live-pin-label">'+name+'</div>'
                     +'<div class="live-pin-dot" style="background:#ffd600;border-color:#333;"></div>';
       } else {
         el.innerHTML='<div class="live-pin-label">'+name+'</div>'
