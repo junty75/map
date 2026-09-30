@@ -486,7 +486,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
       <button onclick="doExport()">💾 저장</button>
       <button onclick="document.getElementById('openFileInput').click()" title="KMZ·KML·GPX·CSV·htm·사진 파일 열기 — 드래그&드롭이 안 되는 휴대폰/태블릿용">📂 열기</button>
       <input type="file" id="openFileInput" multiple style="display:none"
-             accept=".kmz,.kml,.zip,.gpx,.csv,.htm,.html,image/*"
+             accept=".kmz,.kml,.zip,.gpx,.bgpx,.csv,.htm,.html,image/*"
              onchange="handleDroppedFiles(Array.from(this.files),new Map());this.value='';">
       <select id="mapType" onchange="chgMapType(this.value)">
         <option value="GRAPHIC">일반지도</option>
@@ -2835,7 +2835,7 @@ function resetAll(){
 ════════════════════════════════════ */
 /* ── 폴더 드롭 — 하위폴더 재귀 스캔 + 선택 ── */
 // 지도에 표시 가능한 확장자만 폴더에서 걷어온다(폴더엔 무관한 파일이 섞여 있음).
-const DROP_EXT = /\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2|kmz|kml|zip|gpx|csv|htm|html)$/i;
+const DROP_EXT = /\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2|kmz|kml|zip|gpx|bgpx|csv|htm|html)$/i;
 
 // DirectoryReader.readEntries 는 한 번에 100개까지만 준다 → 빈 배열이 올 때까지 반복
 function _dropReadAll(reader){
@@ -2991,7 +2991,7 @@ function handleDroppedFiles(files,fhMap){
   const otherFiles=files.filter(f=>!imageFiles.includes(f));
   otherFiles.forEach(file=>{
     const n=file.name.toLowerCase();
-    if(n.endsWith('.kmz')||n.endsWith('.zip')||n.endsWith('.kml'))loadKMZ(file);
+    if(n.endsWith('.kmz')||n.endsWith('.zip')||n.endsWith('.kml')||n.endsWith('.bgpx'))loadKMZ(file);   // .bgpx(이진 GPX)는 loadKMZ 가 헤더로 판별
     else if(n.endsWith('.gpx'))loadGPX(file);
     else if(n.endsWith('.csv'))loadCSV(file);
     else if(n.endsWith('.htm')||n.endsWith('.html'))loadHTM(file);
@@ -3318,7 +3318,7 @@ function showSearchResults(title,items,onPick,fmt,onSaveItems){
     const name=String(it.path||it.name||'');
     if(/\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2)$/i.test(name))return 'photo';
     if(/\.(kmz|kml)$/i.test(name))return 'kmz';
-    if(/\.gpx$/i.test(name))return 'gpx';
+    if(/\.b?gpx$/i.test(name))return 'gpx';
     if(t==='kmz')return 'kmz';
     return 'etc';
   }
@@ -3810,6 +3810,36 @@ function loadHTM(file){
   r.readAsText(file,'utf-8');
 }
 
+// .bgpx(이진 GPX, 'Bgpx' 헤더) → GPX 텍스트. 사진위치표시.py 의 _bgpx_track 과 같은 해석(역분석).
+//  'Bgpx' + 파일크기(4) + 가변정수 0 + 문자열 2개(트랙 이름, 종류) 뒤
+//  가변정수 [기준시각, 0, 1, 점수, 1, 1, 점수, 위도, 경도, 고도, 시각] 다음 점마다 차분 [?, d위도, d경도, d고도, d시각].
+//  가변정수 = 큰 쪽부터 7비트씩, 0x80 이어짐, 첫 바이트 0x40 은 음수. 위경도 1e-7 도, 고도 0.1 m, 시각 = 2020-01-01 UTC 부터 초.
+function _bgpxToGpx(u8){
+  let pos=8;
+  const vlq=()=>{
+    if(pos>=u8.length)throw new RangeError('bgpx 끝');
+    let b=u8[pos++];const neg=b&0x40;let v=b&0x3f;
+    while(b&0x80){if(pos>=u8.length)throw new RangeError('bgpx 끝');b=u8[pos++];v=v*128+(b&0x7f);}
+    return neg?-v:v;
+  };
+  const str=()=>{const n=vlq();const s=new TextDecoder('utf-8').decode(u8.subarray(pos,pos+n));pos+=n;return s;};
+  const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const T0=Date.UTC(2020,0,1)/1000;
+  const pt=(la,lo,el,t)=>`<trkpt lat="${(la/1e7).toFixed(7)}" lon="${(lo/1e7).toFixed(7)}"><ele>${(el/10).toFixed(1)}</ele><time>${new Date((T0+t)*1000).toISOString().replace('.000Z','Z')}</time></trkpt>`;
+  let name='',pts=[];
+  try{
+    vlq();name=str();str();
+    const h=[];for(let i=0;i<11;i++)h.push(vlq());
+    let [n,lat,lon,ele,t]=[h[3],h[7],h[8],h[9],h[10]];
+    pts.push(pt(lat,lon,ele,t));
+    for(let k=1;k<n;k++){
+      const r=[vlq(),vlq(),vlq(),vlq(),vlq()];
+      lat+=r[1];lon+=r[2];ele+=r[3];t+=r[4];
+      pts.push(pt(lat,lon,ele,t));
+    }
+  }catch(e){if(!(e instanceof RangeError))throw e;}   // 잘린 파일 — 읽은 데까지만
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="bgpx" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>${esc(name||'트랙')}</name><trkseg>\n${pts.join('\n')}\n</trkseg></trk>\n</gpx>\n`;
+}
 // GPX → KML 텍스트. 위치로 검색·탐색기에서 온 GPX(임시트랙 등)를 KMZ 로더로 그대로 읽기 위함.
 //  트랙(trk/trkseg)·경로(rte) → LineString, 웨이포인트(wpt) → Point.
 //  선 색·굵기는 gpx_style 확장(<color>RRGGBB</color><width>)이 있으면 살린다(임시트랙 자동저장이 씀).
@@ -3856,6 +3886,8 @@ async function loadKMZ(file){
       zip=await JSZip.loadAsync(file);keys=Object.keys(zip.files);
       for(const k of keys){if(/\.kml$/i.test(k.replace(/\0/g,''))){try{const t=await zip.files[k].async('string');if(t&&t.length>0){kmlText=t;break;}}catch(e){}}}
       if(!kmlText){alert('KMZ 안에 .kml 파일이 없습니다.');return;}
+    } else if(head[0]===0x42 && head[1]===0x67){   // 'Bg' — .bgpx(이진 GPX) → GPX → KML
+      kmlText=_gpxToKml(_bgpxToGpx(new Uint8Array(await file.arrayBuffer())));
     } else {
       kmlText=await file.text();   // 평문 KML (내부 임베드 사진 없음 — 마커/트랙만)
       if(/<gpx[\s>]/i.test(kmlText))kmlText=_gpxToKml(kmlText);   // GPX(임시트랙 등) → KML 로 바꿔 같은 방식으로 읽음
