@@ -2523,6 +2523,7 @@ function initializeMap(center) {
 
   kakao.maps.event.addListener(map, 'click', e => {
     if (_blockMapClick) return;
+    if (textMovePending) { const f = textMovePending; cancelTextMove(); f(e.latLng); return; }   // 문자 이동 — 클릭한 자리로
     if (eraseMode) { eraseAt(e.latLng); return; }       // 지우개 — 누른 자리 근처 삭제
     if (textMode) { openTextEditor(e.latLng, null); return; }   // 문자 — 누른 자리에 입력창
     if (textEditOverlay) { closeTextEditor(); return; }         // 열려 있던 입력창은 지도 클릭으로 닫기
@@ -2941,12 +2942,34 @@ function clearTextLabels() {
 //  가로챌 수 없다(F11 전체화면에서만 동작). 그래서 막히지 않는 T 를 쓴다.
 // ══════════════════════════════════════════════════
 let textMode = false, textEditOverlay = null;
+// 문자 '이동' 대기 — 입력창의 [이동]을 누르면 함수가 들어가고, 다음 지도 클릭 자리로 옮긴다
+let textMovePending = null;
+function cancelTextMove(msg) {
+  if (!textMovePending) return;
+  textMovePending = null;
+  try { map.setCursor(textMode ? 'crosshair' : ''); } catch (e) {}
+  if (msg) showSaveStatus(msg);
+}
 // 마지막에 쓴 색·글자높이(m) — 프로그램을 다시 켜도 유지된다.
 // 저장은 다른 화면설정과 같은 통로(__saveUi → localStorage + .ui_settings.json)를 쓰고,
 // 되읽기는 applyUi() 의 'map.text_col' / 'map.text_h' 항목이 담당한다.
 let textLastColor = '#FFEB00', textLastHeight = 10;
 function _saveTextPref(key, val) {
   try { window.__saveUi && window.__saveUi(key, val); } catch (e) {}
+}
+
+// 입력칸(textarea) 크기 기억 — 오른쪽 아래를 끌어 늘린 크기를 다음 입력창에도 그대로.
+// 'WxH'(px) 로 다른 화면설정과 같은 통로(__saveUi)에 저장한다.
+let textBoxSize = '';
+function _applyTextBox(ta) {
+  const m = /^(\d+)x(\d+)$/.exec(textBoxSize || '');
+  if (m) { ta.style.width = m[1] + 'px'; ta.style.height = m[2] + 'px'; }
+}
+function _saveTextBox(ta) {
+  if (!ta || !ta.style.height) return;            // 끌어서 바꾼 적이 없으면 기본 크기 유지
+  const w = Math.max(80, parseInt(ta.style.width) || 0), h = Math.max(30, parseInt(ta.style.height) || 0);
+  const v = w + 'x' + h;
+  if (v !== textBoxSize) { textBoxSize = v; _saveTextPref('text_box', v); }
 }
 
 function _updateTextBtn() {
@@ -2970,7 +2993,10 @@ function toggleTextMode(on) {
   _updateTextBtn();
 }
 function closeTextEditor() {
-  if (textEditOverlay) { textEditOverlay.setMap(null); textEditOverlay = null; }
+  if (textEditOverlay) {
+    try { _saveTextBox(textEditOverlay.getContent().querySelector('textarea')); } catch (e) {}
+    textEditOverlay.setMap(null); textEditOverlay = null;
+  }
 }
 
 // 화면 좌표(clientX,clientY) 위에 있는 글자 라벨 — 우클릭 수정 대상 찾기.
@@ -3035,19 +3061,26 @@ function openTextEditor(latlng, target) {
     + '</div>'
     + '<div style="display:flex;gap:5px;">'
     +   '<button type="button" data-k="ok" style="flex:1;">' + (isEdit ? '수정' : '추가') + '</button>'
-    +   (isEdit ? '<button type="button" data-k="del" style="color:#c0392b;">삭제</button>' : '')
+    +   (isEdit ? '<button type="button" data-k="move" style="flex:1;" title="누른 뒤 지도에서 옮길 자리를 클릭 (Esc=취소)">✥ 이동</button>' : '')
     +   '<button type="button" data-k="cancel">취소</button>'
+    +   (isEdit ? '<button type="button" data-k="del" style="color:#c0392b;">삭제</button>' : '')
     + '</div>';
   textEditOverlay = new kakao.maps.CustomOverlay({ position: pos, content: c, yAnchor: 1, zIndex: 20 });
   textEditOverlay.setMap(map);
-  // 입력창 안에서의 마우스/키보드는 지도(끌기·단축키)로 넘기지 않는다
-  ['mousedown', 'click', 'dblclick', 'wheel'].forEach(ev =>
+  // 입력창 안에서의 마우스/키보드는 지도(끌기·단축키)로 넘기지 않는다.
+  // 우클릭(contextmenu·mouseup)도 막아야 지도 우클릭(마커 삽입)이 안 뜨고,
+  // preventDefault 는 안 하므로 브라우저 기본 메뉴(복사·잘라내기·붙여넣기)는 그대로 뜬다.
+  //  (떼기는 우클릭일 때만 막는다 — 지도·사이드바를 끌다 입력창 위에서 놓아도 끌기가 끝나게)
+  ['mousedown', 'click', 'dblclick', 'wheel', 'contextmenu'].forEach(ev =>
     c.addEventListener(ev, e => e.stopPropagation()));
+  ['mouseup', 'pointerdown', 'pointerup'].forEach(ev =>
+    c.addEventListener(ev, e => { if (e.button === 2) e.stopPropagation(); }));
 
   const ta     = c.querySelector('textarea');
   const colBtn = c.querySelector('[data-k="col"]');
   const hInp   = c.querySelector('[data-k="h"]');
   const hUnit  = c.querySelector('[data-k="hunit"]');
+  _applyTextBox(ta);
   let col = isEdit ? (target.col || '#FFEB00') : textLastColor;
   colBtn.style.background = col;
   colBtn.onclick = e => { e.stopPropagation(); openColorPalette(colBtn, v => { col = v; colBtn.style.background = v; }); };
@@ -3094,9 +3127,28 @@ function openTextEditor(latlng, target) {
     showSaveStatus('🗑️ 문자 삭제됨');
     done();
   }
+  // 이동 — 입력창을 닫고 다음 지도 클릭 자리로 옮긴다. 창에서 고친 글자·색·크기도 함께 반영.
+  function move() {
+    const txt = ta.value.replace(/[ \t]+$/gm, '').replace(/\n+$/, '');
+    if (!txt.trim()) return;
+    const h = _readH(), old = target;
+    if (textLastHeight !== h)   { textLastHeight = h;   _saveTextPref('text_h',   String(h)); }
+    if (textLastColor !== col)  { textLastColor  = col; _saveTextPref('text_col', col); }
+    done();
+    textMovePending = np => {
+      const neu = addTextLabel(np, txt, old.rot || 0, col, h, old.ax, old.ay, old.tw);
+      _removeTextLabel(old);
+      pushHistory({ undo() { _removeTextLabel(neu); _restoreTextLabel(old); },
+                    redo() { _removeTextLabel(old); _restoreTextLabel(neu); } });
+      showSaveStatus('✥ 문자 이동됨');
+    };
+    try { map.setCursor('move'); } catch (e) {}
+    showSaveStatus('✥ 옮길 자리를 지도에서 클릭하세요 (Esc=취소)');
+  }
   c.querySelector('[data-k="ok"]').onclick = apply;
   c.querySelector('[data-k="cancel"]').onclick = done;
   if (isEdit) c.querySelector('[data-k="del"]').onclick = del;
+  if (isEdit) c.querySelector('[data-k="move"]').onclick = move;
   // 입력창 안의 키는 지도 단축키로 넘기지 않는다 (Enter 는 그대로 줄바꿈)
   c.addEventListener('keydown', e => {
     e.stopPropagation();
@@ -3977,6 +4029,8 @@ document.addEventListener('keydown', e => {
   if (locPickMode && e.key==='Escape') {
     e.preventDefault(); stopLocationPick(); clearLocationPick(false); showSaveStatus('위치 검색 선택 취소됨'); return;
   }
+  // 문자 이동 대기 중 — Esc 로 취소 (글자는 제자리에 그대로)
+  if (e.key === 'Escape' && textMovePending) { e.preventDefault(); cancelTextMove('문자 이동 취소됨'); return; }
   // 문자(메모) — Esc 로 입력창 닫기 / 모드 종료
   if (e.key === 'Escape' && (textEditOverlay || textMode)) {
     e.preventDefault();
@@ -6596,6 +6650,7 @@ async function downloadPhotoWithGPS(imgSrc,name,lat,lng){
     if(s['map.prev_h'])ps.style.height      = s['map.prev_h'];
     if(s['map.meta_h'])ms.style.height      = s['map.meta_h'];
     // 문자(메모) 글자 크기·색 — 마지막에 쓴 값을 다음 입력의 기본값으로 (크기 0 = 화면 고정)
+    if(/^\d+x\d+$/.test(s['map.text_box']||'')) textBoxSize=s['map.text_box'];
     if(s['map.text_h']!=null){ const _th=parseFloat(s['map.text_h']); if(isFinite(_th)&&_th>=0) textLastHeight=_th; }
     if(/^#[0-9a-fA-F]{6}$/.test(s['map.text_col']||'')) textLastColor=s['map.text_col'];
     if(s['map.colvis']){ try{ colVis = Object.assign(colVis, JSON.parse(s['map.colvis'])); }catch(e){} }
