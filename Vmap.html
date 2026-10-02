@@ -670,6 +670,24 @@ function initMap(lat, lng) {
     if (i instanceof ol.interaction.DoubleClickZoom) i.setActive(false);
   });
 
+  // ── 휠 확대 반응 속도 (카카오 map.html 처럼 바로 반응하게) ──
+  // OL 3.19 MouseWheelZoom 은 첫 휠 입력 뒤 timeout_(80ms) 동안 모았다가 확대한다.
+  // 실측: 휠 → 확대까지 96ms → timeout_=0 으로 1ms (2026-10-02, 깃허브 배포본에서 측정).
+  // 0 이면 터치패드처럼 휠 이벤트가 연달아 쏟아질 때 여러 단계가 한꺼번에 튀므로,
+  // 직전 확대 후 WHEEL_GAP_MS 안에 온 휠은 지도까지 보내지 않는다(capture 단계에서 먼저 받음).
+  // 지도 위 팝업(문자 입력창 등) 안의 휠·Ctrl+휠(브라우저 확대)은 건드리지 않는다.
+  vmap.getInteractions().forEach(i => {
+    if (i instanceof ol.interaction.MouseWheelZoom && 'timeout_' in i) i.timeout_ = 0;
+  });
+  const WHEEL_GAP_MS = 100;
+  let _lastWheelZoom = 0;
+  document.getElementById('vmap').addEventListener('wheel', e => {
+    if (e.ctrlKey || (e.target.closest && e.target.closest('.ol-overlay-container'))) return;
+    const now = performance.now();
+    if (now - _lastWheelZoom < WHEEL_GAP_MS) { e.preventDefault(); e.stopPropagation(); return; }
+    _lastWheelZoom = now;
+  }, { capture: true, passive: false });
+
   // 줌 버튼 (최대 줌 이후에는 CSS scale로 화면 확대)
   document.getElementById('zoomInBtn').onclick = () => {
     if (cssScale > 1) { applyScale(cssScale * 2); return; }
