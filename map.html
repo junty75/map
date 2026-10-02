@@ -2235,10 +2235,27 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
     });
   }
 
+  // 체크 상태 → 선택 집합·지도 마커 동기화 (체크박스 클릭·선택하기 모드·Shift 범위 선택 공통)
+  let lastChkIdx = -1;   // Shift 범위 선택의 기준(마지막으로 체크를 바꾼 행)
+  function syncChk(i) {
+    const r = rows[i]; if (!r) return;
+    const on = r.chk.checked;
+    if (on) checkedPaths.add(r.it.path); else checkedPaths.delete(r.it.path);
+    if (!modal._srMapOn) return;
+    if (on) { if (!modal._srMapMarkerMap[i]) modal._srMapMarkerMap[i] = mkOneSrMarker(r.it, i); }
+    else if (modal._srMapMarkerMap[i]) { modal._srMapMarkerMap[i].setMap(null); delete modal._srMapMarkerMap[i]; }
+  }
+  // Shift+클릭 — 기준 행부터 클릭한 행까지를 같은 상태(on)로
+  function checkRange(a, b, on) {
+    for (let i = Math.min(a, b); i <= Math.max(a, b); i++) {
+      if (rows[i]) { rows[i].chk.checked = on; syncChk(i); }
+    }
+  }
+
   function renderRows() {
     const base = baseItems();
     view = (curTab === 'all') ? base : base.filter(it => srTypeOf(it) === curTab);
-    rows.length = 0; curIdx = -1;
+    rows.length = 0; curIdx = -1; lastChkIdx = -1;
     // 탭이 바뀌면 번호(인덱스)가 달라지므로 지도 마커는 지우고 새로 만든다
     if (modal._srMapMarkerMap) Object.values(modal._srMapMarkerMap).forEach(m => m && m.setMap(null));
     modal._srMapMarkerMap = {};
@@ -2264,17 +2281,10 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
       chk.checked = checkedPaths.has(it.path);   // 숨어 있던 항목도 선택 상태 그대로 복원
       chk.onclick = e => {
         e.stopPropagation();
-        if (chk.checked) checkedPaths.add(it.path); else checkedPaths.delete(it.path);
-        if (modal._srMapOn) {
-          if (chk.checked) {
-            if (!modal._srMapMarkerMap[idx]) modal._srMapMarkerMap[idx] = mkOneSrMarker(it, idx);
-          } else {
-            if (modal._srMapMarkerMap && modal._srMapMarkerMap[idx]) {
-              modal._srMapMarkerMap[idx].setMap(null);
-              delete modal._srMapMarkerMap[idx];
-            }
-          }
-        }
+        // Shift+체크 → 직전에 체크를 바꾼 행부터 여기까지 같은 상태로
+        if (e.shiftKey && lastChkIdx >= 0) checkRange(lastChkIdx, idx, chk.checked);
+        else syncChk(idx);
+        lastChkIdx = idx;
         updateCount();
       };
       const body = document.createElement('div');
@@ -2283,9 +2293,19 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
       row.appendChild(chk); row.appendChild(numBadge); row.appendChild(body);
       row.title = it.path || '';
       rows.push({ row, it, chk });
-      row.onclick = () => {
-        // 선택 모드일 때만 행 클릭으로 체크 토글 (기본은 미리보기만)
-        if (selectMode) { chk.checked = !chk.checked; updateCount(); }
+      // Shift+클릭 시 글자가 드래그 선택되지 않게
+      row.onmousedown = e => { if (e.shiftKey) e.preventDefault(); };
+      row.onclick = e => {
+        if (e.shiftKey) {
+          // Shift+행 클릭 → 기준 행(마지막 체크 변경, 없으면 미리보기 중인 행)부터 여기까지 체크
+          const from = lastChkIdx >= 0 ? lastChkIdx : curIdx;
+          if (from >= 0) checkRange(from, idx, true);
+          else { chk.checked = true; syncChk(idx); }
+          lastChkIdx = idx; updateCount();
+        } else if (selectMode) {
+          // 선택 모드일 때만 행 클릭으로 체크 토글 (기본은 미리보기만)
+          chk.checked = !chk.checked; syncChk(idx); lastChkIdx = idx; updateCount();
+        }
         selectAt(idx);
       };
       list.appendChild(row);
