@@ -2200,7 +2200,7 @@ function openTextEditor(coord,target){
                     redo(){ _removeTextFeat(target); _restoreTextFeat(neu); } });
       showSaveStatus('📝 문자 수정됨');
     }else{
-      const f=addTextLabelV(pos,txt,0,col,h,0.5,0.5,0);   // 새 메모는 클릭한 점이 한가운데
+      const f=addTextLabelV(pos,txt,0,col,h,0,1,0);   // 새 메모는 클릭한 점이 글자 좌측 상단 (ax 0=왼쪽, ay 1=위)
       pushHistory({ undo(){ _removeTextFeat(f); }, redo(){ _restoreTextFeat(f); } });
       showSaveStatus('📝 문자 추가됨'+(textMode?' — 계속 클릭해서 더 넣을 수 있습니다':''));
     }
