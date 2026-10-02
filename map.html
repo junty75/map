@@ -2051,8 +2051,9 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
       <div id="srSelBar" style="display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;padding:6px 14px;border-bottom:1px solid #eee;background:#fafafa;font-size:12px;flex:0 0 auto;">
         <label style="display:flex;align-items:center;gap:4px;cursor:pointer;"><input type="checkbox" id="srSelectAll"> 전체 선택</label>
         <span id="srSelCount" style="color:#888;">0개 선택</span>
-        <button id="srMapToggle" title="검색 결과 전체를 지도에 마커로 표시 — 다시 누르면 해제. 마커 클릭 시 목록에서 해당 항목 선택" style="padding:3px 10px;border:1px solid #27ae60;border-radius:4px;background:#fff;color:#27ae60;font-size:12px;font-weight:bold;cursor:pointer;">🗺 지도삽입</button>
-        <button id="srCopyPath" title="체크한 항목의 전체 경로를 클립보드로 복사합니다 (체크가 없으면 미리보기 중인 한 줄).&#10;엑셀에 붙여넣으면 한 경로가 한 행이 됩니다." style="margin-left:auto;padding:3px 10px;border:1px solid #b9770e;border-radius:4px;background:#fff;color:#b9770e;font-size:12px;font-weight:bold;cursor:pointer;">📋 경로복사</button>
+        <button id="srMapToggle" title="검색 결과 전체를 지도에 마커로 표시 — 다시 누르면 해제. 마커 클릭 시 목록에서 해당 항목 선택" style="padding:3px 10px;border:1px solid #27ae60;border-radius:4px;background:#fff;color:#27ae60;font-size:12px;font-weight:bold;cursor:pointer;">🗺 지도표시</button>
+        <button id="srInsert" title="체크한 항목을 사이드바에 영구 삽입합니다 (체크가 없으면 미리보기 중인 한 줄)." style="margin-left:auto;padding:3px 10px;border:1px solid #c0392b;border-radius:4px;background:#fff;color:#c0392b;font-size:12px;font-weight:bold;cursor:pointer;">⬇ 지도삽입</button>
+        <button id="srCopyPath" title="체크한 항목의 전체 경로를 클립보드로 복사합니다 (체크가 없으면 미리보기 중인 한 줄).&#10;엑셀에 붙여넣으면 한 경로가 한 행이 됩니다." style="padding:3px 10px;border:1px solid #b9770e;border-radius:4px;background:#fff;color:#b9770e;font-size:12px;font-weight:bold;cursor:pointer;">📋 경로복사</button>
         <button id="srSelectMode" title="켜면 행을 클릭해서 선택할 수 있습니다 (끄면 체크박스로만 선택)" style="padding:3px 10px;border:1px solid #1a5276;border-radius:4px;background:#fff;color:#1a5276;font-size:12px;font-weight:bold;cursor:pointer;">선택하기</button>
       </div>
       <div id="srList" style="overflow:auto;padding:6px 0;flex:1;min-height:0;"></div>
@@ -2103,7 +2104,7 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
   // 새 결과가 올 때마다 기존 지도 마커 제거 & 버튼 초기화
   if (modal._srMapMarkerMap) { Object.values(modal._srMapMarkerMap).forEach(m => m && m.setMap(null)); modal._srMapMarkerMap = {}; }
   modal._srMapOn = false; modal._srSelectedIdx = undefined;
-  mapToggleBtn.style.background = '#fff'; mapToggleBtn.style.color = '#27ae60'; mapToggleBtn.textContent = '🗺 지도삽입';
+  mapToggleBtn.style.background = '#fff'; mapToggleBtn.style.color = '#27ae60'; mapToggleBtn.textContent = '🗺 지도표시';
 
   // '선택하기' 모드: 켜면 행 클릭으로 선택, 끄면 체크박스로만 선택
   let selectMode = false;
@@ -2353,6 +2354,17 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
     updateCount();
   };
 
+  // ⬇ 지도삽입 — 체크된 항목(체크가 없으면 미리보기 중인 행)을 사이드바에 영구 삽입.
+  //    사이드바 '⬇ 삽입' 버튼과 같은 경로(insertCheckedSearchItems)를 쓴다.
+  modal.querySelector('#srInsert').onclick = () => {
+    let sel = [...list.querySelectorAll('.sr-check')].filter(c => c.checked).map(c => c._item);
+    if (!sel.length && curIdx >= 0 && rows[curIdx]) sel = [rows[curIdx].it];
+    const paths = sel.map(it => it.path).filter(Boolean);
+    if (!paths.length) { alert('삽입할 항목을 체크하세요 (전체 선택 가능).'); return; }
+    openSidebar();
+    insertCheckedSearchItems(paths);
+  };
+
   // 📋 경로복사 — 체크된 항목(체크가 없으면 미리보기 중인 행)의 전체 경로를 줄바꿈으로 이어 복사.
   //    엑셀은 CRLF 를 행 구분으로 읽으므로, 그대로 붙여넣으면 한 경로가 한 행이 된다.
   const copyBtn = modal.querySelector('#srCopyPath');
@@ -2389,14 +2401,14 @@ function showSearchResults(title, items, onPick, fmt, onSaveItems) {
     if (onSaveItems) onSaveItems(sel);
   };
 
-  // 지도삽입 토글 — ON: 전체 체크+지도표시 / OFF: 전체 해제+마커제거
+  // 지도표시 토글 — ON: 전체 체크+지도표시 / OFF: 전체 해제+마커제거
   mapToggleBtn.onclick = () => {
     if (modal._srMapOn) {
       if (modal._srMapMarkerMap) { Object.values(modal._srMapMarkerMap).forEach(m => m && m.setMap(null)); }
       modal._srMapMarkerMap = {};
       modal._srMapOn = false; modal._srSelectedIdx = undefined;
       window.__srMapDisplayOn = false;
-      mapToggleBtn.style.background = '#fff'; mapToggleBtn.style.color = '#27ae60'; mapToggleBtn.textContent = '🗺 지도삽입';
+      mapToggleBtn.style.background = '#fff'; mapToggleBtn.style.color = '#27ae60'; mapToggleBtn.textContent = '🗺 지도표시';
       checkedPaths.clear();
       list.querySelectorAll('.sr-check').forEach(c => { c.checked = false; });
       list.querySelectorAll('.sr-num').forEach(n => { n.style.display = 'none'; });
