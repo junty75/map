@@ -2472,6 +2472,107 @@ let moveLine = null, distanceOverlay = null;
 let locationMarkerCount = 0;
 let showNumbers = false, numberOverlays = [];
 let trackHighlightPolylines = [];
+
+// ══════════════════════════════════════════════════
+//  주소검색 지역 우선순위 (캐드 juso.lsp 와 같은 방식)
+//   "장수군 + 입력값", "전북특별자치도 + 입력값", "입력값" 검색결과를 합쳐
+//   장수군 → 전북 → 나머지 순으로 정렬 (같은 순위 안에서는 검색 순서 유지)
+//   1곳이면 바로 이동, 여러 곳이면 1번(최우선)으로 이동하고 목록에서 다른 곳을 고르게 한다.
+//   주소검색(지번·도로명) 결과가 없으면 지명(키워드)검색.
+//   (예: 대성리 56 → 1번 장수군 대성리 56 / 화산리 100 → 1번 익산시 화산리 100)
+// ══════════════════════════════════════════════════
+const JUSO_TIERS = [
+  { names: ['장수군'],           prefix: '전북특별자치도 장수군', label: '장수' },  // 1순위
+  { names: ['전북', '전라북도'], prefix: '전북특별자치도',        label: '전북' },  // 2순위
+];                                                                                  // 3순위: 나머지(카카오 원래 순서)
+function _jusoKakaoOnce(api, q) {
+  return new Promise(resolve => {
+    try {
+      const S = kakao.maps.services;
+      const done = (res, st) => resolve(st === S.Status.OK && res ? res : []);
+      if (api === 'address') new S.Geocoder().addressSearch(q, done, { size: 30 });
+      else new S.Places().keywordSearch(q, done, { size: 15 });
+    } catch (e) { resolve([]); }
+  });
+}
+function _jusoTier(d) {
+  const s = d.addr + '|' + d.road;
+  const i = JUSO_TIERS.findIndex(t => t.names.some(n => s.includes(n)));
+  return i < 0 ? JUSO_TIERS.length : i;
+}
+async function _jusoCollect(api, q) {
+  // 입력값에 이미 그 지역명이 들어있으면 접두어 검색은 생략
+  const qs = JUSO_TIERS.filter(t => !t.names.some(n => q.includes(n))).map(t => t.prefix + ' ' + q);
+  qs.push(q);
+  const all = (await Promise.all(qs.map(x => _jusoKakaoOnce(api, x)))).flat();
+  const seen = new Set(), list = [];
+  for (const r of all) {
+    const d = {
+      name: r.place_name || '',
+      addr: r.address_name || '',
+      road: r.road_address_name || (r.road_address && r.road_address.address_name) || '',
+      lat: parseFloat(r.y), lng: parseFloat(r.x)
+    };
+    if (!isFinite(d.lat) || !isFinite(d.lng)) continue;
+    const k = d.name + '|' + d.addr + '|' + r.x + '|' + r.y;
+    if (seen.has(k)) continue;
+    seen.add(k); list.push(d);
+  }
+  list.forEach((d, i) => { d.tier = _jusoTier(d); d._i = i; });
+  return list.sort((a, b) => a.tier - b.tier || a._i - b._i);
+}
+// → { list:[{name,addr,road,lat,lng,tier}], isAddr }  (카카오 SDK 가 없으면 null)
+async function jusoSearch(q) {
+  if (!(window.kakao && kakao.maps && kakao.maps.services)) return null;
+  let list = await _jusoCollect('address', q);
+  if (list.length) return { list, isAddr: true };
+  list = await _jusoCollect('keyword', q);
+  return { list, isAddr: false };
+}
+function jusoClosePicker() { const b = document.getElementById('jusoPick'); if (b) b.remove(); }
+// 결과가 여러 곳이면 검색창 아래에 목록 표시 (1번이 이미 선택된 상태). 행 클릭 = 그 위치로 이동
+function jusoShowPicker(anchorEl, res, onPick) {
+  jusoClosePicker();
+  const list = res.list.slice(0, 30);
+  if (list.length <= 1) return;
+  const r = anchorEl.getBoundingClientRect();
+  const box = document.createElement('div');
+  box.id = 'jusoPick';
+  box.style.cssText = `position:fixed;left:${r.left}px;top:${r.bottom + 4}px;z-index:100001;background:#fff;border:1px solid #bbb;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.3);width:360px;max-width:90vw;max-height:60vh;display:flex;flex-direction:column;font-size:12px;`;
+  const hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:6px 10px;border-bottom:1px solid #e0e0e0;background:#f5f9fc;border-radius:6px 6px 0 0;';
+  hdr.innerHTML = `<b>검색결과 ${res.list.length}곳 <span style="font-weight:normal;color:#888;">(장수군→전북→기타 순)</span></b>`;
+  const x = document.createElement('button');
+  x.textContent = '✕';
+  x.style.cssText = 'border:none;background:none;font-size:15px;cursor:pointer;line-height:1;';
+  x.onclick = jusoClosePicker;
+  hdr.appendChild(x);
+  const ul = document.createElement('div');
+  ul.style.cssText = 'overflow:auto;flex:1;min-height:0;';
+  const colors = ['#c0392b', '#2471a3'];
+  const rows = list.map((d, i) => {
+    const row = document.createElement('div');
+    row.style.cssText = 'padding:5px 10px;cursor:pointer;border-bottom:1px solid #f0f0f0;line-height:1.4;';
+    const t = JUSO_TIERS[d.tier];
+    const badge = t ? `<span style="display:inline-block;padding:0 4px;margin-right:4px;border-radius:3px;background:${colors[d.tier] || '#777'};color:#fff;font-size:11px;">${t.label}</span>` : '';
+    const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const main = res.isAddr ? esc(d.addr || d.road) : `<b>${esc(d.name)}</b>`;
+    const sub  = res.isAddr ? (d.road && d.addr ? esc(d.road) : '') : esc(d.addr || d.road);
+    row.innerHTML = `${i + 1}. ${badge}${main}` + (sub ? `<div style="color:#888;font-size:11px;padding-left:14px;">${sub}</div>` : '');
+    row.onclick = () => { select(i); onPick(d); };
+    row.onmouseenter = () => { if (row.dataset.sel !== '1') row.style.background = '#f3f7fb'; };
+    row.onmouseleave = () => { if (row.dataset.sel !== '1') row.style.background = ''; };
+    ul.appendChild(row);
+    return row;
+  });
+  function select(i) {
+    rows.forEach((rw, j) => { rw.dataset.sel = j === i ? '1' : ''; rw.style.background = j === i ? '#dbeafe' : ''; });
+  }
+  select(0);
+  box.appendChild(hdr); box.appendChild(ul);
+  document.body.appendChild(box);
+}
+document.addEventListener('keydown', e => { if (e.key === 'Escape') jusoClosePicker(); });
 let trackAllHighlights = [];
 let trackAllColorActive = false;
 let trackNameOrgActive = false;
@@ -2621,17 +2722,23 @@ function initializeMap(center) {
     return Math.hypot(p.x-(a.x+t*dx),p.y-(a.y+t*dy));
   }
 
-  document.getElementById('search-form').addEventListener('submit', e => {
+  // 장수군 → 전북 → 나머지 순으로 1번 위치로 이동, 여러 곳이면 목록에서 선택 (jusoSearch)
+  document.getElementById('search-form').addEventListener('submit', async e => {
     e.preventDefault();
-    geocoder.addressSearch(document.getElementById('address-input').value, (res,status) => {
-      if (status===kakao.maps.services.Status.OK) {
-        const pos=new kakao.maps.LatLng(res[0].y,res[0].x);
-        map.setCenter(pos);
-        if (searchMarker) searchMarker.setMap(null);
-        searchMarker=new kakao.maps.Marker({map,position:pos});
-        kakao.maps.event.addListener(searchMarker,'rightclick',()=>{searchMarker.setMap(null);searchMarker=null;});
-      } else alert('주소를 찾을 수 없습니다');
-    });
+    const q = document.getElementById('address-input').value.trim();
+    jusoClosePicker();
+    if (!q) return;
+    const res = await jusoSearch(q);
+    if (!res || !res.list.length) { alert('주소를 찾을 수 없습니다'); return; }
+    const go = d => {
+      const pos=new kakao.maps.LatLng(d.lat,d.lng);
+      map.setCenter(pos);
+      if (searchMarker) searchMarker.setMap(null);
+      searchMarker=new kakao.maps.Marker({map,position:pos});
+      kakao.maps.event.addListener(searchMarker,'rightclick',()=>{searchMarker.setMap(null);searchMarker=null;});
+    };
+    go(res.list[0]);
+    jusoShowPicker(document.getElementById('search-form'), res, go);
   });
 
   kakao.maps.event.addListener(map, 'mousemove', updateDistance);
