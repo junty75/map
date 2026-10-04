@@ -302,6 +302,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
     <div class="fbar-row">
       <button id="metaSearchBtn" title="색인에서 파일명·메타정보를 즉시 검색 — 파일명, JPG 사진(EXIF 제목·설명·촬영일시), KMZ(엑셀메타), KMZ 안에 든 사진까지. 예: 제목:정자나무 주소:강남 / 파일명:IMG_2024, &=AND(쉼표·공백도 가능). 예: 대성&농로&포장&202605 — 숫자만 넣으면 촬영일시 앞자리(2026=연도 전체, 202605=2026년5월) · 기간은 2024-2026">🔎 메타검색</button>
       <button id="metaIndexBtn" title="폴더를 지정해 그 안 JPG·KMZ의 메타정보를 색인에 등록 — 디스크 사진/KMZ 안 사진은 EXIF(제목·설명·촬영일시), KMZ는 엑셀메타 (기존 파일까지 검색되게)">🗂 메타색인</button>
+      <button id="relinkDirsBtn" title="엑셀 셀의 파일이 그 경로에 없을 때 자동으로 찾아볼 폴더 목록 — 추가·제거·순서 바꾸기 (사진위치표시 실행 중일 때. 위에 있는 폴더부터 찾습니다)">📁 경로폴더</button>
     </div>
     <div class="fbar-row">
       <button id="insertBtn" title="현재 흐리게 표시된 임시 객체를 영구 객체로 삽입(확정) — 단축키 Ctrl+Shift+V">⬇ 삽입</button>
@@ -5410,6 +5411,8 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
               : (d.folder||''));
           if((d.type==='save_path'&&!d.path)||(d.type==='save_folder'&&!d.folder))
             setBadge(true,'저장 취소됨');
+        } else if(d.type==='relink_dirs'){
+          if(window.__onRelinkDirs)window.__onRelinkDirs(d);   // 📁 경로폴더 창 결과
         } else if(d.type==='track_autosaved'||d.type==='temp_track_dir'){
           if(window.__onTrackAutoSaved)window.__onTrackAutoSaved(d);   // 임시트랙 자동저장
         } else if(d.type==='file_saved'){

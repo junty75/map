@@ -1952,3 +1952,21 @@ function _pcLinkEnabled(){
   }catch(e){return /(^|[?&])pc(=1)?(&|$)/.test(q);}
 }
 
+// ── 📁 경로폴더 — 엑셀 경로 수정 때 찾을 폴더 목록 관리 (창은 사진위치표시.py 가 띄운다) ──
+function initRelinkDirsBtn(){
+  const b = document.getElementById('relinkDirsBtn');
+  if (!b) return;
+  b.onclick = () => {
+    if (!(window.__wsReady && window.__wsReady())) {
+      alert('탐색기 연동 서버(사진위치표시.py)가 실행 중이어야 합니다.'); return;
+    }
+    window.__wsSend({ type: 'relink_dirs_dialog' });
+    window.__setBadge && window.__setBadge(true, '📁 경로폴더 창이 열렸습니다 (작업표시줄 확인)');
+  };
+}
+window.__onRelinkDirs = d => {
+  const n = (d.dirs || []).length;
+  window.__setBadge && window.__setBadge(true, d.saved ? ('📁 경로폴더 ' + n + '곳 저장') : '📁 경로폴더 — 바꾸지 않음');
+};
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initRelinkDirsBtn);
+else initRelinkDirsBtn();
