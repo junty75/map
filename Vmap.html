@@ -123,7 +123,8 @@ document.write('<script src="https://map.vworld.kr/js/vworldMapInit.js.do?versio
 <script src="https://cdn.jsdelivr.net/npm/piexifjs"></script>
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/exifr@7/dist/full.umd.cjs"></script>
+<!-- .js 여야 한다: .cjs 는 jsdelivr 가 application/node 로 줘서 크롬이 실행을 거부했다(RAW·위치 보조 읽기 전부 무효, 2026-10-04 수정) -->
+<script src="https://cdn.jsdelivr.net/npm/exifr@7/dist/full.umd.js"></script>
 <!-- 카카오 SDK — 선택사항(없어도 지도는 정상 동작).
      용도: ① VWorld가 주소를 못 찾을 때의 역지오코딩 폴백
            ② 로드뷰 열기의 파노라마 자동 탐색(없으면 스카이뷰 지도로 열림)
@@ -3878,11 +3879,16 @@ async function loadImage(file,getNG,setNG,onDone,fhPromise=null){
   const fh=fhPromise?await fhPromise:null;
   const imgFile=await convertHeicIfNeeded(file);
   const r=new FileReader();
-  r.onload=ev=>{
-    const src=ev.target.result,ll=extractGPS(src);
+  r.onload=async ev=>{
+    const src=ev.target.result;let ll=extractGPS(src);
     let name=file.name.replace(/\.[^/.]+$/,''),taken='';
     // EXIF에 저장된 제목(이름)·촬영일시가 있으면 사용
     try{const ex=piexif.load(src);const mn=readMetaName(ex);if(mn)name=mn;const dt=ex['Exif']&&ex['Exif'][piexif.ExifIFD.DateTimeOriginal];if(dt)taken=String(dt).slice(0,10).replace(/:/g,'-');}catch(e){}
+    if(!ll||!taken){   // piexif 가 놓친 위치·날짜 → exifr 로 원본 파일에서 다시
+      const m2=await _exifrMeta(file);
+      if(!ll&&m2.lat!=null)ll=[m2.lng,m2.lat];
+      if(!taken&&m2.date)taken=m2.date;
+    }
     // 드롭 직후 추가된 사진에 서버(최근 탐색기 선택)에서 디스크 경로를 받아 부여 (Ctrl+C 파일복사·중복방지용)
     const _tag=()=>{const _a=allItems[allItems.length-1];if(_a&&_a.type==='photo'&&!_a.path)requestPathResolve(_a,file.name);};
     if(ll){const c=toMerc(ll[0],ll[1]);addPhotoMarker(c,src,name,fh,taken);_tag();if(onDone)onDone(c);else fitPts([c]);}
@@ -4125,40 +4131,68 @@ function loadHTM(file){
   r.readAsText(file,'utf-8');
 }
 
-// .bgpx(이진 GPX, 'Bgpx' 헤더) → GPX 텍스트. 사진위치표시.py 의 _bgpx_track 과 같은 해석
+// .bgpx(이진 GPX, 'Bgpx' 헤더) → GPX 텍스트. 사진위치표시.py 의 _bgpx_track · img/gdrive.js 와 같은 해석
 //  (역분석 — 2026-10-01 실제 파일 22개로 검증: 끝까지 어긋남 없이 읽힘).
-//  'Bgpx' + 파일크기(4, 빅엔디언) + 가변정수 [2, 0, 1] + 문자열 2개(트랙 이름 'Track 2026-08-03 13:10', 종류 '기본 트랙') 뒤
+//  'Bgpx' + 파일크기(4, 빅엔디언) + 가변정수 머리말 + 문자열 2개(트랙 이름 'Track 2026-08-03 13:10', 종류 '기본 트랙') 뒤
 //  가변정수 [기준시각, 0, 1, 점수, 사진수?, 1, 점수, 위도, 경도, 고도, 시각] 다음 점마다 차분 [?, d위도, d경도, d고도, d시각].
+//  머리말: 새 형식 [2, 0, 1](3개), 2023년 무렵 옛 형식 [0](1개) — 나머지 구조는 같다(2026-10-04 track20231114_613.bgpx 로 확인).
+//  → 새 형식 → 옛 형식 순으로 읽어 보고 좌표가 정상인 쪽을 쓴다.
 //  그 뒤에 사진 웨이포인트(좌표 + '20260803_132101.jpg' 같은 이름) 구역이 있으나 여기선 읽지 않는다.
 //  가변정수 = 큰 쪽부터 7비트씩, 0x80 이어짐. 부호 있는 값(좌표·차분)은 첫 바이트 0x40 이 음수,
 //  부호 없는 값(헤더의 개수·시각)은 첫 바이트 7비트를 다 쓴다(8192점 넘는 파일에서 차이가 난다).
 //  위경도 1e-7 도, 고도 0.1 m, 시각 = 2020-01-01 UTC 부터 초.
 function _bgpxToGpx(u8){
-  let pos=8;
-  const vlq=(signed=true)=>{
-    if(pos>=u8.length)throw new RangeError('bgpx 끝');
-    let b=u8[pos++];const neg=signed&&(b&0x40);let v=b&(signed?0x3f:0x7f);
-    while(b&0x80){if(pos>=u8.length)throw new RangeError('bgpx 끝');b=u8[pos++];v=v*128+(b&0x7f);}
-    return neg?-v:v;
-  };
-  const str=()=>{const n=vlq(false);const s=new TextDecoder('utf-8').decode(u8.subarray(pos,pos+n));pos+=n;return s;};
   const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const T0=Date.UTC(2020,0,1)/1000;
   const pt=(la,lo,el,t)=>`<trkpt lat="${(la/1e7).toFixed(7)}" lon="${(lo/1e7).toFixed(7)}"><ele>${(el/10).toFixed(1)}</ele><time>${new Date((T0+t)*1000).toISOString().replace('.000Z','Z')}</time></trkpt>`;
-  let name='',pts=[];
-  try{
-    vlq(false);vlq(false);vlq(false);name=str();str();   // [2,0,1] + 이름 + 종류
-    const h=[];for(let i=0;i<11;i++)h.push(vlq(i>=7));   // 앞 7개(시각·개수)는 부호 없음
-    let [n,lat,lon,ele,t]=[h[3],h[7],h[8],h[9],h[10]];
-    pts.push(pt(lat,lon,ele,t));
-    for(let k=1;k<n;k++){
-      const r=[vlq(),vlq(),vlq(),vlq(),vlq()];
-      lat+=r[1];lon+=r[2];ele+=r[3];t+=r[4];
+  const parse=prefix=>{            // prefix = 이름 앞 가변정수 개수 (새 형식 3, 옛 형식 1)
+    let pos=8;
+    const vlq=(signed=true)=>{
+      if(pos>=u8.length)throw new RangeError('bgpx 끝');
+      let b=u8[pos++];const neg=signed&&(b&0x40);let v=b&(signed?0x3f:0x7f);
+      while(b&0x80){if(pos>=u8.length)throw new RangeError('bgpx 끝');b=u8[pos++];v=v*128+(b&0x7f);}
+      return neg?-v:v;
+    };
+    const str=()=>{const n=vlq(false);if(n>200)throw new Error('이름 길이 이상');const s=new TextDecoder('utf-8',{fatal:true}).decode(u8.subarray(pos,pos+n));pos+=n;return s;};
+    let name='';const pts=[];
+    try{
+      for(let p=0;p<prefix;p++)vlq(false);
+      name=str();str();                                    // 트랙 이름 + 종류
+      const h=[];for(let i=0;i<11;i++)h.push(vlq(i>=7));   // 앞 7개(시각·개수)는 부호 없음
+      let [n,lat,lon,ele,t]=[h[3],h[7],h[8],h[9],h[10]];
+      if(!n||Math.abs(lat)>9e8||Math.abs(lon)>18e8||(!lat&&!lon))return null;
       pts.push(pt(lat,lon,ele,t));
-    }
-  }catch(e){if(!(e instanceof RangeError))throw e;}   // 잘린 파일 — 읽은 데까지만
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="bgpx" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>${esc(name||'트랙')}</name><trkseg>\n${pts.join('\n')}\n</trkseg></trk>\n</gpx>\n`;
+      for(let k=1;k<n;k++){
+        const r=[vlq(),vlq(),vlq(),vlq(),vlq()];
+        lat+=r[1];lon+=r[2];ele+=r[3];t+=r[4];
+        pts.push(pt(lat,lon,ele,t));
+      }
+    }catch(e){if(!(e instanceof RangeError))return null;}   // 잘린 파일 — 읽은 데까지만
+    return pts.length?{name,pts}:null;
+  };
+  const r=parse(3)||parse(1)||parse(2);
+  if(!r)throw new Error('bgpx 형식을 읽지 못했습니다');
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="bgpx" xmlns="http://www.topografix.com/GPX/1/1">\n<trk><name>${esc(r.name||'트랙')}</name><trkseg>\n${r.pts.join('\n')}\n</trkseg></trk>\n</gpx>\n`;
 }
+
+// ── 사진 위치·촬영일 보조 읽기 (2026-10-04) ──
+// piexif 는 JPEG 전용이고 삼성·아이폰의 큰 MakerNote, XMP 에 든 위치를 놓친다(휴대폰판 readPhotoMetaFallback 과 같은 이유).
+// piexif 가 못 읽으면 원본 File 을 exifr 로 다시 읽는다. dataURL 말고 원본 File/Blob 을 넘길 것(청크 단위로 읽음).
+async function _exifrMeta(file){
+  const out={lat:null,lng:null,date:''};
+  if(typeof exifr==='undefined')return out;
+  try{
+    const ex=await exifr.parse(file,{gps:true,xmp:true,tiff:true,exif:true}).catch(()=>null);
+    let la=ex&&ex.latitude,lo=ex&&ex.longitude;
+    if(!isFinite(la)||!isFinite(lo)){const g=await exifr.gps(file).catch(()=>null);if(g){la=g.latitude;lo=g.longitude;}}
+    if(isFinite(la)&&isFinite(lo)&&(la||lo)){out.lat=la;out.lng=lo;}
+    const d=ex&&(ex.DateTimeOriginal||ex.CreateDate);
+    if(d instanceof Date&&!isNaN(d))out.date=_ymdLocal(d);
+  }catch(e){}
+  return out;
+}
+// 촬영일 'YYYY-MM-DD' — exifr 는 촬영 시각을 현지 시각 Date 로 준다. toISOString() 은 UTC 라 오전 사진이 전날로 밀린다.
+function _ymdLocal(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 // GPX → KML 텍스트. 위치로 검색·탐색기에서 온 GPX(임시트랙 등)를 KMZ 로더로 그대로 읽기 위함.
 //  트랙(trk/trkseg)·경로(rte) → LineString, 웨이포인트(wpt) → Point.
 //  선 색·굵기는 gpx_style 확장(<color>RRGGBB</color><width>)이 있으면 살린다(임시트랙 자동저장이 씀).
