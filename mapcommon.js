@@ -6,6 +6,9 @@
 // 배포: Github용_생성.py 가 Github용/ 에 같이 복사, 저장소 junty75/map 에 map.html·Vmap.html 과 함께 올린다.
 // 고칠 땐 이 파일 하나만 — 두 페이지에 같은 이름 함수를 다시 만들지 말 것(나중 것이 덮어쓴다).
 
+// 파일로 열면(file://) 카카오 SDK가 지도 본체(t1.kakaocdn.net)를 http로 받는데 기관 보안망이 차단 -> https로 강제 (2026-10-07)
+(function(){if(location.protocol==='https:')return;var A='http://t1.kakaocdn.net',B='https://t1.kakaocdn.net';function f(s){return String(s).split(A).join(B);}var w=document.write;document.write=function(s){return w.call(document,f(s));};try{var d=Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype,'src');Object.defineProperty(HTMLScriptElement.prototype,'src',{configurable:true,enumerable:d.enumerable,get:d.get,set:function(v){d.set.call(this,f(v));}});}catch(e){}})();
+
 function _askApiKey(storeKey, name, guide){
     // 1순위: 이 기기에 저장된 키 (사용자가 직접 입력했거나 URL 해시로 받은 키).
     //   api_keys.js 파일 키를 1순위로 쓰면 파일 키가 죽은 키일 때 정상 키를 입력해도
@@ -1134,6 +1137,7 @@ const BASEMAP_HTM = [
 "<div id=\"map\"></div>",
 "<div id=\"guide\"></div>",
 "",
+"<script>(function(){if(location.protocol==='https:')return;var A='http://t1.kakaocdn.net',B='https://t1.kakaocdn.net';function f(s){return String(s).split(A).join(B);}var w=document.write;document.write=function(s){return w.call(document,f(s));};try{var d=Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype,'src');Object.defineProperty(HTMLScriptElement.prototype,'src',{configurable:true,enumerable:d.enumerable,get:d.get,set:function(v){d.set.call(this,f(v));}});}catch(e){}})();<\/script>",
 "<script src=\"https://dapi.kakao.com/v2/maps/sdk.js?appkey=__KAKAOJSKEY__&libraries=services\"><\/script>",
 "",
 "<script>",

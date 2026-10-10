@@ -2090,8 +2090,8 @@ function updateDistanceOverlay(pos) {
 // ══════════════════════════════════════════════════
 //  지도 초기화
 // ══════════════════════════════════════════════════
-function initializeMap(center) {
-  map = new kakao.maps.Map(document.getElementById('map'), { center, level:4, minLevel:0, mapTypeId:kakao.maps.MapTypeId.HYBRID });
+function initializeMap(center, level) {
+  map = new kakao.maps.Map(document.getElementById('map'), { center, level:(level==null?4:level), minLevel:0, mapTypeId:kakao.maps.MapTypeId.HYBRID });
   setTimeout(() => document.querySelectorAll('.zoom_in,.zoom_out,.zoom_reset,.map_zoom_close').forEach(el=>el.remove()), 500);
   window.map = map;
   // Edge에서 minLevel:0이 무시될 경우 휠 이벤트로 강제 처리
@@ -2107,6 +2107,11 @@ function initializeMap(center) {
   kakao.maps.event.addListener(map, 'idle', scheduleBundleCull);
   kakao.maps.event.addListener(map, 'zoom_changed', updateTextLabelSizes); // CAD 문자 라벨 줌 연동 크기
   kakao.maps.event.addListener(map, 'idle', refreshViewFilterList);   // '필터' 켜짐 시 화면이동마다 목록 갱신
+  // 마지막 화면 위치 기억 — 다음 실행 때 기본 중심(장수)을 거치지 않고 바로 그 자리로 연다
+  kakao.maps.event.addListener(map, 'idle', () => {
+    try { const c = map.getCenter();
+      localStorage.setItem('map_view', JSON.stringify({ lat:c.getLat(), lng:c.getLng(), level:map.getLevel() })); } catch(e){}
+  });
 
   kakao.maps.event.addListener(map, 'click', e => {
     if (_blockMapClick) return;
@@ -5129,7 +5134,14 @@ window.addEventListener('beforeunload', e => {
 window.onload=()=>{
   kakao.maps.load(()=>{
     // 위치 권한 요청(사용자 위치 파악) 제거 — 매번 뜨던 권한 팝업 방지. 기본 중심으로 시작.
-    initializeMap(new kakao.maps.LatLng(35.6478,127.5213));
+    // 지난번 마지막 화면 위치(map_view)가 있으면 그 자리로, 없으면 기본 중심(장수)
+    let _c = new kakao.maps.LatLng(35.6478,127.5213), _lv = 4;
+    try { const v = JSON.parse(localStorage.getItem('map_view') || 'null');
+      if (v && Number.isFinite(v.lat) && Number.isFinite(v.lng) && Math.abs(v.lat) <= 90 && Math.abs(v.lng) <= 180) {
+        _c = new kakao.maps.LatLng(v.lat, v.lng);
+        if (Number.isFinite(v.level) && v.level >= 0 && v.level <= 14) _lv = v.level;
+      } } catch(e){}
+    initializeMap(_c, _lv);
     _installEraseDrag();      // 지우개 모드의 드래그(영역 지우기) 리스너
     _installLinkReceiver();   // '#link' 로 열렸으면 런처 htm 의 데이터를 기다린다
   });
