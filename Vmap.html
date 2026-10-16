@@ -430,6 +430,14 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
       <button onclick="openHelp()" title="도움말 (F1)">❓ 도움말</button>
     </div>
     <div style="display:flex;gap:5px;align-items:center;">
+      <button onclick="doExport()">💾 저장</button>
+      <button onclick="document.getElementById('openFileInput').click()" title="KMZ·KML·GPX·CSV·htm·사진 파일 열기 — 드래그&드롭이 안 되는 휴대폰/태블릿용">📂 열기</button>
+      <input type="file" id="openFileInput" multiple style="display:none"
+             accept=".kmz,.kml,.zip,.gpx,.bgpx,.csv,.htm,.html,image/*"
+             onchange="handleDroppedFiles(Array.from(this.files),new Map());this.value='';">
+      <label id="photoNumWrap" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="체크하면 사진명을 변경합니다 — KMZ 안에 저장되는 사진과 디스크의 원본 사진을 [KMZ 파일명]_000, _001 ... 로 바꿉니다 (원본 파일명 변경은 서버 연동 필요)">
+        <input type="checkbox" id="addPhotoNum"> 사진명 변경
+      </label>
       <select id="exportFmt" onchange="onFmtChange(this.value)">
         <option value="kmz">KMZ 내보내기</option>
         <option value="gpx">GPX 내보내기</option>
@@ -452,14 +460,6 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
         <option value="1024">1MB↓</option>
         <option value="0">원본</option>
       </select>
-      <label id="photoNumWrap" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="체크하면 사진명을 변경합니다 — KMZ 안에 저장되는 사진과 디스크의 원본 사진을 [KMZ 파일명]_000, _001 ... 로 바꿉니다 (원본 파일명 변경은 서버 연동 필요)">
-        <input type="checkbox" id="addPhotoNum"> 사진명 변경
-      </label>
-      <button onclick="doExport()">💾 저장</button>
-      <button onclick="document.getElementById('openFileInput').click()" title="KMZ·KML·GPX·CSV·htm·사진 파일 열기 — 드래그&드롭이 안 되는 휴대폰/태블릿용">📂 열기</button>
-      <input type="file" id="openFileInput" multiple style="display:none"
-             accept=".kmz,.kml,.zip,.gpx,.bgpx,.csv,.htm,.html,image/*"
-             onchange="handleDroppedFiles(Array.from(this.files),new Map());this.value='';">
       <select id="mapType" onchange="chgMapType(this.value)">
         <option value="GRAPHIC">일반지도</option>
         <option value="GRAPHIC_WHITE">백지도</option>
