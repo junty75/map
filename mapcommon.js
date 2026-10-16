@@ -2385,27 +2385,34 @@ async function _elePrepare(lines){
 }
 
 // ══════════════════════════════════════════════════
-//  🟥 검색한 토지 경계 — 주소를 검색하면 그 점이 든 필지 테두리를 빨간 선으로 (2026-10-16)
+//  🟥 검색한 토지 경계 — 주소를 검색하면 그 점이 든 필지를 빨간 면 트랙으로 목록에 넣는다 (2026-10-16)
 //   · 필지 모양은 PC 서버(사진위치표시.py)가 연속지적도 SHP(GRS80 중부)에서 찾아 준다: ws 'parcel_at' → 'parcel'.
 //     서버가 없으면(깃허브 공개 페이지만 연 경우) 표시하지 않는다.
-//   · 리·동만 검색한 경우(카카오 address_type REGION)는 필지가 아니므로 건너뛴다.
-//   · 페이지 어댑터: _parcelDraw(rings[[[lat,lng],..],..], fit) / _parcelClear()
+//   · 트랙 이름 = 찾은 주소(목록 주소칸과 같은 줄임). 일반 트랙처럼 선택·색 변경·지우기·KMZ 저장이 된다.
+//     같은 필지를 다시 검색하면 새로 넣지 않는다. 리·동만 검색한 경우(카카오 address_type REGION)는 건너뛴다.
+//   · 주소칸은 테두리 꼭짓점(옆 필지일 수 있음)이 아니라 검색한 지점으로 조회한다(item._addrPt).
+//   · 페이지 어댑터: _parcelAddTrack(rings[[[lat,lng],..],..], name, [lat,lng]) → 'added' | 'dup'
 // ══════════════════════════════════════════════════
-var _parcelSeq = 0, _parcelNoSrvSaid = false, _parcelNoShpSaid = false;
-function parcelShowAt(lat, lng, atype){
+var _parcelSeq = 0, _parcelName = '', _parcelPt = null, _parcelNoSrvSaid = false, _parcelNoShpSaid = false;
+var PARCEL_STYLE = { color: '#FF0000', width: 4, fill: '#FF0000', fillOpacity: 0.15 };
+function parcelShowAt(lat, lng, atype, name){
   parcelClear();
   if (atype === 'REGION') return;
   if (!(window.__wsReady && window.__wsReady())) {
     if (!_parcelNoSrvSaid) { _parcelNoSrvSaid = true; showSaveStatus('토지 경계 표시는 PC 서버(사진위치표시) 연결 때만 됩니다', false); }
     return;
   }
+  _parcelName = String(name || '').trim(); _parcelPt = [lat, lng];   // 검색 지점(필지 안) — 주소칸도 이 점으로
   window.__wsSend({ type: 'parcel_at', reqid: 'p' + _parcelSeq, lat: lat, lng: lng });
 }
-function parcelClear(){ _parcelSeq++; try { _parcelClear(); } catch (e) {} }
+// 기다리던 조회 취소 (새로 검색하면 늦게 온 옛 응답은 버린다)
+function parcelClear(){ _parcelSeq++; }
 function _parcelFmtArea(m2){
   return (m2 >= 1e6 ? (m2 / 1e6).toFixed(3) + ' ㎢' : Math.round(m2).toLocaleString() + ' ㎡')
     + ' (' + Math.round(m2 / 3.305785).toLocaleString() + '평)';
 }
+// 같은 필지인지 — 첫 링의 점 개수와 첫 점
+function _parcelKey(rings){ const r = rings[0] || []; return r.length + ':' + (r[0] || []).join(','); }
 window.__onParcel = d => {
   if (d.reqid !== 'p' + _parcelSeq) return;          // 다른 곳을 다시 검색한 뒤 늦게 온 응답
   if (!d.found) {
@@ -2414,6 +2421,6 @@ window.__onParcel = d => {
     } else if (d.reason === 'outside') showSaveStatus('토지 경계: 연속지적도 범위 밖이거나 필지가 없는 곳입니다', false);
     return;
   }
-  _parcelDraw(d.rings);
-  showSaveStatus('🟥 토지 경계 · 면적 ' + _parcelFmtArea(d.area || 0));
+  const r = _parcelAddTrack(d.rings, _parcelName || '토지 경계', _parcelPt);
+  showSaveStatus((r === 'dup' ? '🟥 이미 목록에 있는 필지 · ' : '🟥 토지 경계 추가 · ') + _parcelFmtArea(d.area || 0));
 };
