@@ -185,7 +185,8 @@ _apiKeyError = function(storeKey, name){
 
     /* ── 지도 영역 ── */
     #mapContainer { flex:1; position:relative; overflow:hidden; }
-    #map { width:100%; height:100%; }
+    /* z-index:0 = 지도 안 레이어(선그리기 #drawCatcher 등)가 툴바(#ctrlWrap 등 z-index 1000)를 덮지 않게 — 그리는 중에도 경로 옵션·경유지 버튼을 누를 수 있다 */
+    #map { width:100%; height:100%; position:relative; z-index:0; }
 
     /* 목록 토글 버튼 (항상 지도 왼쪽 가장자리) */
     #sidebarOpenBtn {
@@ -478,6 +479,7 @@ _apiKeyError = function(storeKey, name){
           </optgroup>
           <option value="line">직선</option>
         </select>
+        <button type="button" id="routeViaBtn" onclick="toggleRouteVia()" title="📍 경유지 — 누르고 지도를 클릭하면 그곳을 지나도록 경로를 다시 찾습니다&#10;대상: 그리는 중인 경로 → 목록에서 고른 경로 트랙 → 방금 끝낸 경로&#10;경로찾기 방식 목록을 바꾸면 같은 경로를 그 방식으로 다시 찾습니다 · Esc=취소">📍 경유지</button>
         <button type="button" id="drawColorBtn" title="선 색상 (클릭하여 팔레트에서 선택)" style="background:#FF0000;"></button>
         <select id="drawWidth" title="선 두께" style="padding:4px;">
           <option value="1">1px</option>
@@ -2135,6 +2137,7 @@ function initializeMap(center, level) {
 
   kakao.maps.event.addListener(map, 'click', e => {
     if (_blockMapClick) return;
+    if (_routeViaMode) { routeViaClick(e.latLng.getLat(), e.latLng.getLng()); return; }   // 📍 경유지
     if (textMovePending) { const f = textMovePending; cancelTextMove(); f(e.latLng); return; }   // 문자 이동 — 클릭한 자리로
     if (eraseMode) { eraseAt(e.latLng); return; }       // 지우개 — 누른 자리 근처 삭제
     if (textMode) { openTextEditor(e.latLng, null); return; }   // 문자 — 누른 자리에 입력창
@@ -3310,10 +3313,26 @@ function _drawPopPts(n) {
   else updateDistanceOverlay(currentPath[currentPath.length-1]);
 }
 
+// 끝낸 경로 트랙을 다시 찾은 좌표로 바꾼다 (옵션 변경·경유지 추가)
+function _trackSetPts(item, pts) {
+  const pl = item && item.polyline; if (!pl) return;
+  pl.setPath(pts.map(p => new kakao.maps.LatLng(p[0], p[1])));
+  renderList(); updateTrackHighlights();
+  if (pl._autoSave) autoSaveTrack(item);   // 임시트랙 파일도 같은 이름으로 덮어씀
+}
+// ⛰ 고도 조회 대상 선 [[lat,lng],..] — 면·묶음선(_parts)은 빼고
+function _plLines(pls) {
+  return pls.filter(pl => pl && !pl._isPoly && !pl._parts).flatMap(pl => pathParts(pl).map(part => part.map(p => [p.getLat(), p.getLng()])));
+}
+function _itemLines(items) {
+  return _plLines(items.filter(i => i && i.type === 'track' && i.polyline).flatMap(i => [i.polyline, ...(i.extraOverlays || [])]));
+}
+
 // ── 그리기 종료 (우클릭 / Alt 공통) ──
 let _lastDrawFinishTs = 0;
 function finishDrawing() {
   if (!drawingMode) return;
+  const _rt = _routeTake();   // 🧭 경로찾기 경유점 (옵션 변경·경유지 추가 때 다시 찾기용)
   routeDrawEnded();   // 🧭 경로찾기도 함께 끝
   _lastDrawFinishTs = Date.now();
   if (moveLine) { moveLine.setMap(null); moveLine=null; }
@@ -3328,6 +3347,7 @@ function finishDrawing() {
     if (!currentPolyline._name) currentPolyline._name = tname;
     const newItem = { type:'track', name:tname, address:'', polyline:currentPolyline, _origColor:currentPolyline._origColor };
     addItem(newItem);
+    _routeAttach(newItem, _rt);
     if(trackNameOrgActive){
       const markerItems=allItems.filter(i=>i.markerObj&&!isDefaultName(i.name));
       if(markerItems.length){
@@ -3393,8 +3413,9 @@ async function autoSaveTrack(item){
     // GPX 1.1 — 선 색·굵기는 gpx_style 확장에 담아 다시 열 때(위치로 검색 등) 그대로 보이게
     const base=fname.replace(/\.gpx$/i,'');
     const hex=((pl._origColor||'#FF0000')+'').replace('#','').toUpperCase(), w=pl._origWeight||3;
+    await _elePrepare(_plLines([pl]));   // ⛰ 고도
     const segs=pathParts(pl).filter(s=>s.length>=2).map(s=>'  <trkseg>\n'
-      +s.map(p=>`   <trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+'  </trkseg>\n').join('');
+      +s.map(p=>`   <trkpt lat="${p.getLat()}" lon="${p.getLng()}">${_eleTag(p.getLat(),p.getLng())}</trkpt>\n`).join('')+'  </trkseg>\n').join('');
     const gpx='<?xml version="1.0" encoding="UTF-8"?>\n'
       +'<gpx version="1.1" creator="JtyMap" xmlns="http://www.topografix.com/GPX/1/1"'
       +' xmlns:gpx_style="http://www.topografix.com/GPX/gpx_style/0/2">\n'
@@ -3975,6 +3996,7 @@ function handleDroppedFiles(files,_fhPromises){
           Array.from(trk.getElementsByTagName('trkseg')).forEach(seg=>{
             const pts=Array.from(seg.getElementsByTagName('trkpt')).map(pt=>{
               const ll=new kakao.maps.LatLng(parseFloat(pt.getAttribute('lat')),parseFloat(pt.getAttribute('lon')));
+              const _e=pt.getElementsByTagName('ele')[0]; if(_e)_eleSet(ll.getLat(),ll.getLng(),parseFloat(_e.textContent));   // 고도 기억
               bounds.extend(ll);return ll;
             });
             if(pts.length){
@@ -4374,6 +4396,7 @@ async function exportClusteredKMZ(scope) {
   const nnm = buildNumNameMap();
   const clusterRenames = [];   // 디스크 원본 rename 누적 (마지막에 1회 전송)
   const clusterNewNames = new Map();   // '사진명 변경'으로 바뀐 이름 누적
+  await _elePrepare(_itemLines(clusters.flatMap(c => c.items)));   // ⛰ 고도
 
   for (const { name: clusterName, items: clusterItems } of clusters) {
     const zip = new JSZip(), photoFileMap = new Map(), usedNames = new Set(), seqRef = { n: 0 };
@@ -4764,10 +4787,11 @@ async function exportGPX() {
   const am=expItems.filter(i=>i.markerObj&&i.markerObj.marker&&i.markerObj.marker.getMap()).map(i=>i.markerObj);
   const pls=[]; expItems.forEach(i=>{ if(i.type==='track') for(const pl of _itemOverlays(i)) if(pl&&(pl.getMap()||pl._viewCulled)) pls.push(pl); });
   const dest=await askSaveDest(defaultSaveName(am.at(-1)?.name?.trim()||'data'),'.gpx');if(!dest)return;
+  await _elePrepare(_plLines(pls));   // ⛰ 고도
   const fname=dest.base;
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
-  pls.forEach((pl,i)=>{const segs=pathParts(pl).map(part=>`<trkseg>\n`+part.map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name>${segs}</trk>\n`;});
+  pls.forEach((pl,i)=>{const segs=pathParts(pl).map(part=>`<trkseg>\n`+part.map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}">${_eleTag(p.getLat(),p.getLng())}</trkpt>\n`).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name>${segs}</trk>\n`;});
   am.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
   saveBlobTo(dest, new Blob([gpx],{type:'application/gpx+xml'}));
@@ -4828,7 +4852,7 @@ function _lineKmlPlacemarks(item, nnm, bounds, styles) {
       for (let path of pathParts(pl)) {
         if (bounds) path = path.filter(p => bounds.contain(p));
         if (path.length < 2) continue;
-        const coords = path.map(p => `${p.getLng()},${p.getLat()},0`).join(' ');
+        const coords = path.map(p => `${p.getLng()},${p.getLat()},${_eleAlt(p.getLat(), p.getLng())}`).join(' ');
         segs.push(`<LineString><coordinates>${coords}</coordinates></LineString>`);
       }
     }
@@ -4877,6 +4901,7 @@ async function exportKMZ() {
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   // 파일을 만들기 전에 저장 위치·파일명을 먼저 받는다 → KMZ 안 사진 이름도 확정된 이름 기준
   const dest=await askSaveDest(defaultSaveName(ds+'_지도'),'.kmz');if(!dest)return;
+  await _elePrepare(_itemLines(getFilteredItems()));   // ⛰ 고도
   const fname=dest.base;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set(),renames=[],seqRef={n:0},newNames=new Map();
@@ -4916,9 +4941,10 @@ async function exportSelectedGPX(){
   const r=getSelectedExportItems();if(!r)return;
   const{sm,sp}=r;
   const dest=await askSaveDest(defaultSaveName(sm.at(-1)?.name||'selected'),'.gpx');if(!dest)return;
+  await _elePrepare(_plLines(sp));   // ⛰ 고도
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="KakaoMap">\n';
-  sp.forEach((pl,i)=>{const segs=pathParts(pl).map(part=>`<trkseg>\n`+part.map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}"></trkpt>\n`).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name>${segs}</trk>\n`;});
+  sp.forEach((pl,i)=>{const segs=pathParts(pl).map(part=>`<trkseg>\n`+part.map(p=>`<trkpt lat="${p.getLat()}" lon="${p.getLng()}">${_eleTag(p.getLat(),p.getLng())}</trkpt>\n`).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(pl)||'path'+(i+1)}</name>${segs}</trk>\n`;});
   sm.forEach(m=>{const p=m.marker.getPosition();gpx+=`<wpt lat="${p.getLat()}" lon="${p.getLng()}"><name>${nnm?.get(m)||m.name||''}</name></wpt>\n`;});
   gpx+='</gpx>';
   saveBlobTo(dest, new Blob([gpx],{type:'application/gpx+xml'}));
@@ -4943,6 +4969,7 @@ async function exportSelectedKMZ(){
   const selItems=allItems.filter(item=>selSet.has(item));
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const dest=await askSaveDest(defaultSaveName(ds+'_선택'),'.kmz');if(!dest)return;
+  await _elePrepare(_itemLines(selItems));   // ⛰ 고도
   const fname=dest.base;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedNames=new Set(),renames=[],seqRef={n:0},newNames=new Map();

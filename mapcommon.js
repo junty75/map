@@ -934,7 +934,11 @@ function _gpxToKml(text){
   const esc=s=>String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const child=(el,tag)=>Array.from(el.children).find(c=>c.localName===tag);
   const all=(el,tag)=>Array.from(el.getElementsByTagNameNS('*',tag));
-  const ll=p=>`${p.getAttribute('lon')},${p.getAttribute('lat')},0`;
+  const ll=p=>{   // 고도(ele)가 있으면 KML 3번째 값 + 고도 캐시(저장 때 다시 씀)
+    const la=p.getAttribute('lat'),lo=p.getAttribute('lon'),e=child(p,'ele'),ev=e?parseFloat(e.textContent):NaN;
+    if(!isNaN(ev))_eleSet(parseFloat(la),parseFloat(lo),ev);
+    return `${lo},${la},${isNaN(ev)?0:ev}`;
+  };
   let styles='',pms='',sn=0;
   const line=(el,segs,idx)=>{
     segs=segs.filter(s=>s.length>=2);
@@ -2004,15 +2008,24 @@ else initRelinkDirsBtn();
 //     끝내기(우클릭·Alt)·자동저장·목록 추가는 선그리기와 같다.
 //   · 길찾기 서버 두 곳(둘 다 OpenStreetMap 도로, 키 없음, CORS 허용):
 //       OSRM    routing.openstreetmap.de/routed-{car,bike,foot} — 빠름, 옵션 없음(exclude 미지원)
-//       BRouter brouter.de — 프로필·옵션(avoid_toll, avoid_motorways 등) 지원, 조금 느림
+//       BRouter brouter.de — 프로필·옵션(avoid_toll, avoid_motorways 등) 지원, 조금 느림, 고도(ele)도 준다
 //     옵션마다 ROUTE_OPTS 의 순서대로 시도하고, 다 실패하면 그 구간만 직선으로 잇는다.
 //   · 가까운길: 최단거리 옵션이 있는 자동차 서버가 없어 후보 여러 개(OSRM 대안경로 + BRouter car-eco) 중 가장 짧은 것.
-//   · 페이지 어댑터: _drawStart() / _drawAppendPts([[lat,lng],..]) / _drawPopPts(n) / _drawLastPt() / _isDrawing() / _routeEndDraw()
+//   · 찍은 점(경유점)을 기억한다 → 옵션을 바꾸면 그 경로를 새 옵션으로 다시 찾고(그리는 중·끝낸 경로 모두),
+//     📍 경유지 로 중간에 지날 곳을 끼워 넣을 수 있다. 끝낸 경로는 item._routeWps / item._routeOpt 에 담긴다.
+//     대상: 그리는 중인 경로 → 사이드바에서 고른 경로 트랙 → 방금 끝낸 경로 순.
+//   · 페이지 어댑터: _drawStart() / _drawAppendPts([[lat,lng],..]) / _drawPopPts(n) / _drawLastPt() / _isDrawing()
+//                   / _routeEndDraw() / _trackSetPts(item, [[lat,lng],..])
 // ══════════════════════════════════════════════════
 var _routeOn = false;            // 지금 그리는 선이 경로찾기 선인지
 var _routeSegs = [];             // 클릭마다 붙인 점 개수 (되돌리기용)
+var _routeWps = [];              // 찍은 점(경유점) [[lat,lng],..] — _routeSegs 와 1:1
+var _routeScratch = true;        // 빈 선에서 시작했는지 (false = 선그리기 중 이어서 시작 → 첫 경유점은 그리던 선의 끝점)
 var _routeQ = Promise.resolve(); // 구간 요청 순서 보장
 var _routeGen = 0;               // 끝내기/취소 후 늦게 온 응답 버리기용
+var _routeLastItem = null;       // 방금 끝낸 경로 트랙 (옵션 변경·경유지 대상)
+var _routeViaMode = false;       // 📍 경유지 — 다음 지도 클릭을 경유지로
+var _routeViaUndo = [];          // 그리는 중 경유지 넣기 전 경유점 목록 (Backspace 로 되돌리기) — 넣은 뒤 찍은 점이 있으면 비움
 // 옵션 → 이름, 시도할 서버 목록  (o = OSRM 프로필, b = BRouter 프로필, p = BRouter 옵션)
 var ROUTE_OPTS = {
   fast:     { name:'빠른길',       src:[{ o:'car' }, { b:'car-fast' }] },
@@ -2034,19 +2047,29 @@ function _routeProfile(){
 function _routeUiSync(){
   const b = document.getElementById('routeBtn');
   if (b) { b.style.background = _routeOn ? '#2d6cdf' : ''; b.style.color = _routeOn ? '#fff' : ''; }
+  const v = document.getElementById('routeViaBtn');
+  if (v) { v.style.background = _routeViaMode ? '#e65100' : ''; v.style.color = _routeViaMode ? '#fff' : ''; }
 }
-// 고른 옵션 기억 (다음에 열어도 그대로)
+// 고른 옵션 기억 (다음에 열어도 그대로) + 바꾸면 지금 경로를 새 옵션으로 다시 찾기
 function _initRouteProfile(){
   const s = document.getElementById('routeProfile');
   if (!s) return;
   try { const v = localStorage.getItem('route_profile'); if (v && ROUTE_OPTS[v]) s.value = v; } catch (e) {}
   s.addEventListener('change', () => {
     try { localStorage.setItem('route_profile', s.value); } catch (e) {}
-    if (_routeOn) showSaveStatus('🧭 경로찾기 — 다음 구간부터 ' + ROUTE_OPTS[_routeProfile()].name);
+    s.blur();
+    routeOptionChanged();
   });
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _initRouteProfile);
 else _initRouteProfile();
+// 📍 경유지 고르는 중 Esc → 취소 (페이지의 Esc 처리보다 먼저)
+document.addEventListener('keydown', e => {
+  if (_routeViaMode && e.key === 'Escape') {
+    e.preventDefault(); e.stopPropagation();
+    _routeViaMode = false; _routeUiSync(); showSaveStatus('경유지 추가 취소');
+  }
+}, true);
 
 async function _routeGet(url, ms){
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
@@ -2071,6 +2094,7 @@ async function _routeAsk(s, a, b){
   const f = j && j.features && j.features[0];
   const c = f && f.geometry && f.geometry.coordinates;
   if (!c || c.length < 2) return [];
+  c.forEach(p => { if (p.length > 2) _eleSet(p[1], p[0], p[2]); });   // BRouter 는 고도를 같이 준다
   const pr = f.properties || {};
   return [{ pts: c.map(p => [p[1], p[0]]), dist: +pr['track-length'] || 0, time: +pr['total-time'] || 0 }];
 }
@@ -2088,49 +2112,256 @@ async function _routeFetch(a, b, opt){
   }
   return null;
 }
+// 구간 좌표 다듬기 — 앞 점과 같은 첫 점은 빼고, 길 끝이 찍은 점과 떨어져 있으면 마저 잇는다
+function _routeTrim(pts, last, to){
+  pts = pts ? pts.slice() : [];
+  if (pts.length && Math.abs(pts[0][0] - last[0]) < 1e-7 && Math.abs(pts[0][1] - last[1]) < 1e-7) pts.shift();
+  const e = pts[pts.length - 1];
+  if (!e || Math.abs(e[0] - to[0]) > 1e-6 || Math.abs(e[1] - to[1]) > 1e-6) pts.push([to[0], to[1]]);
+  return pts;
+}
+function _routeHav(a, b){
+  const R = 6371000, r = Math.PI / 180, dLa = (b[0] - a[0]) * r, dLo = (b[1] - a[1]) * r;
+  const h = Math.sin(dLa / 2) ** 2 + Math.cos(a[0] * r) * Math.cos(b[0] * r) * Math.sin(dLo / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function _routeLen(pts){ let d = 0; for (let i = 1; i < pts.length; i++) d += _routeHav(pts[i - 1], pts[i]); return d; }
+function _routeFmtD(d){ return d >= 1000 ? (d / 1000).toFixed(2) + 'km' : Math.round(d) + 'm'; }
 function _routeFmt(r){
-  const d = r.dist >= 1000 ? (r.dist / 1000).toFixed(2) + 'km' : Math.round(r.dist) + 'm';
   const m = Math.round(r.time / 60);
-  return d + (r.time ? ' · 약 ' + (m >= 60 ? Math.floor(m / 60) + '시간 ' + (m % 60) + '분' : Math.max(1, m) + '분') : '');
+  return _routeFmtD(r.dist) + (r.time ? ' · 약 ' + (m >= 60 ? Math.floor(m / 60) + '시간 ' + (m % 60) + '분' : Math.max(1, m) + '분') : '');
+}
+// 경유점 전체를 한 옵션으로 다시 잇기 → {pts:[[lat,lng],..](첫 경유점 포함), counts:[1, 구간1 점수, ..], fails}
+//  구간은 동시에 최대 3개씩 요청
+async function _routeBuild(wps, opt){
+  const n = wps.length - 1, res = new Array(n);
+  let next = 0;
+  const work = async () => { while (next < n) { const i = next++; res[i] = opt === 'line' ? null : await _routeFetch(wps[i], wps[i + 1], opt); } };
+  await Promise.all([work(), work(), work()]);
+  const pts = [wps[0].slice()], counts = [1];
+  let fails = 0;
+  for (let i = 0; i < n; i++) {
+    if (!res[i] && opt !== 'line') fails++;
+    const seg = _routeTrim(res[i] && res[i].pts, pts[pts.length - 1], wps[i + 1]);
+    pts.push(...seg); counts.push(seg.length);
+  }
+  return { pts, counts, fails };
 }
 // 경로찾기 버튼 — 끄기 / 선그리기 중이면 그 선을 경로찾기로 / 아니면 새로 시작
 function toggleRouteDraw(){
   if (_routeOn && _isDrawing()) { _routeOn = false; _routeUiSync(); _routeEndDraw(); return; }
   if (typeof areaMode !== 'undefined' && areaMode) stopAreaMeasure();   // 면적재기와 동시 사용 방지
   if (!_isDrawing()) _drawStart();
-  _routeOn = true; _routeSegs = []; _routeUiSync();
+  const last = _drawLastPt();
+  _routeOn = true; _routeSegs = []; _routeScratch = !last; _routeWps = last ? [last] : [];
+  _routeUiSync();
   showSaveStatus('🧭 경로찾기(' + ROUTE_OPTS[_routeProfile()].name + ') — 지도를 차례로 클릭하면 길 따라 이어집니다 · 우클릭=끝내기 · Backspace=한 점 취소');
+}
+// 페이지의 끝내기 함수에서 routeDrawEnded() 앞에 불러 경유점을 받아 둔다 → 만든 항목에 _routeAttach
+function _routeTake(){
+  return (_routeOn && _routeScratch && _routeWps.length >= 2) ? { wps: _routeWps.map(p => p.slice()), opt: _routeProfile() } : null;
+}
+function _routeAttach(item, rt){
+  if (!item || !rt) return;
+  item._routeWps = rt.wps; item._routeOpt = rt.opt; _routeLastItem = item;
 }
 // 선그리기가 끝날 때(페이지의 끝내기 함수에서) 부른다
 function routeDrawEnded(){
   _routeGen++; _routeQ = Promise.resolve();
-  _routeOn = false; _routeSegs = []; _routeUiSync();
+  _routeOn = false; _routeSegs = []; _routeWps = []; _routeViaMode = false; _routeViaUndo = []; _routeUiSync();
 }
-// 지도 클릭 → 앞 점에서 이 점까지 길 따라 붙이기
+// 지도 클릭 → 앞 점에서 이 점까지 길 따라 붙이기 (📍 경유지 고르는 중이면 경유지로)
 function routeClick(lat, lng){
+  if (_routeViaMode) { routeViaClick(lat, lng); return; }
   const gen = _routeGen, prof = _routeProfile();
   _routeQ = _routeQ.then(async () => {
     if (gen !== _routeGen || !_isDrawing()) return;
     const last = _drawLastPt();
-    if (!last) { _drawAppendPts([[lat, lng]]); _routeSegs.push(1); return; }
-    let pts = null;
+    if (!last) { _drawAppendPts([[lat, lng]]); _routeSegs.push(1); _routeWps.push([lat, lng]); return; }
+    let r = null;
     if (prof !== 'line') {
       showSaveStatus('🧭 경로 계산 중… (' + ROUTE_OPTS[prof].name + ')');
-      const r = await _routeFetch(last, [lat, lng], prof);
+      r = await _routeFetch(last, [lat, lng], prof);
       if (gen !== _routeGen || !_isDrawing()) return;
       if (!r) showSaveStatus('⚠️ 길을 찾지 못해 이 구간은 직선으로 이었습니다', false);
-      else { showSaveStatus('🧭 ' + ROUTE_OPTS[prof].name + ' 구간 ' + _routeFmt(r)); pts = r.pts.slice(); }
+      else showSaveStatus('🧭 ' + ROUTE_OPTS[prof].name + ' 구간 ' + _routeFmt(r));
     }
-    if (pts) {
-      const s = pts[0];                                    // 앞 점과 같은 첫 점은 빼기
-      if (Math.abs(s[0] - last[0]) < 1e-7 && Math.abs(s[1] - last[1]) < 1e-7) pts.shift();
-      const e = pts[pts.length - 1];                       // 길 끝에서 클릭 지점까지 떨어져 있으면 마저 잇기
-      if (!e || Math.abs(e[0] - lat) > 1e-6 || Math.abs(e[1] - lng) > 1e-6) pts.push([lat, lng]);
-    } else pts = [[lat, lng]];
-    _drawAppendPts(pts); _routeSegs.push(pts.length);
+    const pts = _routeTrim(r && r.pts, last, [lat, lng]);
+    _drawAppendPts(pts); _routeSegs.push(pts.length); _routeWps.push([lat, lng]);
+    _routeViaUndo = [];
   });
 }
 // Backspace/Esc/Ctrl+Z — 마지막 클릭 한 번 몫(구간 전체)을 지운다
 function routeUndo(){
-  _routeQ = _routeQ.then(() => { if (_isDrawing() && _drawLastPt()) _drawPopPts(_routeSegs.length ? _routeSegs.pop() : 1); });
+  if (_routeViaUndo.length) {                     // 방금 넣은 경유지부터 되돌린다
+    const prev = _routeViaUndo.pop();
+    _routeQ = _routeQ.then(() => { _routeWps = prev; });
+    _routeRedoDrawing(_routeProfile(), '경유지 빼고 다시 찾는 중…');
+    return;
+  }
+  _routeQ = _routeQ.then(() => {
+    if (!_isDrawing() || !_drawLastPt()) return;
+    _drawPopPts(_routeSegs.length ? _routeSegs.pop() : 1);
+    if (_routeWps.length > (_routeScratch ? 0 : 1)) _routeWps.pop();
+  });
+}
+
+// ── 그리는 중인 경로 전체를 다시 찾기 (옵션 변경·경유지 추가) ──
+function _routeRedoDrawing(opt, why){
+  const gen = _routeGen;
+  _routeQ = _routeQ.then(async () => {
+    if (gen !== _routeGen || !_isDrawing() || _routeWps.length < 2) return;
+    const name = ROUTE_OPTS[opt].name;
+    showSaveStatus('🧭 ' + (why || name + '(으)로 다시 찾는 중…') + ' (' + (_routeWps.length - 1) + '구간)');
+    const b = await _routeBuild(_routeWps, opt);
+    if (gen !== _routeGen || !_isDrawing()) return;
+    _drawPopPts(_routeSegs.reduce((s, n) => s + n, 0));
+    let pts = b.pts, counts = b.counts;
+    if (!_routeScratch) { pts = pts.slice(1); counts = counts.slice(1); }   // 첫 경유점 = 그리던 선의 끝점(이미 있음)
+    _drawAppendPts(pts); _routeSegs = counts;
+    showSaveStatus('🧭 ' + name + ' 경로 · 총 ' + _routeFmtD(_routeLen(b.pts))
+      + (b.fails ? ' · ⚠️ ' + b.fails + '구간은 길을 못 찾아 직선' : ''), !b.fails);
+  });
+}
+// ── 끝낸 경로 트랙 다시 찾기 ──
+async function _routeRedoItem(item, opt, why){
+  const name = ROUTE_OPTS[opt].name;
+  showSaveStatus('🧭 ' + (why || '"' + (item.name || '경로') + '" ' + name + '(으)로 다시 찾는 중…'));
+  const b = await _routeBuild(item._routeWps, opt);
+  if (!allItems.includes(item)) return;
+  item._routeOpt = opt;
+  _trackSetPts(item, b.pts);
+  showSaveStatus('🧭 "' + (item.name || '경로') + '" ' + name + ' 경로 · 총 ' + _routeFmtD(_routeLen(b.pts))
+    + (b.fails ? ' · ⚠️ ' + b.fails + '구간은 길을 못 찾아 직선' : ''), !b.fails);
+}
+// 대상 경로 트랙 — 사이드바에서 고른 경로 트랙들, 없으면 방금 끝낸 경로
+function _routeTargets(){
+  let sel = [];
+  try { sel = [...selectedItems].map(i => getFilteredItems()[i]).filter(it => it && it.type === 'track' && it._routeWps); } catch (e) {}
+  if (sel.length) return sel;
+  return (_routeLastItem && allItems.includes(_routeLastItem)) ? [_routeLastItem] : [];
+}
+// 옵션 목록을 바꿨을 때
+function routeOptionChanged(){
+  const opt = _routeProfile();
+  if (_routeOn && _isDrawing()) {
+    if (_routeWps.length >= 2) _routeRedoDrawing(opt);
+    else showSaveStatus('🧭 경로찾기 — ' + ROUTE_OPTS[opt].name);
+    return;
+  }
+  if (_isDrawing()) return;
+  const items = _routeTargets();
+  if (!items.length) { showSaveStatus('🧭 ' + ROUTE_OPTS[opt].name + ' — 다음 경로찾기부터 적용'); return; }
+  (async () => { for (const it of items) await _routeRedoItem(it, opt); })();
+}
+
+// ── 📍 경유지 — 지도에서 고른 곳을 경로 중간에 끼워 넣고 다시 찾기 ──
+function toggleRouteVia(){
+  if (_routeViaMode) { _routeViaMode = false; _routeUiSync(); return; }
+  const drawingRoute = _routeOn && _isDrawing();
+  if (drawingRoute ? _routeWps.length < 2 : !_routeTargets().length) {
+    showSaveStatus('📍 경유지를 넣을 경로가 없습니다 — 🧭 경로찾기로 먼저 경로를 만들거나 목록에서 경로를 고르세요', false);
+    return;
+  }
+  _routeViaMode = true; _routeUiSync();
+  showSaveStatus('📍 경유지로 지날 곳을 지도에서 클릭하세요 (Esc=취소)');
+}
+// 끼워 넣을 자리 — 돌아가는 거리가 가장 적게 늘어나는 구간 뒤 (첫 경유점 앞에는 넣지 않음)
+function _routeViaIndex(wps, p){
+  let best = 1, bestAdd = Infinity;
+  for (let i = 0; i < wps.length - 1; i++) {
+    const add = _routeHav(wps[i], p) + _routeHav(p, wps[i + 1]) - _routeHav(wps[i], wps[i + 1]);
+    if (add < bestAdd) { bestAdd = add; best = i + 1; }
+  }
+  return best;
+}
+// 지도 클릭이 경유지 고르기 중이면 페이지가 이걸 부른다 (그리는 중이면 routeClick 이 넘겨줌)
+function routeViaClick(lat, lng){
+  _routeViaMode = false; _routeUiSync();
+  const p = [lat, lng], opt = _routeProfile();
+  if (_routeOn && _isDrawing()) {
+    _routeQ = _routeQ.then(() => { _routeViaUndo.push(_routeWps.map(q => q.slice())); _routeWps.splice(_routeViaIndex(_routeWps, p), 0, p); });
+    _routeRedoDrawing(opt, '경유지 넣고 다시 찾는 중…');
+    return;
+  }
+  const it = _routeTargets()[0];
+  if (!it) return;
+  it._routeWps.splice(_routeViaIndex(it._routeWps, p), 0, p);
+  _routeRedoItem(it, it._routeOpt && ROUTE_OPTS[it._routeOpt] ? it._routeOpt : opt, '경유지 넣고 다시 찾는 중…');
+}
+
+// ══════════════════════════════════════════════════
+//  ⛰ 고도 — 트랙을 GPX·KMZ 로 저장할 때 점마다 고도(ele)를 넣는다 (2026-10-16)
+//   · 고도를 아는 점(BRouter 경로, 고도 있는 GPX 를 열었을 때)은 _eleCache 에 담아 그대로 쓴다.
+//   · 모르는 점은 Open-Meteo 고도 API(api.open-meteo.com/v1/elevation — Copernicus 90m DEM, 키 없음, CORS 허용)로
+//     30m 마다 한 점씩만 묻고 사이 점은 거리 비례로 채운다(요청 1번에 100점, 동시 4개).
+//   · 물을 점이 30,000개를 넘거나 조회에 실패하면 고도 없이(GPX ele 없음 / KML 0) 저장된다.
+//   · 쓰는 법: 저장 직전 await _elePrepare(lines)  (lines = [[[lat,lng],..], ..]) → _eleTag(lat,lng) / _eleAlt(lat,lng)
+// ══════════════════════════════════════════════════
+var _eleCache = new Map();
+var ELE_MAX_ASK = 30000;
+function _eleKey(lat, lng){ return (+lat).toFixed(6) + ',' + (+lng).toFixed(6); }
+function _eleSet(lat, lng, e){ e = +e; if (isFinite(e) && !isNaN(lat) && !isNaN(lng)) _eleCache.set(_eleKey(lat, lng), Math.round(e * 10) / 10); }
+function _eleOf(lat, lng){ const v = _eleCache.get(_eleKey(lat, lng)); return v == null ? null : v; }
+function _eleTag(lat, lng){ const v = _eleOf(lat, lng); return v == null ? '' : '<ele>' + v + '</ele>'; }
+function _eleAlt(lat, lng){ const v = _eleOf(lat, lng); return v == null ? 0 : v; }
+async function _eleAsk(keys){
+  const n = keys.length;
+  let next = 0, done = 0, failed = 0;
+  const work = async () => {
+    while (next < n) {
+      const part = keys.slice(next, next + 100); next += 100;
+      const la = part.map(k => k.split(',')[0]).join(','), lo = part.map(k => k.split(',')[1]).join(',');
+      const j = await _routeGet('https://api.open-meteo.com/v1/elevation?latitude=' + la + '&longitude=' + lo, 20000);
+      if (j && Array.isArray(j.elevation) && j.elevation.length === part.length)
+        part.forEach((k, i) => { const v = j.elevation[i]; if (v != null && isFinite(v)) _eleCache.set(k, Math.round(v * 10) / 10); });
+      else failed += part.length;
+      done += part.length;
+      if (n > 300) showSaveStatus('⛰ 고도 조회 중… ' + Math.min(done, n) + ' / ' + n);
+    }
+  };
+  await Promise.all([work(), work(), work(), work()]);
+  return failed;
+}
+// 선들의 모든 점 고도를 _eleCache 에 채운다 (이미 아는 점은 건너뜀)
+async function _elePrepare(lines){
+  lines = (lines || []).filter(l => l && l.length);
+  if (!lines.length) return;
+  const ask = new Set(), plans = [];
+  for (const l of lines) {
+    const known = l.map(p => _eleOf(p[0], p[1]) != null);
+    if (known.every(Boolean)) continue;
+    const pick = [];                         // 물어볼 점(30m 간격 + 처음·끝)
+    let acc = Infinity;
+    for (let i = 0; i < l.length; i++) {
+      if (i > 0) acc += _routeHav(l[i - 1], l[i]);
+      if (known[i]) { acc = 0; continue; }
+      if (acc >= 30 || i === l.length - 1) { pick.push(i); acc = 0; }
+    }
+    pick.forEach(i => ask.add(_eleKey(l[i][0], l[i][1])));
+    plans.push(l);
+  }
+  if (!plans.length) return;
+  if (ask.size > ELE_MAX_ASK) { showSaveStatus('⚠️ 점이 너무 많아(' + ask.size + ') 고도 없이 저장합니다', false); return; }
+  if (ask.size) {
+    showSaveStatus('⛰ 고도 조회 중… (' + ask.size + '점)');
+    const failed = await _eleAsk([...ask]);
+    if (failed) showSaveStatus('⚠️ 고도 조회 일부 실패(' + failed + '점) — 그 부분은 앞뒤 값으로 채웁니다', false);
+  }
+  // 사이 점 채우기 — 앞뒤로 아는 점의 고도를 거리 비례로
+  for (const l of plans) {
+    const d = [0];
+    for (let i = 1; i < l.length; i++) d.push(d[i - 1] + _routeHav(l[i - 1], l[i]));
+    let prev = -1;
+    for (let i = 0; i < l.length; i++) {
+      if (_eleOf(l[i][0], l[i][1]) == null) continue;
+      if (prev < 0) { for (let k = 0; k < i; k++) _eleSet(l[k][0], l[k][1], _eleOf(l[i][0], l[i][1])); }
+      else if (i - prev > 1) {
+        const e0 = _eleOf(l[prev][0], l[prev][1]), e1 = _eleOf(l[i][0], l[i][1]), span = (d[i] - d[prev]) || 1;
+        for (let k = prev + 1; k < i; k++) _eleSet(l[k][0], l[k][1], e0 + (e1 - e0) * (d[k] - d[prev]) / span);
+      }
+      prev = i;
+    }
+    if (prev >= 0) for (let k = prev + 1; k < l.length; k++) _eleSet(l[k][0], l[k][1], _eleOf(l[prev][0], l[prev][1]));
+  }
 }

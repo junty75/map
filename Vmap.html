@@ -416,6 +416,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
         </optgroup>
         <option value="line">직선</option>
       </select>
+      <button type="button" id="routeViaBtn" onclick="toggleRouteVia()" title="📍 경유지 — 누르고 지도를 클릭하면 그곳을 지나도록 경로를 다시 찾습니다&#10;대상: 그리는 중인 경로 → 목록에서 고른 경로 트랙 → 방금 끝낸 경로&#10;경로찾기 방식 목록을 바꾸면 같은 경로를 그 방식으로 다시 찾습니다 · Esc=취소">📍 경유지</button>
       <button type="button" id="drawColorBtn" title="선 색상 (클릭하여 팔레트에서 선택)" style="background:#FF0000;"></button>
       <select id="drawWidth" title="선 두께" style="padding:4px;">
         <option value="1">1px</option>
@@ -1372,6 +1373,7 @@ function mapClick(evt) {
   // CSS scale 확대 중엔 OL이 주는 픽셀/좌표가 어긋나므로 직접 보정
   let pixel = evt.pixel, coord = evt.coordinate;
   if (cssScale > 1 && evt.originalEvent) { pixel = evtScaledPixel(evt.originalEvent); coord = vmap.getCoordinateFromPixel(pixel); }
+  if (_routeViaMode && !drawing) { const vl = fromMerc(coord); routeViaClick(vl[1], vl[0]); return; }   // 📍 경유지
   // 위치로 검색 — ①중심점 클릭 ②반경 정하고 다시 클릭
   if (locPickMode === 'center') {
     locCenter = coord.slice();
@@ -1625,6 +1627,7 @@ function startDraw() {
 }
 function endDraw() {
   if (!drawing) return;
+  const _rt=_routeTake();   // 🧭 경로찾기 경유점 (옵션 변경·경유지 추가 때 다시 찾기용)
   routeDrawEnded();   // 🧭 경로찾기도 함께 끝
   drawing=false; clearGuide();
   document.getElementById('vmap').classList.remove('draw-mode');
@@ -1635,6 +1638,7 @@ function endDraw() {
     const name = `트랙${++trackCounter}`;
     const item = {type:'track', name, address:'', polyLyr:drawLayer};
     allItems.push(item);
+    _routeAttach(item,_rt);
     if(trackNameOrgActive){
       const markerItems=allItems.filter(i=>i.mkObj&&!isDefaultName(i.name));
       if(markerItems.length){
@@ -1666,6 +1670,21 @@ function _routeEndDraw(){ endDraw(); }
 function _drawLastPt(){ const c=drawCoords[drawCoords.length-1]; if(!c) return null; const ll=fromMerc(c); return [ll[1], ll[0]]; }
 function _drawAppendPts(pts){ pts.forEach(p=>drawCoords.push(toMerc(p[1], p[0]))); refreshDraw(); }
 function _drawPopPts(n){ drawCoords.splice(Math.max(0, drawCoords.length-n)); refreshDraw(); if(!drawCoords.length) clearGuide(); }
+// 끝낸 경로 트랙을 다시 찾은 좌표로 바꾼다 (옵션 변경·경유지 추가)
+function _trackSetPts(item, pts){
+  const l=item&&item.polyLyr; if(!l) return;
+  const cs=pts.map(p=>toMerc(p[1], p[0]));
+  const f=l.getSource().getFeatures().find(f=>f.getGeometry() instanceof ol.geom.LineString);
+  if(f) f.getGeometry().setCoordinates(cs);
+  else { const nf=new ol.Feature(new ol.geom.LineString(cs)); nf.setStyle(lineSt(l._color||'#FF0000', l._width||3)); l.getSource().addFeature(nf); }
+  l._coords=cs.slice();
+  renderList(); if(typeof updateTrackHighlights==='function') updateTrackHighlights();
+  if(l._autoSave) autoSaveTrackV(item);   // 임시트랙 파일도 같은 이름으로 덮어씀
+}
+// ⛰ 고도 조회 대상 선 [[lat,lng],..] — 면·묶음선(여러 선 레이어)은 빼고
+function _lyrLines(ls){
+  return ls.filter(l=>l&&!polyParts(l).length&&coordParts(l).length===1).map(l=>coordParts(l)[0].map(c=>{const ll=fromMerc(c);return [ll[1], ll[0]];}));
+}
 // ══════════════════════════════════════════════════
 //  임시트랙 자동저장 (map.html 과 같은 동작)
 //  새로 그린 선(과 그 선을 수정한 것)을 따로 저장하지 않아도 '임시트랙 저장폴더'에 GPX 로 저장한다.
@@ -1709,8 +1728,9 @@ async function autoSaveTrackV(item){
     // GPX 1.1 — 선 색·굵기는 gpx_style 확장에 담아 다시 열 때(위치로 검색 등) 그대로 보이게
     const base=fname.replace(/\.gpx$/i,'');
     const hex=((lyr._color||item._origColor||'#FF0000')+'').replace('#','').toUpperCase(), w=lyr._width||item._origWeight||3;
+    await _elePrepare(_lyrLines([lyr]));   // ⛰ 고도
     const segs=coordParts(lyr).filter(s=>s.length>=2).map(s=>'  <trkseg>\n'
-      +s.map(c=>{const ll=fromMerc(c);return `   <trkpt lat="${ll[1]}" lon="${ll[0]}"></trkpt>\n`;}).join('')+'  </trkseg>\n').join('');
+      +s.map(c=>{const ll=fromMerc(c);return `   <trkpt lat="${ll[1]}" lon="${ll[0]}">${_eleTag(ll[1],ll[0])}</trkpt>\n`;}).join('')+'  </trkseg>\n').join('');
     if(!segs)return;
     const gpx='<?xml version="1.0" encoding="UTF-8"?>\n'
       +'<gpx version="1.1" creator="JtyMap" xmlns="http://www.topografix.com/GPX/1/1"'
@@ -1849,6 +1869,7 @@ function _lineKmlPlacemarksV(item,nnm,ext,styles){
     su=`<styleUrl>#${styles.get(key).id}</styleUrl>`;
   }
   const c2s=cs=>cs.map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},0`;}).join(' ');
+  const c2sL=cs=>cs.map(c=>{const ll=fromMerc(c);return`${ll[0]},${ll[1]},${_eleAlt(ll[1],ll[0])}`;}).join(' ');   // 선: 고도 포함
   const segs=[];
   // 면: 첫 링=외곽(outerBoundaryIs), 나머지=구멍(innerBoundaryIs)
   for(let rs of rings){
@@ -1866,13 +1887,13 @@ function _lineKmlPlacemarksV(item,nnm,ext,styles){
     let cs=gm.getCoordinates();
     if(ext)cs=cs.filter(c=>ol.extent.containsCoordinate(ext,c));
     if(cs.length<2)continue;
-    segs.push(`<LineString><coordinates>${c2s(cs)}</coordinates></LineString>`);
+    segs.push(`<LineString><coordinates>${c2sL(cs)}</coordinates></LineString>`);
   }
   if(!segs.length&&!isPg){   // 피처가 없던 옛 레이어(_coords만) 대비
     for(let cs of coordParts(l)){
       if(ext)cs=cs.filter(c=>ol.extent.containsCoordinate(ext,c));
       if(cs.length<2)continue;
-      segs.push(`<LineString><coordinates>${c2s(cs)}</coordinates></LineString>`);
+      segs.push(`<LineString><coordinates>${c2sL(cs)}</coordinates></LineString>`);
     }
   }
   if(!segs.length)return'';
@@ -3449,7 +3470,7 @@ function loadGPX(file){
     Array.from(xml.getElementsByTagName('trk')).forEach(trk=>{
       const trkName=trk.getElementsByTagName('name')[0]?.textContent?.trim()||`트랙${++trackCounter}`;
       Array.from(trk.getElementsByTagName('trkseg')).forEach(seg=>{
-        const cs=Array.from(seg.getElementsByTagName('trkpt')).map(pt=>{const lo=parseFloat(pt.getAttribute('lon')),la=parseFloat(pt.getAttribute('lat'));return(!isNaN(lo)&&!isNaN(la))?toMerc(lo,la):null;}).filter(Boolean);
+        const cs=Array.from(seg.getElementsByTagName('trkpt')).map(pt=>{const lo=parseFloat(pt.getAttribute('lon')),la=parseFloat(pt.getAttribute('lat'));const _e=pt.getElementsByTagName('ele')[0];if(_e)_eleSet(la,lo,parseFloat(_e.textContent));return(!isNaN(lo)&&!isNaN(la))?toMerc(lo,la):null;}).filter(Boolean);
         if(cs.length>=2){
           const lyr=mkLineLyr(cs,randColor(),4);addLyr(lyr);polylines.push(lyr);pts.push(...cs);
           const item={type:'track',name:trkName,address:'',polyLyr:lyr};
@@ -3945,6 +3966,7 @@ async function exportClusteredKMZ_V(){
   const nnm=buildNumNameMap();
   const clusterRenames=[];   // 디스크 원본 rename 누적 (마지막에 1회 전송)
   const clusterNewNames=new Map();   // '사진명 변경'으로 바뀐 이름 누적
+  await _elePrepare(_lyrLines(clusters.flatMap(c=>c.items).filter(i=>i.polyLyr).map(i=>i.polyLyr)));   // ⛰ 고도
   for(const {name:clusterName,items:clusterItems} of clusters){
     const zip=new JSZip(),photoFileMap=new Map(),usedFn=new Set(),seqRef={n:0};
     for(const item of clusterItems){
@@ -4174,9 +4196,10 @@ async function exportGPX(){
   const ms=items.filter(i=>i.mkObj).map(i=>i.mkObj);
   const ls=items.filter(i=>i.polyLyr).map(i=>i.polyLyr);
   const dest=await askSaveDest(await defName(ms),'.gpx');if(!dest)return;
+  await _elePrepare(_lyrLines(ls));   // ⛰ 고도
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="VWorldMap">\n';
-  ls.forEach((l,i)=>{const segs=coordParts(l).map(cs=>`<trkseg>\n`+cs.map(c=>{const ll=fromMerc(c);return`<trkpt lat="${ll[1]}" lon="${ll[0]}"></trkpt>\n`;}).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(l)||'path'+(i+1)}</name>${segs}</trk>\n`;});
+  ls.forEach((l,i)=>{const segs=coordParts(l).map(cs=>`<trkseg>\n`+cs.map(c=>{const ll=fromMerc(c);return`<trkpt lat="${ll[1]}" lon="${ll[0]}">${_eleTag(ll[1],ll[0])}</trkpt>\n`;}).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(l)||'path'+(i+1)}</name>${segs}</trk>\n`;});
   ms.forEach(m=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());gpx+=`<wpt lat="${ll[1]}" lon="${ll[0]}"><name>${nnm?.get(m)||m.name}</name></wpt>\n`;});
   gpx+='</gpx>';saveBlobTo(dest,new Blob([gpx],{type:'application/gpx+xml'}));
 }
@@ -4215,6 +4238,7 @@ async function exportKMZ(){
   const ms=visItems.filter(i=>i.mkObj).map(i=>i.mkObj);
   // 파일을 만들기 전에 저장 위치·파일명을 먼저 받는다 → KMZ 안 사진 이름도 확정된 이름 기준
   const dest=await askSaveDest(await defName(ms),'.kmz');if(!dest)return;
+  await _elePrepare(_lyrLines(visItems.filter(i=>i.polyLyr).map(i=>i.polyLyr)));   // ⛰ 고도
   const fname=dest.base;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedFn=new Set(),renames=[],seqRef={n:0},newNames=new Map();
@@ -4249,9 +4273,10 @@ function getSelectedExportItems(){
 async function exportSelectedGPX(){
   const r=getSelectedExportItems();if(!r)return;const{ms,ls}=r;
   const dest=await askSaveDest(defaultSaveName(ms.at(-1)?.name||'selected'),'.gpx');if(!dest)return;
+  await _elePrepare(_lyrLines(ls));   // ⛰ 고도
   const nnm=buildNumNameMap();
   let gpx='<?xml version="1.0" encoding="UTF-8"?><gpx version="1.1" creator="VWorldMap">\n';
-  ls.forEach((l,i)=>{const segs=coordParts(l).map(cs=>`<trkseg>\n`+cs.map(c=>{const ll=fromMerc(c);return`<trkpt lat="${ll[1]}" lon="${ll[0]}"></trkpt>\n`;}).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(l)||'path'+(i+1)}</name>${segs}</trk>\n`;});
+  ls.forEach((l,i)=>{const segs=coordParts(l).map(cs=>`<trkseg>\n`+cs.map(c=>{const ll=fromMerc(c);return`<trkpt lat="${ll[1]}" lon="${ll[0]}">${_eleTag(ll[1],ll[0])}</trkpt>\n`;}).join('')+`</trkseg>\n`).join('');gpx+=`<trk><name>${nnm?.get(l)||'path'+(i+1)}</name>${segs}</trk>\n`;});
   ms.forEach(m=>{const ll=fromMerc(m.feat.getGeometry().getCoordinates());gpx+=`<wpt lat="${ll[1]}" lon="${ll[0]}"><name>${nnm?.get(m)||m.name}</name></wpt>\n`;});
   gpx+='</gpx>';saveBlobTo(dest,new Blob([gpx],{type:'application/gpx+xml'}));
 }
@@ -4271,6 +4296,7 @@ async function exportSelectedKMZ(){
   const selItems=allItems.filter(item=>selSet.has(item));
   const now=new Date(),ds=now.getFullYear()+(now.getMonth()+1+'').padStart(2,'0')+(now.getDate()+'').padStart(2,'0');
   const dest=await askSaveDest(defaultSaveName(ds+'_선택'),'.kmz');if(!dest)return;
+  await _elePrepare(_lyrLines(selItems.filter(i=>i.polyLyr).map(i=>i.polyLyr)));   // ⛰ 고도
   const fname=dest.base;
   const nnm=buildNumNameMap();
   const zip=new JSZip(),photoFileMap=new Map(),usedFn=new Set(),renames=[],seqRef={n:0},newNames=new Map();
