@@ -1319,6 +1319,7 @@ document.getElementById('search-form').addEventListener('submit', async e => {
     feat.setStyle(new ol.style.Style({ image: new ol.style.Icon({ src:'https://map.vworld.kr/images/ol3/marker_blue.png', anchor:[0.5,1], scale:1.1 }) }));
     const lyr = new ol.layer.Vector({ source: new ol.source.Vector({ features:[feat] }), zIndex:100 });
     vmap.addLayer(lyr); searchMarker = { feat, lyr };
+    parcelShowAt(result.lat, result.lng, result.atype);   // 🟥 검색한 토지 경계 (연속지적도)
   };
   // 1) 카카오 — 장수군 → 전북 → 나머지 순, 여러 곳이면 목록에서 선택 (jusoSearch)
   const res = await jusoSearch(q);
@@ -1493,7 +1494,7 @@ function mapRightClick(e) {
   if (_tf) { openTextEditor(null, _tf); return; }
   if (searchMarker) {
     const hit = vmap.forEachFeatureAtPixel(px, feat => feat===searchMarker.feat, { hitTolerance:14 });
-    if (hit) { vmap.removeLayer(searchMarker.lyr); searchMarker=null; return; }
+    if (hit) { vmap.removeLayer(searchMarker.lyr); searchMarker=null; parcelClear(); return; }
   }
   let hitMk = false;
   vmap.forEachFeatureAtPixel(px, feat => {
@@ -1685,6 +1686,26 @@ function _trackSetPts(item, pts){
 function _trackPtsOf(item){
   const l=item&&item.polyLyr; if(!l) return null;
   const L=_lyrLines([l]); return (L.length===1&&L[0].length>=2)?L[0]:null;
+}
+// 🟥 검색한 토지 경계 — 흰 테두리 위에 빨간 선(위성·일반지도 모두 잘 보이게) + 옅은 빨강 채움.
+//   목록·내보내기·지우개 대상이 아니다(polylines 에 넣지 않음).
+let _parcelLyr=null;
+function _parcelClear(){ if(_parcelLyr){ removeLyr(_parcelLyr); _parcelLyr=null; } }
+function _parcelDraw(rings){
+  _parcelClear();
+  const rs=rings.map(r=>r.map(p=>toMerc(p[1], p[0])));
+  const src=new ol.source.Vector();
+  const pg=new ol.Feature(new ol.geom.Polygon(rs));
+  pg.setStyle(new ol.style.Style({fill:new ol.style.Fill({color:'rgba(255,0,0,0.12)'})}));
+  src.addFeature(pg);
+  rs.forEach(r=>{
+    const f=new ol.Feature(new ol.geom.LineString(r.concat([r[0]])));
+    f.setStyle([new ol.style.Style({stroke:new ol.style.Stroke({color:'rgba(255,255,255,0.9)',width:7})}),
+                new ol.style.Style({stroke:new ol.style.Stroke({color:'#FF0000',width:4})})]);
+    src.addFeature(f);
+  });
+  _parcelLyr=new ol.layer.Vector({source:src, zIndex:95});
+  addLyr(_parcelLyr);
 }
 // ⛰ 고도 조회 대상 선 [[lat,lng],..] — 면·묶음선(여러 선 레이어)은 빼고
 function _lyrLines(ls){
@@ -2876,6 +2897,7 @@ function copyAndMark(){
 /* 초기화 */
 function resetLines(){polylines.forEach(l=>removeLyr(l));polylines=[];clearTextLabelsV();allItems=allItems.filter(i=>i.type!=='track');if(drawing)endDraw();renderList();}
 function resetAll(){
+  parcelClear();   // 🟥 검색한 토지 경계
   closeAllPopups();closeInputOv();stopRoadviewPick();
   markers.forEach(m=>removeLyr(m.lyr));markers=[];
   polylines.forEach(l=>removeLyr(l));polylines=[];clearTextLabelsV();
@@ -5471,6 +5493,8 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
               : (d.folder||''));
           if((d.type==='save_path'&&!d.path)||(d.type==='save_folder'&&!d.folder))
             setBadge(true,'저장 취소됨');
+        } else if(d.type==='parcel'){
+          if(window.__onParcel)window.__onParcel(d);   // 🟥 검색한 토지 경계
         } else if(d.type==='relink_dirs'){
           if(window.__onRelinkDirs)window.__onRelinkDirs(d);   // 📁 경로폴더 창 결과
         } else if(d.type==='track_autosaved'||d.type==='temp_track_dir'){

@@ -2252,7 +2252,8 @@ function initializeMap(center, level) {
       map.setCenter(pos);
       if (searchMarker) searchMarker.setMap(null);
       searchMarker=new kakao.maps.Marker({map,position:pos});
-      kakao.maps.event.addListener(searchMarker,'rightclick',()=>{searchMarker.setMap(null);searchMarker=null;});
+      kakao.maps.event.addListener(searchMarker,'rightclick',()=>{searchMarker.setMap(null);searchMarker=null;parcelClear();});
+      parcelShowAt(d.lat, d.lng, d.atype);   // 🟥 검색한 토지 경계 (연속지적도)
     };
     go(res.list[0]);
     jusoShowPicker(document.getElementById('search-form'), res, go);
@@ -3326,6 +3327,24 @@ function _trackPtsOf(item) {
   const parts = pathParts(pl);
   return (parts.length === 1 && parts[0].length >= 2) ? parts[0].map(p => [p.getLat(), p.getLng()]) : null;
 }
+// 🟥 검색한 토지 경계 — 흰 테두리 위에 빨간 선(위성·일반지도 모두 잘 보이게) + 옅은 빨강 채움.
+//   목록·내보내기·지우개 대상이 아니다(polylines 에 넣지 않음).
+let _parcelShapes = [];
+function _parcelClear() { _parcelShapes.forEach(o => o.setMap(null)); _parcelShapes = []; }
+function _parcelDraw(rings) {
+  _parcelClear();
+  const paths = rings.map(r => r.map(p => new kakao.maps.LatLng(p[0], p[1])));
+  _parcelShapes.push(new kakao.maps.Polygon({ map, path: paths, strokeWeight: 0, fillColor: '#FF0000', fillOpacity: 0.12, zIndex: 5 }));
+  paths.forEach(pa => {
+    const ring = pa.concat([pa[0]]);
+    _parcelShapes.push(new kakao.maps.Polyline({ map, path: ring, strokeWeight: 7, strokeColor: '#FFFFFF', strokeOpacity: 0.9, zIndex: 6 }));
+    _parcelShapes.push(new kakao.maps.Polyline({ map, path: ring, strokeWeight: 4, strokeColor: '#FF0000', strokeOpacity: 1, zIndex: 7 }));
+  });
+  if (map.getLevel() > 3) {   // 멀리서 검색 → 필지가 잘 보이게 확대 (브이월드 판은 검색 때 17레벨로 확대)
+    const b = new kakao.maps.LatLngBounds(); paths[0].forEach(p => b.extend(p));
+    map.setBounds(b, 150, 150, 150, 150);
+  }
+}
 // ⛰ 고도 조회 대상 선 [[lat,lng],..] — 면·묶음선(_parts)은 빼고
 function _plLines(pls) {
   return pls.filter(pl => pl && !pl._isPoly && !pl._parts).flatMap(pl => pathParts(pl).map(part => part.map(p => [p.getLat(), p.getLng()])));
@@ -3550,6 +3569,7 @@ const resetPolylines=()=>{
 };
 
 const resetAll=()=>{
+  parcelClear();   // 🟥 검색한 토지 경계
   const hadKmz = allItems.some(i => i._srcKmz || i._live);
   markers.forEach(m=>{m.iw.close();m.marker.setMap(null);}); markers=[];
   polylines.forEach(p=>p.setMap(null)); polylines=[]; clearTextLabels();
@@ -5591,6 +5611,8 @@ window.onload=()=>{
               : (d.folder || ''));
           if ((d.type === 'save_path' && !d.path) || (d.type === 'save_folder' && !d.folder))
             setBadge(true, '저장 취소됨');
+        } else if (d.type === 'parcel') {
+          if (window.__onParcel) window.__onParcel(d);   // 🟥 검색한 토지 경계
         } else if (d.type === 'relink_dirs') {
           if (window.__onRelinkDirs) window.__onRelinkDirs(d);   // 📁 경로폴더 창 결과
         } else if (d.type === 'track_autosaved' || d.type === 'temp_track_dir') {

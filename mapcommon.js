@@ -524,7 +524,8 @@ async function _jusoCollect(api, q) {
       name: r.place_name || '',
       addr: r.address_name || '',
       road: r.road_address_name || (r.road_address && r.road_address.address_name) || '',
-      lat: parseFloat(r.y), lng: parseFloat(r.x)
+      lat: parseFloat(r.y), lng: parseFloat(r.x),
+      atype: r.address_type || ''   // REGION = 리·동만 (필지 아님 → 토지 경계 안 그림)
     };
     if (!isFinite(d.lat) || !isFinite(d.lng)) continue;
     const k = d.name + '|' + d.addr + '|' + r.x + '|' + r.y;
@@ -2382,3 +2383,37 @@ async function _elePrepare(lines){
     if (prev >= 0) for (let k = prev + 1; k < l.length; k++) _eleSet(l[k][0], l[k][1], _eleOf(l[prev][0], l[prev][1]));
   }
 }
+
+// ══════════════════════════════════════════════════
+//  🟥 검색한 토지 경계 — 주소를 검색하면 그 점이 든 필지 테두리를 빨간 선으로 (2026-10-16)
+//   · 필지 모양은 PC 서버(사진위치표시.py)가 연속지적도 SHP(GRS80 중부)에서 찾아 준다: ws 'parcel_at' → 'parcel'.
+//     서버가 없으면(깃허브 공개 페이지만 연 경우) 표시하지 않는다.
+//   · 리·동만 검색한 경우(카카오 address_type REGION)는 필지가 아니므로 건너뛴다.
+//   · 페이지 어댑터: _parcelDraw(rings[[[lat,lng],..],..], fit) / _parcelClear()
+// ══════════════════════════════════════════════════
+var _parcelSeq = 0, _parcelNoSrvSaid = false, _parcelNoShpSaid = false;
+function parcelShowAt(lat, lng, atype){
+  parcelClear();
+  if (atype === 'REGION') return;
+  if (!(window.__wsReady && window.__wsReady())) {
+    if (!_parcelNoSrvSaid) { _parcelNoSrvSaid = true; showSaveStatus('토지 경계 표시는 PC 서버(사진위치표시) 연결 때만 됩니다', false); }
+    return;
+  }
+  window.__wsSend({ type: 'parcel_at', reqid: 'p' + _parcelSeq, lat: lat, lng: lng });
+}
+function parcelClear(){ _parcelSeq++; try { _parcelClear(); } catch (e) {} }
+function _parcelFmtArea(m2){
+  return (m2 >= 1e6 ? (m2 / 1e6).toFixed(3) + ' ㎢' : Math.round(m2).toLocaleString() + ' ㎡')
+    + ' (' + Math.round(m2 / 3.305785).toLocaleString() + '평)';
+}
+window.__onParcel = d => {
+  if (d.reqid !== 'p' + _parcelSeq) return;          // 다른 곳을 다시 검색한 뒤 늦게 온 응답
+  if (!d.found) {
+    if (d.reason === 'no_shp') {
+      if (!_parcelNoShpSaid) { _parcelNoShpSaid = true; showSaveStatus('⚠️ 연속지적도 SHP(LSMD_CONT_LDREG_*.shp)가 없어 토지 경계를 표시하지 않습니다', false); }
+    } else if (d.reason === 'outside') showSaveStatus('토지 경계: 연속지적도 범위 밖이거나 필지가 없는 곳입니다', false);
+    return;
+  }
+  _parcelDraw(d.rings);
+  showSaveStatus('🟥 토지 경계 · 면적 ' + _parcelFmtArea(d.area || 0));
+};
