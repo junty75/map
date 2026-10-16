@@ -1997,3 +1997,80 @@ window.__onRelinkDirs = d => {
 };
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initRelinkDirsBtn);
 else initRelinkDirsBtn();
+
+// ══════════════════════════════════════════════════
+//  🧭 경로찾기 — gpx.studio 처럼 찍은 점 사이를 길 따라 잇는다 (2026-10-16)
+//   · 선그리기를 그대로 쓰고, 클릭할 때마다 앞 점→새 점 구간을 길찾기 서버에서 받아 붙인다.
+//     끝내기(우클릭·Alt)·자동저장·목록 추가는 선그리기와 같다.
+//   · 길찾기: FOSSGIS OSRM(routing.openstreetmap.de — OpenStreetMap 도로, 키 없음, CORS 허용).
+//     실패하면 그 구간만 직선으로 잇는다.
+//   · 페이지 어댑터: _drawStart() / _drawAppendPts([[lat,lng],..]) / _drawPopPts(n) / _drawLastPt() / _isDrawing() / _routeEndDraw()
+// ══════════════════════════════════════════════════
+var _routeOn = false;            // 지금 그리는 선이 경로찾기 선인지
+var _routeSegs = [];             // 클릭마다 붙인 점 개수 (되돌리기용)
+var _routeQ = Promise.resolve(); // 구간 요청 순서 보장
+var _routeGen = 0;               // 끝내기/취소 후 늦게 온 응답 버리기용
+var ROUTE_PROFILES = { foot:'도보', bike:'자전거', car:'자동차', line:'직선' };
+
+function _routeProfile(){
+  const s = document.getElementById('routeProfile');
+  return (s && s.value) || 'foot';
+}
+function _routeUiSync(){
+  const b = document.getElementById('routeBtn');
+  if (b) { b.style.background = _routeOn ? '#2d6cdf' : ''; b.style.color = _routeOn ? '#fff' : ''; }
+}
+// 두 점 사이 길 따라 좌표 [[lat,lng],..] — 실패하면 null
+async function _routeFetch(a, b, profile){
+  if (profile === 'line') return null;
+  const url = 'https://routing.openstreetmap.de/routed-' + profile + '/route/v1/driving/'
+    + a[1] + ',' + a[0] + ';' + b[1] + ',' + b[0] + '?overview=full&geometries=geojson';
+  const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 15000);
+  try {
+    const r = await fetch(url, { signal: ctl.signal });
+    const j = await r.json();
+    const c = j && j.code === 'Ok' && j.routes && j.routes[0] && j.routes[0].geometry.coordinates;
+    return (c && c.length >= 2) ? c.map(p => [p[1], p[0]]) : null;
+  } catch (e) { console.warn('[경로찾기] 길찾기 실패', e); return null; }
+  finally { clearTimeout(t); }
+}
+// 경로찾기 버튼 — 끄기 / 선그리기 중이면 그 선을 경로찾기로 / 아니면 새로 시작
+function toggleRouteDraw(){
+  if (_routeOn && _isDrawing()) { _routeOn = false; _routeUiSync(); _routeEndDraw(); return; }
+  if (typeof areaMode !== 'undefined' && areaMode) stopAreaMeasure();   // 면적재기와 동시 사용 방지
+  if (!_isDrawing()) _drawStart();
+  _routeOn = true; _routeSegs = []; _routeUiSync();
+  showSaveStatus('🧭 경로찾기(' + ROUTE_PROFILES[_routeProfile()] + ') — 지도를 차례로 클릭하면 길 따라 이어집니다 · 우클릭=끝내기 · Backspace=한 점 취소');
+}
+// 선그리기가 끝날 때(페이지의 끝내기 함수에서) 부른다
+function routeDrawEnded(){
+  _routeGen++; _routeQ = Promise.resolve();
+  _routeOn = false; _routeSegs = []; _routeUiSync();
+}
+// 지도 클릭 → 앞 점에서 이 점까지 길 따라 붙이기
+function routeClick(lat, lng){
+  const gen = _routeGen, prof = _routeProfile();
+  _routeQ = _routeQ.then(async () => {
+    if (gen !== _routeGen || !_isDrawing()) return;
+    const last = _drawLastPt();
+    if (!last) { _drawAppendPts([[lat, lng]]); _routeSegs.push(1); return; }
+    let pts = null;
+    if (prof !== 'line') {
+      showSaveStatus('🧭 경로 계산 중…');
+      pts = await _routeFetch(last, [lat, lng], prof);
+      if (gen !== _routeGen || !_isDrawing()) return;
+      if (!pts) showSaveStatus('⚠️ 길을 찾지 못해 이 구간은 직선으로 이었습니다', false);
+      else showSaveStatus('🧭 경로 추가 (' + ROUTE_PROFILES[prof] + ')');
+    }
+    if (pts) {
+      pts = pts.slice(1);                                  // 앞 점(=지금 마지막 점)과 겹치는 첫 점 빼기
+      const e = pts[pts.length - 1];                       // 길 끝에서 클릭 지점까지 떨어져 있으면 마저 잇기
+      if (!e || Math.abs(e[0] - lat) > 1e-6 || Math.abs(e[1] - lng) > 1e-6) pts.push([lat, lng]);
+    } else pts = [[lat, lng]];
+    _drawAppendPts(pts); _routeSegs.push(pts.length);
+  });
+}
+// Backspace/Esc/Ctrl+Z — 마지막 클릭 한 번 몫(구간 전체)을 지운다
+function routeUndo(){
+  _routeQ = _routeQ.then(() => { if (_isDrawing() && _drawLastPt()) _drawPopPts(_routeSegs.length ? _routeSegs.pop() : 1); });
+}

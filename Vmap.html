@@ -226,7 +226,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
    윗줄 오른쪽에 남던 빈칸을 좌표표시창이 채운다 (#latlng-box 의 flex:1) */
 .controls{display:flex;flex-direction:column;align-items:stretch;gap:4px;background:#fff;padding:6px 8px;border-radius:5px;box-shadow:0 2px 6px rgba(0,0,0,.3);}
 .controls button,.controls select,.controls input{padding:4px 7px;font-size:12px;font-family:inherit;border:1px solid #ccc;border-radius:4px;cursor:pointer;}
-/* 패널 밖 떠 있는 버튼줄 (지우개 / 면적재기 / 지적도) */
+/* 패널 밖 떠 있는 버튼줄 (지우개 / 로드뷰·도움말 / 지적도) */
 #eraseRow,.float-row{display:flex;gap:6px;align-items:center;}
 #eraseRow button,.float-row button{padding:5px 11px;font-size:12px;font-family:inherit;border:none;border-radius:6px;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.3);cursor:pointer;white-space:nowrap;}
 #polyMenu{display:none;position:fixed;z-index:9999;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);min-width:140px;overflow:hidden;}
@@ -398,9 +398,15 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
   <div class="controls">
     <div style="display:flex;gap:5px;align-items:center;">
       <input id="latlng-box" readonly style="flex:1;min-width:178px;" title="클릭하여 복사" onclick="copyLL(this)">
-      <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
-      <button onclick="openHelp()" title="도움말 (F1)">❓ 도움말</button>
       <button id="drawBtn" onclick="toggleDraw()">선 그리기(Alt)</button>
+      <button id="areaBtn" onclick="toggleAreaMeasure()" title="클릭으로 꼭짓점 찍기 · 우클릭으로 확정 · 버튼 다시 누르면 지우고 종료">면적재기</button>
+      <button type="button" id="routeBtn" onclick="toggleRouteDraw()" title="경로찾기 — 지도를 차례로 클릭하면 점 사이를 길(OpenStreetMap 도로) 따라 잇습니다&#10;우클릭=끝내기(목록에 트랙으로 추가) · Backspace=한 점 취소&#10;선 그리기 중에 누르면 그 선을 이어서 길 따라 그립니다">🧭 경로찾기</button>
+      <select id="routeProfile" title="경로찾기 방식" style="padding:4px;">
+        <option value="foot" selected>도보</option>
+        <option value="bike">자전거</option>
+        <option value="car">자동차</option>
+        <option value="line">직선</option>
+      </select>
       <button type="button" id="drawColorBtn" title="선 색상 (클릭하여 팔레트에서 선택)" style="background:#FF0000;"></button>
       <select id="drawWidth" title="선 두께" style="padding:4px;">
         <option value="1">1px</option>
@@ -457,7 +463,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
       </select>
     </div>
   </div>
-  <!-- 흰 패널 밖, 오른쪽 끝에 세로로: 지우개 → 면적재기 → 지적도
+  <!-- 흰 패널 밖, 오른쪽 끝에 세로로: 지우개 → 로드뷰·도움말 → 지적도
        (되돌리기는 지우개 왼쪽에, 지우개로 지운 게 있을 때만) -->
   <div id="eraseRow">
     <button id="eraseUndoBtn" onclick="undoErase()" style="display:none;" title="방금 지운 것부터 하나씩 되살립니다">↩️ 되돌리기</button>
@@ -465,7 +471,8 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
     <button id="eraseBtn" onclick="toggleEraseMode()" title="켜고 지도를 클릭하면 그 자리 근처 객체가 지워집니다 · 축소해서 누르면 근처 여러 개가 한 번에 · 버튼 다시 누르면 종료">🧽 지우개</button>
   </div>
   <div class="float-row">
-    <button id="areaBtn" onclick="toggleAreaMeasure()" title="클릭으로 꼭짓점 찍기 · 우클릭으로 확정 · 버튼 다시 누르면 지우고 종료">면적재기</button>
+    <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
+    <button onclick="openHelp()" title="도움말 (F1)">❓ 도움말</button>
   </div>
   <div class="float-row">
     <button id="cadastralBtn" onclick="toggleCadastral()" title="지적도 켜기/끄기">🗺️ 지적도</button>
@@ -1396,7 +1403,10 @@ function mapClick(evt) {
   if (textMode) { openTextEditor(coord,null); return; }   // 문자 — 누른 자리에 입력창
   if (textEditOv) { closeTextEditor(); return; }          // 열려 있던 입력창은 지도 클릭으로 닫기
   if (areaMode) { areaAddPointV(coord); return; }   // 면적재기 꼭짓점 추가
-  if (drawing) { drawCoords.push(coord); refreshDraw(); return; }
+  if (drawing) {
+    if (_routeOn) { const rl = fromMerc(coord); routeClick(rl[1], rl[0]); return; }   // 🧭 경로찾기 — 길 따라 잇기
+    drawCoords.push(coord); refreshDraw(); return;
+  }
   let hit = false;
   vmap.forEachFeatureAtPixel(pixel, feat => {
     if (hit) return;
@@ -1608,6 +1618,7 @@ function startDraw() {
 }
 function endDraw() {
   if (!drawing) return;
+  routeDrawEnded();   // 🧭 경로찾기도 함께 끝
   drawing=false; clearGuide();
   document.getElementById('vmap').classList.remove('draw-mode');
   document.getElementById('drawBtn').textContent='선 그리기(Alt)';
@@ -1641,6 +1652,13 @@ function endDraw() {
   } else if (drawLayer) removeLyr(drawLayer);
   drawLayer=null; drawCoords=[];
 }
+// ── 🧭 경로찾기 어댑터 (mapcommon.js 의 routeClick/routeUndo 가 부름) ──
+function _isDrawing(){ return drawing; }
+function _drawStart(){ startDraw(); }
+function _routeEndDraw(){ endDraw(); }
+function _drawLastPt(){ const c=drawCoords[drawCoords.length-1]; if(!c) return null; const ll=fromMerc(c); return [ll[1], ll[0]]; }
+function _drawAppendPts(pts){ pts.forEach(p=>drawCoords.push(toMerc(p[1], p[0]))); refreshDraw(); }
+function _drawPopPts(n){ drawCoords.splice(Math.max(0, drawCoords.length-n)); refreshDraw(); if(!drawCoords.length) clearGuide(); }
 // ══════════════════════════════════════════════════
 //  임시트랙 자동저장 (map.html 과 같은 동작)
 //  새로 그린 선(과 그 선을 수정한 것)을 따로 저장하지 않아도 '임시트랙 저장폴더'에 GPX 로 저장한다.
@@ -2519,6 +2537,7 @@ document.addEventListener('keydown', e => {
     }
     return;
   }
+  if (drawing&&_routeOn&&(e.key==='Backspace'||e.key==='Escape'||(e.ctrlKey&&e.key.toLowerCase()==='z'))){e.preventDefault();routeUndo();return;}   // 🧭 경로찾기 — 구간 단위로 취소
   if (drawing&&(e.key==='Backspace'||e.key==='Escape'||(e.ctrlKey&&e.key.toLowerCase()==='z'))){e.preventDefault();drawCoords.pop();refreshDraw();if(!drawCoords.length)clearGuide();return;}
   if (!drawing&&e.ctrlKey&&e.key.toLowerCase()==='z'&&!e.target.matches('input,textarea,select')){e.preventDefault();doUndo();return;}
   if (!drawing&&e.ctrlKey&&(e.key.toLowerCase()==='y'||(e.shiftKey&&e.key.toLowerCase()==='z'))&&!e.target.matches('input,textarea,select')){e.preventDefault();doRedo();return;}
