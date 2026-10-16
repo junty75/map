@@ -2012,10 +2012,10 @@ else initRelinkDirsBtn();
 //     옵션마다 ROUTE_OPTS 의 순서대로 시도하고, 다 실패하면 그 구간만 직선으로 잇는다.
 //   · 가까운길: 최단거리 옵션이 있는 자동차 서버가 없어 후보 여러 개(OSRM 대안경로 + BRouter car-eco) 중 가장 짧은 것.
 //   · 찍은 점(경유점)을 기억한다 → 옵션을 바꾸면 그 경로를 새 옵션으로 다시 찾고(그리는 중·끝낸 경로 모두),
-//     📍 경유지 로 중간에 지날 곳을 끼워 넣을 수 있다. 끝낸 경로는 item._routeWps / item._routeOpt 에 담긴다.
-//     대상: 그리는 중인 경로 → 사이드바에서 고른 경로 트랙 → 방금 끝낸 경로 순.
+//     끝낸 경로는 item._routeWps / item._routeOpt 에 담긴다. 옵션 변경 대상: 그리는 중인 경로 → 사이드바에서 고른 경로 트랙 → 방금 끝낸 경로 순.
+//   · 사이드바에서 트랙을 고르고 지도를 우클릭 → 경유지 추가 / 출발지 변경 / 도착지 변경 (routeCtxMenu)
 //   · 페이지 어댑터: _drawStart() / _drawAppendPts([[lat,lng],..]) / _drawPopPts(n) / _drawLastPt() / _isDrawing()
-//                   / _routeEndDraw() / _trackSetPts(item, [[lat,lng],..])
+//                   / _routeEndDraw() / _trackSetPts(item, [[lat,lng],..]) / _trackPtsOf(item)
 // ══════════════════════════════════════════════════
 var _routeOn = false;            // 지금 그리는 선이 경로찾기 선인지
 var _routeSegs = [];             // 클릭마다 붙인 점 개수 (되돌리기용)
@@ -2024,8 +2024,6 @@ var _routeScratch = true;        // 빈 선에서 시작했는지 (false = 선�
 var _routeQ = Promise.resolve(); // 구간 요청 순서 보장
 var _routeGen = 0;               // 끝내기/취소 후 늦게 온 응답 버리기용
 var _routeLastItem = null;       // 방금 끝낸 경로 트랙 (옵션 변경·경유지 대상)
-var _routeViaMode = false;       // 📍 경유지 — 다음 지도 클릭을 경유지로
-var _routeViaUndo = [];          // 그리는 중 경유지 넣기 전 경유점 목록 (Backspace 로 되돌리기) — 넣은 뒤 찍은 점이 있으면 비움
 // 옵션 → 이름, 시도할 서버 목록  (o = OSRM 프로필, b = BRouter 프로필, p = BRouter 옵션)
 var ROUTE_OPTS = {
   fast:     { name:'빠른길',       src:[{ o:'car' }, { b:'car-fast' }] },
@@ -2047,8 +2045,6 @@ function _routeProfile(){
 function _routeUiSync(){
   const b = document.getElementById('routeBtn');
   if (b) { b.style.background = _routeOn ? '#2d6cdf' : ''; b.style.color = _routeOn ? '#fff' : ''; }
-  const v = document.getElementById('routeViaBtn');
-  if (v) { v.style.background = _routeViaMode ? '#e65100' : ''; v.style.color = _routeViaMode ? '#fff' : ''; }
 }
 // 고른 옵션 기억 (다음에 열어도 그대로) + 바꾸면 지금 경로를 새 옵션으로 다시 찾기
 function _initRouteProfile(){
@@ -2063,14 +2059,6 @@ function _initRouteProfile(){
 }
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _initRouteProfile);
 else _initRouteProfile();
-// 📍 경유지 고르는 중 Esc → 취소 (페이지의 Esc 처리보다 먼저)
-document.addEventListener('keydown', e => {
-  if (_routeViaMode && e.key === 'Escape') {
-    e.preventDefault(); e.stopPropagation();
-    _routeViaMode = false; _routeUiSync(); showSaveStatus('경유지 추가 취소');
-  }
-}, true);
-
 async function _routeGet(url, ms){
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
   try { const r = await fetch(url, { signal: ctl.signal }); return r.ok ? await r.json() : null; }
@@ -2168,11 +2156,10 @@ function _routeAttach(item, rt){
 // 선그리기가 끝날 때(페이지의 끝내기 함수에서) 부른다
 function routeDrawEnded(){
   _routeGen++; _routeQ = Promise.resolve();
-  _routeOn = false; _routeSegs = []; _routeWps = []; _routeViaMode = false; _routeViaUndo = []; _routeUiSync();
+  _routeOn = false; _routeSegs = []; _routeWps = []; _routeUiSync();
 }
-// 지도 클릭 → 앞 점에서 이 점까지 길 따라 붙이기 (📍 경유지 고르는 중이면 경유지로)
+// 지도 클릭 → 앞 점에서 이 점까지 길 따라 붙이기
 function routeClick(lat, lng){
-  if (_routeViaMode) { routeViaClick(lat, lng); return; }
   const gen = _routeGen, prof = _routeProfile();
   _routeQ = _routeQ.then(async () => {
     if (gen !== _routeGen || !_isDrawing()) return;
@@ -2188,17 +2175,10 @@ function routeClick(lat, lng){
     }
     const pts = _routeTrim(r && r.pts, last, [lat, lng]);
     _drawAppendPts(pts); _routeSegs.push(pts.length); _routeWps.push([lat, lng]);
-    _routeViaUndo = [];
   });
 }
 // Backspace/Esc/Ctrl+Z — 마지막 클릭 한 번 몫(구간 전체)을 지운다
 function routeUndo(){
-  if (_routeViaUndo.length) {                     // 방금 넣은 경유지부터 되돌린다
-    const prev = _routeViaUndo.pop();
-    _routeQ = _routeQ.then(() => { _routeWps = prev; });
-    _routeRedoDrawing(_routeProfile(), '경유지 빼고 다시 찾는 중…');
-    return;
-  }
   _routeQ = _routeQ.then(() => {
     if (!_isDrawing() || !_drawLastPt()) return;
     _drawPopPts(_routeSegs.length ? _routeSegs.pop() : 1);
@@ -2255,18 +2235,9 @@ function routeOptionChanged(){
   (async () => { for (const it of items) await _routeRedoItem(it, opt); })();
 }
 
-// ── 📍 경유지 — 지도에서 고른 곳을 경로 중간에 끼워 넣고 다시 찾기 ──
-function toggleRouteVia(){
-  if (_routeViaMode) { _routeViaMode = false; _routeUiSync(); return; }
-  const drawingRoute = _routeOn && _isDrawing();
-  if (drawingRoute ? _routeWps.length < 2 : !_routeTargets().length) {
-    showSaveStatus('📍 경유지를 넣을 경로가 없습니다 — 🧭 경로찾기로 먼저 경로를 만들거나 목록에서 경로를 고르세요', false);
-    return;
-  }
-  _routeViaMode = true; _routeUiSync();
-  showSaveStatus('📍 경유지로 지날 곳을 지도에서 클릭하세요 (Esc=취소)');
-}
-// 끼워 넣을 자리 — 돌아가는 거리가 가장 적게 늘어나는 구간 뒤 (첫 경유점 앞에는 넣지 않음)
+// ── 사이드바에서 고른 트랙 + 지도 우클릭 → 경유지 추가 / 출발지 변경 / 도착지 변경 ──
+//   우클릭한 곳을 경유지(돌아가는 거리가 가장 적게 늘어나는 구간에 끼움)·출발지·도착지로 바꾸고 다시 찾는다.
+//   길찾기로 만든 트랙이 아니면(직접 그린 선·열어 온 GPS 트랙) 물어본 뒤 시작점→끝점 경로로 새로 찾는다.
 function _routeViaIndex(wps, p){
   let best = 1, bestAdd = Infinity;
   for (let i = 0; i < wps.length - 1; i++) {
@@ -2275,19 +2246,65 @@ function _routeViaIndex(wps, p){
   }
   return best;
 }
-// 지도 클릭이 경유지 고르기 중이면 페이지가 이걸 부른다 (그리는 중이면 routeClick 이 넘겨줌)
-function routeViaClick(lat, lng){
-  _routeViaMode = false; _routeUiSync();
-  const p = [lat, lng], opt = _routeProfile();
-  if (_routeOn && _isDrawing()) {
-    _routeQ = _routeQ.then(() => { _routeViaUndo.push(_routeWps.map(q => q.slice())); _routeWps.splice(_routeViaIndex(_routeWps, p), 0, p); });
-    _routeRedoDrawing(opt, '경유지 넣고 다시 찾는 중…');
-    return;
+function _routeSelTrack(){
+  try { return [...selectedItems].map(i => getFilteredItems()[i]).find(it => it && it.type === 'track') || null; }
+  catch (e) { return null; }
+}
+function _routeCtxClose(){
+  const m = document.getElementById('routeCtxMenu');
+  if (m) m.remove();
+  document.removeEventListener('mousedown', _routeCtxOutside, true);
+  document.removeEventListener('keydown', _routeCtxKey, true);
+}
+function _routeCtxOutside(e){ const m = document.getElementById('routeCtxMenu'); if (m && !m.contains(e.target)) _routeCtxClose(); }
+function _routeCtxKey(e){ if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _routeCtxClose(); } }
+// 지도 우클릭에서 부른다 — 메뉴를 띄웠으면 true (페이지는 원래 우클릭 동작을 건너뜀)
+function routeCtxMenu(x, y, lat, lng){
+  if (_isDrawing()) return false;
+  const it = _routeSelTrack();
+  if (!it || !_trackPtsOf(it)) return false;
+  _routeCtxClose();
+  const m = document.createElement('div');
+  m.id = 'routeCtxMenu';
+  m.style.cssText = 'position:fixed;z-index:100000;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);overflow:hidden;min-width:170px;font-size:14px;';
+  const head = document.createElement('div');
+  head.style.cssText = 'padding:7px 14px;background:#f1f3f4;color:#555;font-size:12px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;';
+  head.textContent = '🧭 ' + (it.name || '트랙') + (it._routeOpt && ROUTE_OPTS[it._routeOpt] ? ' · ' + ROUTE_OPTS[it._routeOpt].name : '');
+  m.appendChild(head);
+  [['via', '📍 경유지 추가'], ['start', '🚩 출발지 변경'], ['end', '🏁 도착지 변경'], ['', '✕ 취소']].forEach(([k, t]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = t;
+    b.style.cssText = 'display:block;width:100%;padding:11px 16px;border:none;background:none;text-align:left;font-size:14px;cursor:pointer;font-family:inherit;';
+    b.onmouseenter = () => { b.style.background = '#e8f0fe'; };
+    b.onmouseleave = () => { b.style.background = 'none'; };
+    b.onclick = e => { e.stopPropagation(); _routeCtxClose(); if (k) _routeEditWp(it, k, [lat, lng]); };
+    m.appendChild(b);
+  });
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.min(x, innerWidth - r.width - 6) + 'px';
+  m.style.top = Math.min(y, innerHeight - r.height - 6) + 'px';
+  setTimeout(() => {
+    document.addEventListener('mousedown', _routeCtxOutside, true);
+    document.addEventListener('keydown', _routeCtxKey, true);
+  }, 0);
+  return true;
+}
+async function _routeEditWp(it, kind, p){
+  if (!it._routeWps || it._routeWps.length < 2) {
+    const pts = _trackPtsOf(it);
+    if (!pts || pts.length < 2) return;
+    if (!confirm('"' + (it.name || '트랙') + '" 은(는) 경로찾기로 만든 트랙이 아닙니다.\n'
+      + '시작점→끝점을 ' + ROUTE_OPTS[_routeProfile()].name + ' 경로로 새로 찾아 이 트랙을 바꿀까요?')) return;
+    it._routeWps = [pts[0], pts[pts.length - 1]];
+    it._routeOpt = _routeProfile();
   }
-  const it = _routeTargets()[0];
-  if (!it) return;
-  it._routeWps.splice(_routeViaIndex(it._routeWps, p), 0, p);
-  _routeRedoItem(it, it._routeOpt && ROUTE_OPTS[it._routeOpt] ? it._routeOpt : opt, '경유지 넣고 다시 찾는 중…');
+  const w = it._routeWps;
+  if (kind === 'via') w.splice(_routeViaIndex(w, p), 0, p);
+  else if (kind === 'start') w[0] = p;
+  else w[w.length - 1] = p;
+  const why = { via: '경유지 넣고', start: '출발지 바꾸고', end: '도착지 바꾸고' }[kind] + ' 다시 찾는 중…';
+  await _routeRedoItem(it, it._routeOpt && ROUTE_OPTS[it._routeOpt] ? it._routeOpt : _routeProfile(), why);
 }
 
 // ══════════════════════════════════════════════════

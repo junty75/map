@@ -479,7 +479,6 @@ _apiKeyError = function(storeKey, name){
           </optgroup>
           <option value="line">직선</option>
         </select>
-        <button type="button" id="routeViaBtn" onclick="toggleRouteVia()" title="📍 경유지 — 누르고 지도를 클릭하면 그곳을 지나도록 경로를 다시 찾습니다&#10;대상: 그리는 중인 경로 → 목록에서 고른 경로 트랙 → 방금 끝낸 경로&#10;경로찾기 방식 목록을 바꾸면 같은 경로를 그 방식으로 다시 찾습니다 · Esc=취소">📍 경유지</button>
         <button type="button" id="drawColorBtn" title="선 색상 (클릭하여 팔레트에서 선택)" style="background:#FF0000;"></button>
         <select id="drawWidth" title="선 두께" style="padding:4px;">
           <option value="1">1px</option>
@@ -2137,7 +2136,6 @@ function initializeMap(center, level) {
 
   kakao.maps.event.addListener(map, 'click', e => {
     if (_blockMapClick) return;
-    if (_routeViaMode) { routeViaClick(e.latLng.getLat(), e.latLng.getLng()); return; }   // 📍 경유지
     if (textMovePending) { const f = textMovePending; cancelTextMove(); f(e.latLng); return; }   // 문자 이동 — 클릭한 자리로
     if (eraseMode) { eraseAt(e.latLng); return; }       // 지우개 — 누른 자리 근처 삭제
     if (textMode) { openTextEditor(e.latLng, null); return; }   // 문자 — 누른 자리에 입력창
@@ -2230,7 +2228,8 @@ function initializeMap(center, level) {
       }
     });
     if (nearestPoly && nearestDist<=10) showPolyMenu(lastClientX, lastClientY, nearestPoly);
-    else showMarkerInput(e.latLng);
+    // 빈 곳 우클릭 + 사이드바에서 트랙을 골라 둠 → 경유지 추가 / 출발지 변경 / 도착지 변경 (선·마커·글자 위는 원래 메뉴)
+    else if (!routeCtxMenu(lastClientX, lastClientY, e.latLng.getLat(), e.latLng.getLng())) showMarkerInput(e.latLng);
   });
 
   function ptSegDist(p,a,b) {
@@ -3319,6 +3318,13 @@ function _trackSetPts(item, pts) {
   pl.setPath(pts.map(p => new kakao.maps.LatLng(p[0], p[1])));
   renderList(); updateTrackHighlights();
   if (pl._autoSave) autoSaveTrack(item);   // 임시트랙 파일도 같은 이름으로 덮어씀
+}
+// 한 줄짜리 선 트랙의 좌표 [[lat,lng],..] — 면·묶음선은 null (우클릭 경유지·출발지·도착지 메뉴용)
+function _trackPtsOf(item) {
+  const pl = item && item.polyline;
+  if (!pl || pl._isPoly || pl._parts || (item.extraOverlays && item.extraOverlays.length)) return null;
+  const parts = pathParts(pl);
+  return (parts.length === 1 && parts[0].length >= 2) ? parts[0].map(p => [p.getLat(), p.getLng()]) : null;
 }
 // ⛰ 고도 조회 대상 선 [[lat,lng],..] — 면·묶음선(_parts)은 빼고
 function _plLines(pls) {

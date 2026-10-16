@@ -416,7 +416,6 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
         </optgroup>
         <option value="line">직선</option>
       </select>
-      <button type="button" id="routeViaBtn" onclick="toggleRouteVia()" title="📍 경유지 — 누르고 지도를 클릭하면 그곳을 지나도록 경로를 다시 찾습니다&#10;대상: 그리는 중인 경로 → 목록에서 고른 경로 트랙 → 방금 끝낸 경로&#10;경로찾기 방식 목록을 바꾸면 같은 경로를 그 방식으로 다시 찾습니다 · Esc=취소">📍 경유지</button>
       <button type="button" id="drawColorBtn" title="선 색상 (클릭하여 팔레트에서 선택)" style="background:#FF0000;"></button>
       <select id="drawWidth" title="선 두께" style="padding:4px;">
         <option value="1">1px</option>
@@ -1373,7 +1372,6 @@ function mapClick(evt) {
   // CSS scale 확대 중엔 OL이 주는 픽셀/좌표가 어긋나므로 직접 보정
   let pixel = evt.pixel, coord = evt.coordinate;
   if (cssScale > 1 && evt.originalEvent) { pixel = evtScaledPixel(evt.originalEvent); coord = vmap.getCoordinateFromPixel(pixel); }
-  if (_routeViaMode && !drawing) { const vl = fromMerc(coord); routeViaClick(vl[1], vl[0]); return; }   // 📍 경유지
   // 위치로 검색 — ①중심점 클릭 ②반경 정하고 다시 클릭
   if (locPickMode === 'center') {
     locCenter = coord.slice();
@@ -1506,6 +1504,8 @@ function mapRightClick(e) {
   if (hitMk) return;
   const nearPoly = findNearPoly(px, 10);
   if (nearPoly) { showPolyMenu(lastCX||e.clientX, lastCY||e.clientY, nearPoly); return; }
+  // 빈 곳 우클릭 + 사이드바에서 트랙을 골라 둠 → 경유지 추가 / 출발지 변경 / 도착지 변경 (선·마커·글자 위는 원래 메뉴)
+  { const rl = fromMerc(coord); if (routeCtxMenu(e.clientX, e.clientY, rl[1], rl[0])) return; }
   showMarkerInput(coord);
 }
 
@@ -1680,6 +1680,11 @@ function _trackSetPts(item, pts){
   l._coords=cs.slice();
   renderList(); if(typeof updateTrackHighlights==='function') updateTrackHighlights();
   if(l._autoSave) autoSaveTrackV(item);   // 임시트랙 파일도 같은 이름으로 덮어씀
+}
+// 한 줄짜리 선 트랙의 좌표 [[lat,lng],..] — 면·묶음선은 null (우클릭 경유지·출발지·도착지 메뉴용)
+function _trackPtsOf(item){
+  const l=item&&item.polyLyr; if(!l) return null;
+  const L=_lyrLines([l]); return (L.length===1&&L[0].length>=2)?L[0]:null;
 }
 // ⛰ 고도 조회 대상 선 [[lat,lng],..] — 면·묶음선(여러 선 레이어)은 빼고
 function _lyrLines(ls){
