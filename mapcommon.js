@@ -73,6 +73,20 @@ function trimRegion(parts) {
   return parts.slice(i);
 }
 
+// 지번 주소가 없는 위치(바다·하천·미등록 토지 등) — 카카오 법정 행정구역(시도~리·동)으로 대신.
+//  coord2Address 가 ZERO_RESULT 여도 coord2RegionCode 는 행정구역을 준다(실측).
+//  cb(행정구역 전체 이름, 법정동코드 10자리)  — 못 찾으면 cb('', '')
+function _kakaoRegionAddr(gc, lng, lat, cb) {
+  if (!gc) { cb('', ''); return; }
+  try {
+    gc.coord2RegionCode(lng, lat, (r, st) => {
+      if (st !== kakao.maps.services.Status.OK || !r || !r.length) { cb('', ''); return; }
+      const b = r.find(x => x.region_type === 'B') || r[0];   // B = 법정동(리까지)
+      cb((b && b.address_name) || '', (b && b.code) || '');
+    });
+  } catch(e) { cb('', ''); }
+}
+
 // ── Geohash 인코딩 (표준 base32, 기본 8자리 ≈ ±19m) ──
 function geohashEncode(lat, lng, prec) {
   prec = prec || 8;
@@ -1210,16 +1224,25 @@ const BASEMAP_HTM = [
 "  document.getElementById('latlng').value = latlng.getLat() + ', ' + latlng.getLng();",
 "  geocoder.coord2Address(latlng.getLng(), latlng.getLat(), function(result, status) {",
 "    var addrEl = document.getElementById('addr');",
-"    if (status === kakao.maps.services.Status.OK) {",
-"      function dropSido(name) {",
-"        var parts = name.split(' ');",
-"        return parts.length > 1 ? parts.slice(1).join(' ') : name;",
-"      }",
+"    function dropSido(name) {",
+"      var parts = name.split(' ');",
+"      return parts.length > 1 ? parts.slice(1).join(' ') : name;",
+"    }",
+"    if (status === kakao.maps.services.Status.OK && (result[0].address || result[0].road_address)) {",
 "      var legal = result[0].address ? dropSido(result[0].address.address_name) : '';",
 "      var road  = result[0].road_address ? ' / ' + dropSido(result[0].road_address.address_name) : '';",
 "      addrEl.value = legal + road;",
 "    } else {",
-"      addrEl.value = '주소 없음';",
+"      // 지번 없음 → 행정구역(리까지)",
+"      addrEl.value = '…';",
+"      geocoder.coord2RegionCode(latlng.getLng(), latlng.getLat(), function(r, st) {",
+"        var b = null;",
+"        if (st === kakao.maps.services.Status.OK && r && r.length) {",
+"          for (var i = 0; i < r.length; i++) if (r[i].region_type === 'B') { b = r[i]; break; }",
+"          b = b || r[0];",
+"        }",
+"        addrEl.value = b ? dropSido(b.address_name) : '주소 없음';",
+"      });",
 "    }",
 "  });",
 "});",

@@ -1195,8 +1195,11 @@ async function kakaoReverse(lng, lat) {
           const a = res[0].address;
           const parcel = a?.address_name || '';
           const road   = res[0].road_address?.address_name || '';
-          resolve({addr: parcel || road || '', pnu: buildPnuKakao(a)});
-        } else resolve({addr:'', pnu:''});
+          if (parcel || road) { resolve({addr: parcel || road, pnu: buildPnuKakao(a)}); return; }
+        }
+        // 지번·도로명 모두 없음 → 행정구역(리까지)이라도. 정렬키는 법정동코드만(번지 0)
+        _kakaoRegionAddr(kakaoGeocoder, lng, lat, (name, bcode) =>
+          resolve({addr: name, pnu: bcode ? pnuKey(bcode, false, 0, 0) : ''}));
       });
     } catch(e) { resolve({addr:'', pnu:''}); }
   });

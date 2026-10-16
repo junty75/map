@@ -643,7 +643,11 @@ function fetchAddr(latlng, callback) {
   if (!geocoder) { callback('', ''); return; }
   const lng = latlng.getLng(), lat = latlng.getLat();
   geocoder.coord2Address(lng, lat, (res, status) => {
-    if (status !== kakao.maps.services.Status.OK || !res[0]) { callback('', ''); return; }
+    if (status !== kakao.maps.services.Status.OK || !res[0] || !res[0].address) {
+      // 지번 없음 → 행정구역(리까지)이라도 표시. 정렬키는 법정동코드만(번지 0)
+      _kakaoRegionAddr(geocoder, lng, lat, (name, bcode) => callback(shortAddr(name), buildPnu(bcode, null)));
+      return;
+    }
     const adr = res[0].address;
     const addrStr = shortAddr(adr?.address_name || '');
     // 법정동코드는 coord2Address에 없으므로 coord2RegionCode로 별도 조회 → PNU 정렬키 생성
@@ -2175,12 +2179,16 @@ function initializeMap(center, level) {
     geocoder.coord2Address(lng, lat, (res, status) => {
       const el = document.getElementById('address-display');
       el.onclick = () => { if (!el.innerText||el.innerText==='주소 없음'||el.innerText==='✅ 복사됨') return; copyAndMarkLocation(); };
-      if (status===kakao.maps.services.Status.OK) {
-        const legal = res[0].address?.address_name||'주소 없음';
+      if (status===kakao.maps.services.Status.OK && res[0]?.address) {
+        const legal = res[0].address.address_name;
         const roadFull = res[0].road_address?.address_name;
         const road = roadFull ? roadFull.split(' ').slice(1).join(' ') : '';
         el.innerText = road ? `${legal} / ${road}` : legal;
-      } else el.innerText='주소 없음';
+      } else {
+        // 지번 없음 → 행정구역(리까지)
+        el.innerText = '…';
+        _kakaoRegionAddr(geocoder, lng, lat, name => { el.innerText = name || '주소 없음'; });
+      }
     });
   });
 
@@ -4733,7 +4741,7 @@ async function exportCSV() {
   if(!am.length){alert('내보낼 마커가 없습니다.');return;}
   const dest=await askSaveDest(defaultSaveName(document.getElementById('address-display').innerText.split(' ')[0]||'markers'),'.csv');if(!dest)return;
   const nnm=buildNumNameMap();
-  const getAddr=m=>new Promise(r=>{if(m.addr!==undefined){r(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(res,status)=>{m.addr=status===kakao.maps.services.Status.OK?(res[0].address?.address_name||''):'';r(m.addr);});});
+  const getAddr=m=>new Promise(r=>{if(m.addr!==undefined){r(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(res,status)=>{m.addr=status===kakao.maps.services.Status.OK?(res[0].address?.address_name||''):'';if(m.addr){r(m.addr);return;}_kakaoRegionAddr(geocoder,pos.getLng(),pos.getLat(),n=>{m.addr=n;r(n);});});});
   let csv='﻿이름,위도,경도,주소\n';
   for(const m of am){const pos=m.marker.getPosition?m.marker.getPosition():null;if(!pos)continue;const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
   saveBlobTo(dest, new Blob([csv],{type:'text/csv;charset=utf-8;'}));
@@ -4885,7 +4893,7 @@ async function exportSelectedCSV(){
   if(!sm.length){alert('선택된 마커가 없습니다.');return;}
   const dest=await askSaveDest(defaultSaveName('selected'),'.csv');if(!dest)return;
   const nnm=buildNumNameMap();
-  const getAddr=m=>new Promise(res=>{if(m.addr!==undefined){res(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(result,status)=>{m.addr=status===kakao.maps.services.Status.OK?(result[0].address?.address_name||''):'';res(m.addr);});});
+  const getAddr=m=>new Promise(res=>{if(m.addr!==undefined){res(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(result,status)=>{m.addr=status===kakao.maps.services.Status.OK?(result[0].address?.address_name||''):'';if(m.addr){res(m.addr);return;}_kakaoRegionAddr(geocoder,pos.getLng(),pos.getLat(),n=>{m.addr=n;res(n);});});});
   let csv='﻿이름,위도,경도,주소\n';
   for(const m of sm){const pos=m.marker.getPosition();const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
   saveBlobTo(dest, new Blob([csv],{type:'text/csv;charset=utf-8;'}));
