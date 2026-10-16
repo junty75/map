@@ -469,7 +469,7 @@ _apiKeyError = function(storeKey, name){
             <option value="short">가까운길</option>
             <option value="motorway">고속도로 우선</option>
             <option value="free">무료도로</option>
-            <option value="local">일반도로(고속도로 제외)</option>
+            <option value="local" title="고속도로·유료도로 제외">일반도로</option>
           </optgroup>
           <optgroup label="자전거·도보">
             <option value="bike">자전거도로</option>
@@ -488,8 +488,8 @@ _apiKeyError = function(storeKey, name){
           <option value="12">12px</option>
         </select>
         <button type="button" onclick="setTempTrackDir()" title="임시트랙 저장폴더 지정 — 지도에서 그린 선이 따로 저장하지 않아도 이 폴더에 자동 저장됩니다 (파일명: 날짜시각_읍면리번지.gpx)">📁</button>
-        <button type="button" onclick="resetPolylines()">선 초기화</button>
-        <button type="button" onclick="resetAll()">화면 초기화</button>
+        <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
+        <button type="button" onclick="window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes')" title="도움말 (F1)">❓</button>
       </div>
       <div style="display:flex;gap:6px;align-items:center;">
         <select id="exportFormat" style="padding:5px;">
@@ -529,11 +529,11 @@ _apiKeyError = function(storeKey, name){
           <option value="TERRAIN">🏔️ 지형도</option>
           <option value="USE_DISTRICT">🗺️ 지적도</option>
         </select>
-        <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
-        <button type="button" onclick="window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes')" title="도움말 (F1)">❓</button>
+        <button type="button" onclick="resetPolylines()">선 초기화</button>
+        <button type="button" onclick="resetAll()">화면 초기화</button>
       </div>
     </div>
-    <!-- 지우개 줄 — 흰 패널 밖, 오른쪽 끝(로드뷰 아래). 되돌리기는 지우개 왼쪽에 필요할 때만 -->
+    <!-- 지우개 줄 — 흰 패널 밖, 오른쪽 끝(화면 초기화 아래). 되돌리기는 지우개 왼쪽에 필요할 때만 -->
     <div id="eraseRow">
       <button type="button" id="eraseUndoBtn" onclick="undoErase()" style="display:none;" title="방금 지운 것부터 하나씩 되살립니다">↩️ 되돌리기</button>
       <button type="button" id="textBtn" onclick="toggleTextMode()" title="지도에 글자(메모)를 넣습니다 — 단축키 T&#10;켜고 지도를 클릭하면 입력창이 열립니다 · Enter=줄바꿈, Ctrl+Enter=확인&#10;글자 크기(m)는 목록에서 고르거나 직접 입력 (0 = 화면 고정 크기)&#10;이미 있는 글자는 우클릭해서 수정·삭제 · Esc=종료">📝 문자</button>
