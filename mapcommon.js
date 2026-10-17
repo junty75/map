@@ -3132,7 +3132,7 @@ window.__onCadastral = async d => {
     const bin = atob(d.data), u8 = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
     const f = await dxfToKmlFile(new File([u8], d.file), '5186');
-    if (f) _loadKmlFile(new File([(await f.text()).replace(/<Document><name>[^<]*<\/name>/, '<Document><name>' + _hesc(name) + '</name>')], name + '.kml'));
+    if (f) await _cadLoadKeepView(new File([(await f.text()).replace(/<Document><name>[^<]*<\/name>/, '<Document><name>' + _hesc(name) + '</name>')], name + '.kml'));
     return;
   }
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -3148,9 +3148,15 @@ window.__onCadastral = async d => {
       + '</ExtendedData><Point><coordinates>' + p.c[1] + ',' + p.c[0] + ',0</coordinates></Point></Placemark>\n';
   });
   kml += '</Document></kml>';
-  _loadKmlFile(new File([kml], name + '.kml'));
+  await _cadLoadKeepView(new File([kml], name + '.kml'));
   showSaveStatus('🗺 ' + name + ' — ' + d.parcels.length.toLocaleString() + '필지 (' + d.file + ')');
 };
+// 지적도 삽입은 보던 화면 그대로 (2026-10-17 사용자 요청) — loadKMZ 가 객체 전체로 맞춘 줌·위치를 되돌린다.
+// 어댑터 _viewSave() / _viewRestore(v)
+async function _cadLoadKeepView(f){
+  const v = _viewSave();
+  try { await _loadKmlFile(f); } finally { _viewRestore(v); setTimeout(() => _viewRestore(v), 300); }
+}
 
 // 주소 클릭 = 주소 글자만 복사 (2026-10-17). 위경도+주소 복사·번호 마커는 Ctrl+C 에만 남김(copyAndMarkLocation / copyAndMark).
 function copyAddressOnly(text){

@@ -526,7 +526,7 @@ _apiKeyError = function(storeKey, name){
           <option value="TERRAIN">🏔️ 지형도</option>
           <option value="USE_DISTRICT">🗺️ 지적도</option>
         </select>
-      <button type="button" id="cadastralLoadBtn" onclick="loadCadastral()" title="지도 가운데가 든 리의 연속지적도를 불러옵니다 (📁 → 지적도 경로 지정 · 사진위치표시 실행 중일 때)">지적도</button>
+      <button type="button" id="cadastralLoadBtn" onclick="loadCadastral()" title="지도 가운데가 든 리의 연속지적도를 불러옵니다 (📁 → 지적도 경로 지정 · 사진위치표시 실행 중일 때)">지적도 삽입</button>
       <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
     </div>
     </div>
@@ -3342,7 +3342,9 @@ function _trackSetPts(item, pts) {
 // ── 빈 곳 우클릭 메뉴 어댑터 (mapcommon.js mapCtxMenu) ──
 function _ctxMarkerAt(lat, lng) { showMarkerInput(new kakao.maps.LatLng(lat, lng)); }
 function _mapCenterLL() { const c = map.getCenter(); return [c.getLat(), c.getLng()]; }   // 🗺 지적도 (mapcommon.js)
-function _loadKmlFile(f) { loadKMZ(f, new kakao.maps.LatLngBounds()); }
+function _loadKmlFile(f) { return loadKMZ(f, new kakao.maps.LatLngBounds()); }
+function _viewSave() { return { c: map.getCenter(), l: map.getLevel() }; }
+function _viewRestore(v) { if (!v) return; map.setLevel(v.l); map.setCenter(v.c); }
 function _ctxLatLngAt(x, y) {   // 화면 좌표 → [lat,lng]
   const r = document.getElementById('map').getBoundingClientRect();
   const ll = map.getProjection().coordsFromContainerPoint(new kakao.maps.Point(x - r.left, y - r.top));
