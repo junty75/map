@@ -2299,7 +2299,7 @@ function _routeCtxClose(){
 function _routeCtxOutside(e){ const m = document.getElementById('routeCtxMenu'); if (m && !m.contains(e.target)) _routeCtxClose(); }
 function _routeCtxKey(e){ if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _routeCtxClose(); } }
 // 지도 빈 곳 우클릭 메뉴 (2026-10-17) — 마커 입력 / 문자 입력 / 거리 재기 / 면적 재기 / 경로 찾기.
-// 사이드바에서 트랙을 골라 두었으면 아래에 경유지 추가 / 출발지 변경 / 도착지 변경 도 붙는다.
+// 사이드바에서 트랙을 골라 두었으면 그 대신 경유지 추가 / 지점 삭제 / 출발지 변경 / 도착지 변경 만 띄운다.
 // 페이지 어댑터: _ctxMarkerAt(lat,lng) · _ctxTextAt(lat,lng) · _ctxAreaAt(lat,lng). 거리 = 선 그리기, 경로 = 경로찾기를 그 점에서 시작.
 // 메뉴를 띄웠으면 true (페이지는 원래 우클릭 동작을 건너뜀)
 function mapCtxMenu(x, y, lat, lng){
@@ -2317,22 +2317,24 @@ function mapCtxMenu(x, y, lat, lng){
     b.onclick = e => { e.stopPropagation(); _routeCtxClose(); if (fn) fn(); };
     m.appendChild(b);
   };
-  btn('📍 마커 입력', () => _ctxMarkerAt(lat, lng));
-  btn('📝 문자 입력', () => _ctxTextAt(lat, lng));
-  btn('📏 거리 재기', () => {
-    if (typeof areaMode !== 'undefined' && areaMode) stopAreaMeasure();
-    _drawStart(); _drawAppendPts([[lat, lng]]);
-    showSaveStatus('📏 거리 재기 — 지도를 클릭해 점 찍기 · 우클릭=끝내기(목록에 트랙으로) · Backspace=한 점 취소');
-  });
-  btn('📐 면적 재기', () => _ctxAreaAt(lat, lng));
-  btn('🧭 경로 찾기', () => { toggleRouteDraw(); routeClick(lat, lng); });
   const it = _routeSelTrack();
   if (it && _trackPtsOf(it)) {
+    // 트랙을 골라 둔 상태 → 경로 편집 메뉴만 (2026-10-17 사용자 요청)
     const head = document.createElement('div');
-    head.style.cssText = 'padding:6px 14px;margin-top:2px;background:#f1f3f4;color:#555;font-size:12px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;';
+    head.style.cssText = 'padding:7px 14px;background:#f1f3f4;color:#555;font-size:12px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;';
     head.textContent = '🧭 ' + (it.name || '트랙') + (it._routeOpt && ROUTE_OPTS[it._routeOpt] ? ' · ' + ROUTE_OPTS[it._routeOpt].name : '');
     m.appendChild(head);
-    [['via', '📍 경유지 추가'], ['start', '🚩 출발지 변경'], ['end', '🏁 도착지 변경']].forEach(([k, t]) => btn(t, () => _routeEditWp(it, k, [lat, lng])));
+    [['via', '📍 경유지 추가'], ['del', '❌ 지점 삭제'], ['start', '🚩 출발지 변경'], ['end', '🏁 도착지 변경']].forEach(([k, t]) => btn(t, () => _routeEditWp(it, k, [lat, lng])));
+  } else {
+    btn('📍 마커 입력', () => _ctxMarkerAt(lat, lng));
+    btn('📝 문자 입력', () => _ctxTextAt(lat, lng));
+    btn('📏 거리 재기', () => {
+      if (typeof areaMode !== 'undefined' && areaMode) stopAreaMeasure();
+      _drawStart(); _drawAppendPts([[lat, lng]]);
+      showSaveStatus('📏 거리 재기 — 지도를 클릭해 점 찍기 · 우클릭=끝내기(목록에 트랙으로) · Backspace=한 점 취소');
+    });
+    btn('📐 면적 재기', () => _ctxAreaAt(lat, lng));
+    btn('🧭 경로 찾기', () => { toggleRouteDraw(); routeClick(lat, lng); });
   }
   btn('✕ 취소', null);
   document.body.appendChild(m);
@@ -2346,6 +2348,11 @@ function mapCtxMenu(x, y, lat, lng){
   return true;
 }
 async function _routeEditWp(it, kind, p){
+  // 지점 삭제 — 우클릭한 곳에서 가장 가까운 지점(출발·경유·도착)을 빼고 다시 찾는다. 2개 남으면 못 지움
+  if (kind === 'del' && (!it._routeWps || it._routeWps.length <= 2)) {
+    showSaveStatus('❌ 지울 수 있는 경유지가 없습니다 (출발지·도착지만 남음)', false);
+    return;
+  }
   if (!it._routeWps || it._routeWps.length < 2) {
     const pts = _trackPtsOf(it);
     if (!pts || pts.length < 2) return;
@@ -2356,9 +2363,14 @@ async function _routeEditWp(it, kind, p){
   }
   const w = it._routeWps;
   if (kind === 'via') w.splice(_routeViaIndex(w, p), 0, p);
+  else if (kind === 'del') {
+    let k = 0;
+    w.forEach((q, i) => { if (_routeHav(q, p) < _routeHav(w[k], p)) k = i; });
+    w.splice(k, 1);
+  }
   else if (kind === 'start') w[0] = p;
   else w[w.length - 1] = p;
-  const why = { via: '경유지 넣고', start: '출발지 바꾸고', end: '도착지 바꾸고' }[kind] + ' 다시 찾는 중…';
+  const why = { via: '경유지 넣고', del: '지점 지우고', start: '출발지 바꾸고', end: '도착지 바꾸고' }[kind] + ' 다시 찾는 중…';
   await _routeRedoItem(it, it._routeOpt && ROUTE_OPTS[it._routeOpt] ? it._routeOpt : _routeProfile(), why);
 }
 
