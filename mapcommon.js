@@ -2320,9 +2320,19 @@ function mapCtxMenu(x, y, lat, lng){
   const it = _routeSelTrack();
   if (it && _trackPtsOf(it)) {
     // 트랙을 골라 둔 상태 → 경로 편집 메뉴만 (2026-10-17 사용자 요청)
+    // 머리줄 = 트랙 이름 + 경로 옵션 목록(바꾸면 그 옵션으로 다시 찾기, 2026-10-17)
     const head = document.createElement('div');
-    head.style.cssText = 'padding:7px 14px;background:#f1f3f4;color:#555;font-size:12px;white-space:nowrap;max-width:260px;overflow:hidden;text-overflow:ellipsis;';
-    head.textContent = '🧭 ' + (it.name || '트랙') + (it._routeOpt && ROUTE_OPTS[it._routeOpt] ? ' · ' + ROUTE_OPTS[it._routeOpt].name : '');
+    head.style.cssText = 'padding:6px 10px 6px 14px;background:#f1f3f4;color:#555;font-size:12px;white-space:nowrap;display:flex;align-items:center;gap:6px;max-width:300px;';
+    const hn = document.createElement('span');
+    hn.style.cssText = 'overflow:hidden;text-overflow:ellipsis;';
+    hn.textContent = '🧭 ' + (it.name || '트랙');
+    const hs = document.createElement('select');
+    hs.style.cssText = 'font-size:12px;padding:2px;flex:none;';
+    hs.title = '경로 옵션 — 바꾸면 이 경로를 그 옵션으로 다시 찾습니다';
+    const curOpt = it._routeOpt && ROUTE_OPTS[it._routeOpt] ? it._routeOpt : _routeProfile();
+    Object.keys(ROUTE_OPTS).forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = ROUTE_OPTS[k].name; if (k === curOpt) o.selected = true; hs.appendChild(o); });
+    hs.onchange = () => { const v = hs.value; _routeCtxClose(); _routeSetOpt(it, v); };
+    head.appendChild(hn); head.appendChild(hs);
     m.appendChild(head);
     [['via', '📍 경유지 추가'], ['del', '❌ 지점 삭제'], ['start', '🚩 출발지 변경'], ['end', '🏁 도착지 변경']].forEach(([k, t]) => btn(t, () => _routeEditWp(it, k, [lat, lng])));
   } else {
@@ -2346,6 +2356,30 @@ function mapCtxMenu(x, y, lat, lng){
     document.addEventListener('keydown', _routeCtxKey, true);
   }, 0);
   return true;
+}
+// 선 위 우클릭 — 사이드바에서 고른 경로 트랙의 선이면 선 메뉴 대신 경로 편집 메뉴(2026-10-17). 띄웠으면 true
+//  페이지의 showPolyMenu 맨 앞에서 부른다. obj = 카카오 Polyline/Polygon 또는 브이월드 레이어. 어댑터 _ctxLatLngAt(x,y) → [lat,lng]
+function routeCtxOnPoly(x, y, obj){
+  if (_isDrawing()) return false;
+  const it = _routeSelTrack();
+  if (!it || !_trackPtsOf(it)) return false;
+  if (!(it.polyline === obj || it.polyLyr === obj || (it.extraOverlays || []).includes(obj))) return false;
+  const ll = _ctxLatLngAt(x, y);
+  if (!ll) return false;
+  return mapCtxMenu(x, y, ll[0], ll[1]);
+}
+// 경로 옵션 바꾸기 (경로 메뉴 머리줄 목록) — 경로찾기로 만든 트랙이 아니면 확인 후 시작점→끝점 경로로
+async function _routeSetOpt(it, opt){
+  if (!ROUTE_OPTS[opt]) return;
+  if (!it._routeWps || it._routeWps.length < 2) {
+    const pts = _trackPtsOf(it);
+    if (!pts || pts.length < 2) return;
+    if (!confirm('"' + (it.name || '트랙') + '" 은(는) 경로찾기로 만든 트랙이 아닙니다.\n'
+      + '시작점→끝점을 ' + ROUTE_OPTS[opt].name + ' 경로로 새로 찾아 이 트랙을 바꿀까요?')) return;
+    it._routeWps = [pts[0], pts[pts.length - 1]];
+  }
+  it._routeOpt = opt;
+  await _routeRedoItem(it, opt, ROUTE_OPTS[opt].name + '(으)로 다시 찾는 중…');
 }
 async function _routeEditWp(it, kind, p){
   // 지점 삭제 — 우클릭한 곳에서 가장 가까운 지점(출발·경유·도착)을 빼고 다시 찾는다. 2개 남으면 못 지움
@@ -2490,3 +2524,373 @@ window.__onParcel = d => {
   const r = _parcelAddTrack(d.rings, _parcelName || '토지 경계', _parcelPt);
   showSaveStatus((r === 'dup' ? '🟥 이미 목록에 있는 필지 · ' : '🟥 토지 경계 추가 · ') + _parcelFmtArea(d.area || 0));
 };
+
+// ══════════════════════════════════════════════════
+//  📐 DXF 내보내기·가져오기 (2026-10-17)
+//   · 내보내기: 페이지 어댑터 _exportKml(선택만?) 이 KMZ 와 같은 KML(사진 빼고)을 주면 → 좌표계로 바꿔 DXF(R12, ASCII) 로.
+//       레이어 MAP_LINE(선)·MAP_AREA(면)·MAP_MARKER(마커 점+이름)·MAP_TEXT(문자). 색은 ACI 에 가장 가까운 색.
+//       한글은 \U+XXXX 로 적는다(파일은 ASCII — 캐드 버전·코드페이지와 상관없이 읽힘).
+//   · 가져오기: DXF → KML 로 바꿔 페이지의 loadKMZ 에 넘긴다(.dxf 열기·끌어놓기). 선은 레이어+색마다 한 항목(MultiGeometry).
+//       LINE·LWPOLYLINE·POLYLINE·ARC·CIRCLE·SPLINE·SOLID·POINT·TEXT·MTEXT, 블록(INSERT)·치수선(DIMENSION *D 블록)은 펼친다
+//       — 치수 규칙은 캐드 Vector_Convert.py flatten_entities 와 같게(정의점 제외, 글자는 치수선 방향, 치수선은 얇게).
+//   · 좌표계는 캐드 쪽 Vector_Convert.py 의 CRS_LIST 와 같은 목록. 고른 값은 localStorage 'jty_dxf_crs' 에 기억.
+//     변환은 proj4js(cdnjs, 처음 쓸 때 한 번 불러옴). 벳셀(구 좌표계)은 우리나라 7변수(towgs84) 사용.
+// ══════════════════════════════════════════════════
+var DXF_CRS = [
+  ['5186', 'EPSG:5186 - 중부원점 (GRS80)', '+proj=tmerc +lat_0=38 +lon_0=127 +k=1 +x_0=200000 +y_0=600000 +ellps=GRS80 +units=m +no_defs'],
+  ['5185', 'EPSG:5185 - 서부원점 (GRS80)', '+proj=tmerc +lat_0=38 +lon_0=125 +k=1 +x_0=200000 +y_0=600000 +ellps=GRS80 +units=m +no_defs'],
+  ['5187', 'EPSG:5187 - 동부원점 (GRS80)', '+proj=tmerc +lat_0=38 +lon_0=129 +k=1 +x_0=200000 +y_0=600000 +ellps=GRS80 +units=m +no_defs'],
+  ['5188', 'EPSG:5188 - 동해(울릉)원점 (GRS80)', '+proj=tmerc +lat_0=38 +lon_0=131 +k=1 +x_0=200000 +y_0=600000 +ellps=GRS80 +units=m +no_defs'],
+  ['5174', 'EPSG:5174 - 중부원점 (Bessel, 구)', '+proj=tmerc +lat_0=38 +lon_0=127.0028902777778 +k=1 +x_0=200000 +y_0=500000 +ellps=bessel +units=m +no_defs +towgs84=-115.80,474.99,674.11,1.16,-2.31,-1.63,6.43'],
+  ['5173', 'EPSG:5173 - 서부원점 (Bessel, 구)', '+proj=tmerc +lat_0=38 +lon_0=125.0028902777778 +k=1 +x_0=200000 +y_0=500000 +ellps=bessel +units=m +no_defs +towgs84=-115.80,474.99,674.11,1.16,-2.31,-1.63,6.43'],
+  ['5175', 'EPSG:5175 - 제주원점 (Bessel, 구)', '+proj=tmerc +lat_0=38 +lon_0=127.0028902777778 +k=1 +x_0=200000 +y_0=550000 +ellps=bessel +units=m +no_defs +towgs84=-115.80,474.99,674.11,1.16,-2.31,-1.63,6.43'],
+  ['5176', 'EPSG:5176 - 동부원점 (Bessel, 구)', '+proj=tmerc +lat_0=38 +lon_0=129.0028902777778 +k=1 +x_0=200000 +y_0=500000 +ellps=bessel +units=m +no_defs +towgs84=-115.80,474.99,674.11,1.16,-2.31,-1.63,6.43'],
+  ['5177', 'EPSG:5177 - 동해(울릉)원점 (Bessel, 구)', '+proj=tmerc +lat_0=38 +lon_0=131.0028902777778 +k=1 +x_0=200000 +y_0=500000 +ellps=bessel +units=m +no_defs +towgs84=-115.80,474.99,674.11,1.16,-2.31,-1.63,6.43'],
+  ['4326', 'EPSG:4326 - 위경도 (WGS84)', '+proj=longlat +datum=WGS84 +no_defs']
+];
+var _proj4P = null;
+function _dxfProj4(){
+  if (window.proj4) return Promise.resolve(window.proj4);
+  if (_proj4P) return _proj4P;
+  _proj4P = new Promise((res, rej) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.0/proj4.js';
+    s.onload = () => res(window.proj4);
+    s.onerror = () => { _proj4P = null; rej(new Error('proj4 를 불러오지 못했습니다(인터넷 연결 확인)')); };
+    document.head.appendChild(s);
+  });
+  return _proj4P;
+}
+// 좌표 변환기 {fwd:[lat,lng]→[x,y], inv:[x,y]→[lat,lng], geo:위경도인지}
+async function _dxfConv(code){
+  const P = await _dxfProj4();
+  const def = (DXF_CRS.find(c => c[0] === code) || DXF_CRS[0])[2];
+  if (code === '4326') return { geo: true, fwd: p => [p[1], p[0]], inv: q => [q[1], q[0]] };
+  const t = P('+proj=longlat +datum=WGS84 +no_defs', def);
+  return { geo: false, fwd: p => t.forward([p[1], p[0]]), inv: q => { const r = t.inverse([q[0], q[1]]); return [r[1], r[0]]; } };
+}
+// 좌표계 고르기 창 → 고른 코드(문자열) 또는 null. hint = 창에 보일 한 줄 설명, guess = 기본값 대신 쓸 코드
+function _dxfAskCrs(title, hint, guess){
+  return new Promise(res => {
+    let last = '5186';
+    try { last = localStorage.getItem('jty_dxf_crs') || '5186'; } catch (e) {}
+    const cur = guess || last;
+    const bg = document.createElement('div');
+    bg.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;';
+    bg.innerHTML = '<div style="background:#fff;border-radius:10px;padding:16px 18px;min-width:330px;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:14px;">'
+      + '<div style="font-weight:bold;margin-bottom:8px;">' + title + '</div>'
+      + (hint ? '<div style="color:#666;font-size:12px;margin-bottom:8px;">' + hint + '</div>' : '')
+      + '<select class="dc-sel" style="width:100%;padding:6px;font-size:14px;">'
+      + DXF_CRS.map(c => '<option value="' + c[0] + '"' + (c[0] === cur ? ' selected' : '') + '>' + c[1] + '</option>').join('') + '</select>'
+      + '<div style="text-align:right;margin-top:12px;"><button class="dc-ok" style="padding:6px 16px;margin-right:6px;">확인</button><button class="dc-no" style="padding:6px 16px;">취소</button></div></div>';
+    document.body.appendChild(bg);
+    const sel = bg.querySelector('.dc-sel');
+    const done = v => { bg.remove(); document.removeEventListener('keydown', key, true); if (v) { try { localStorage.setItem('jty_dxf_crs', v); } catch (e) {} } res(v); };
+    const key = e => { if (e.key === 'Escape') { e.preventDefault(); done(null); } else if (e.key === 'Enter') { e.preventDefault(); done(sel.value); } };
+    document.addEventListener('keydown', key, true);
+    bg.querySelector('.dc-ok').onclick = () => done(sel.value);
+    bg.querySelector('.dc-no').onclick = () => done(null);
+    sel.focus();
+  });
+}
+
+// ── 색: #RRGGBB ↔ ACI(캐드 색 번호) ──
+function _aciRgb(i){
+  const base = { 1: 'ff0000', 2: 'ffff00', 3: '00ff00', 4: '00ffff', 5: '0000ff', 6: 'ff00ff', 7: 'ffffff', 8: '808080', 9: 'c0c0c0' };
+  if (base[i]) return base[i];
+  if (i >= 250 && i <= 255) { const g = Math.round(51 + (i - 250) * 40.8).toString(16).padStart(2, '0'); return g + g + g; }
+  if (i < 10 || i > 249) return 'ffffff';
+  // 10~249: 색상환 24칸 × 밝기 5단계(짝수=진하게, 홀수=옅게) 어림
+  const h = Math.floor((i - 10) / 10) * 15, k = (i - 10) % 10, lv = [1, 1, .65, .65, .5, .5, .3, .3, .15, .15][k], pale = k % 2 === 1;
+  const f = n => { const kk = (n + h / 60) % 6; return 1 - Math.max(0, Math.min(kk, 4 - kk, 1)); };
+  return [f(5), f(3), f(1)].map(v => { let c = v * lv; if (pale) c = c + (lv - c) * 0.5; return Math.round(c * 255).toString(16).padStart(2, '0'); }).join('');
+}
+var _aciCache = null;
+function _rgbAci(hex){
+  hex = String(hex || '').replace('#', '').toLowerCase();
+  if (!/^[0-9a-f]{6}$/.test(hex)) return 7;
+  if (!_aciCache) { _aciCache = []; for (let i = 1; i <= 255; i++) _aciCache.push([i, _aciRgb(i)]); }
+  const r = parseInt(hex.slice(0, 2), 16), g = parseInt(hex.slice(2, 4), 16), b = parseInt(hex.slice(4, 6), 16);
+  let best = 7, bd = 1e9;
+  for (const [i, h] of _aciCache) {
+    const d = (r - parseInt(h.slice(0, 2), 16)) ** 2 + (g - parseInt(h.slice(2, 4), 16)) ** 2 + (b - parseInt(h.slice(4, 6), 16)) ** 2;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+// 한글 등 → \U+XXXX (DXF 안은 ASCII 만)
+function _dxfStr(s){
+  return String(s == null ? '' : s).replace(/[\r\n]+/g, ' ').replace(/[^\x20-\x7e]/g, c => '\\U+' + c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0'));
+}
+
+// ── 내보내기 ──
+async function exportDXF(selected){
+  const kml = _exportKml(selected);
+  if (!kml) return;
+  const code = await _dxfAskCrs('📐 DXF 좌표계', '캐드 도면에 쓸 좌표계를 고르세요 (다음에도 이 값으로 시작)');
+  if (!code) return;
+  let cv;
+  try { cv = await _dxfConv(code); } catch (e) { alert(e.message); return; }
+  const doc = new DOMParser().parseFromString(kml, 'application/xml');
+  const styles = {};
+  doc.querySelectorAll('Style').forEach(st => {
+    const lc = st.querySelector('LineStyle > color'), pc = st.querySelector('PolyStyle > color');
+    const k2h = c => { c = (c || '').trim(); return c.length === 8 ? c.slice(6, 8) + c.slice(4, 6) + c.slice(2, 4) : ''; };
+    styles[st.getAttribute('id')] = { line: lc ? k2h(lc.textContent) : '', poly: pc ? k2h(pc.textContent) : '' };
+  });
+  const nf = cv.geo ? (v => v.toFixed(9)) : (v => v.toFixed(4));
+  const mh = cv.geo ? 2 / 111000 : 2;   // 마커 이름·크기 없는 문자 높이 (2m)
+  const out = [];
+  const g = (c, v) => { out.push(c, v); };
+  const xy = (lng, lat, cx, cy) => { const q = cv.fwd([lat, lng]); g(cx || 10, nf(q[0])); g(cy || 20, nf(q[1])); g((cx || 10) + 20, '0.0'); };
+  const parseCoords = t => (t || '').trim().split(/\s+/).map(s => s.split(',').map(Number)).filter(a => a.length >= 2 && isFinite(a[0]) && isFinite(a[1]));
+  const poly = (pts, layer, aci, closed) => {
+    if (pts.length < 2) return;
+    g(0, 'POLYLINE'); g(8, layer); g(62, aci); g(66, 1); g(70, closed ? 1 : 0); g(10, '0.0'); g(20, '0.0'); g(30, '0.0');
+    pts.forEach(p => { g(0, 'VERTEX'); g(8, layer); xy(p[0], p[1]); });
+    g(0, 'SEQEND'); g(8, layer);
+  };
+  let nLine = 0, nArea = 0, nMk = 0, nTx = 0;
+  doc.querySelectorAll('Placemark').forEach(pm => {
+    const name = (pm.querySelector(':scope > name') || {}).textContent || '';
+    const su = ((pm.querySelector('styleUrl') || {}).textContent || '').replace('#', '');
+    const st = styles[su] || {};
+    const data = {}; pm.querySelectorAll('ExtendedData Data').forEach(d => { data[d.getAttribute('name')] = (d.querySelector('value') || {}).textContent; });
+    pm.querySelectorAll('LineString').forEach(ls => { poly(parseCoords((ls.querySelector('coordinates') || {}).textContent), 'MAP_LINE', _rgbAci(st.line), false); nLine++; });
+    pm.querySelectorAll('Polygon').forEach(pg => {
+      pg.querySelectorAll('LinearRing').forEach(r => {
+        const c = parseCoords((r.querySelector('coordinates') || {}).textContent);
+        if (c.length > 2 && c[0][0] === c[c.length - 1][0] && c[0][1] === c[c.length - 1][1]) c.pop();
+        poly(c, 'MAP_AREA', _rgbAci(st.line || st.poly), true);
+      });
+      nArea++;
+    });
+    const pt = pm.querySelector('Point coordinates');
+    if (!pt) return;
+    const c = parseCoords(pt.textContent)[0]; if (!c) return;
+    if (data.kind === 'text') {
+      const h = +data.h > 0 ? (cv.geo ? +data.h / 111000 : +data.h) : mh;
+      const ax = +data.ax || 0, ay = +data.ay || 0;
+      const h72 = ax > 0.75 ? 2 : ax > 0.25 ? 1 : 0, v73 = ay > 0.75 ? 3 : ay > 0.25 ? 2 : 0;
+      g(0, 'TEXT'); g(8, 'MAP_TEXT'); g(62, _rgbAci(data.color)); xy(c[0], c[1]); g(40, nf(h)); g(1, _dxfStr(name)); g(50, (+data.rot || 0).toFixed(3));
+      if (h72 || v73) { g(72, h72); xy(c[0], c[1], 11, 21); g(73, v73); }
+      nTx++;
+    } else {
+      g(0, 'POINT'); g(8, 'MAP_MARKER'); g(62, 1); xy(c[0], c[1]);
+      if (name) { g(0, 'TEXT'); g(8, 'MAP_MARKER'); g(62, 1); const q = cv.fwd([c[1], c[0]]); g(10, nf(q[0] + mh * 0.6)); g(20, nf(q[1] + mh * 0.3)); g(30, '0.0'); g(40, nf(mh)); g(1, _dxfStr(name)); }
+      nMk++;
+    }
+  });
+  if (!out.length) { alert('DXF 로 내보낼 객체가 없습니다.'); return; }
+  const layers = [['MAP_LINE', 3], ['MAP_AREA', 30], ['MAP_MARKER', 1], ['MAP_TEXT', 2]];
+  const head = ['0', 'SECTION', '2', 'HEADER', '9', '$ACADVER', '1', 'AC1009', '9', '$DWGCODEPAGE', '3', 'ANSI_949', '0', 'ENDSEC',
+    '0', 'SECTION', '2', 'TABLES',
+    '0', 'TABLE', '2', 'LTYPE', '70', '1', '0', 'LTYPE', '2', 'CONTINUOUS', '70', '0', '3', 'Solid line', '72', '65', '73', '0', '40', '0.0', '0', 'ENDTAB',
+    '0', 'TABLE', '2', 'LAYER', '70', String(layers.length)];
+  layers.forEach(l => head.push('0', 'LAYER', '2', l[0], '70', '0', '62', String(l[1]), '6', 'CONTINUOUS'));
+  head.push('0', 'ENDTAB', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES');
+  const txt = head.concat(out.map(String), ['0', 'ENDSEC', '0', 'EOF']).join('\r\n') + '\r\n';
+  const now = new Date(), ds = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
+  const dest = await askSaveDest(defaultSaveName(ds + (selected ? '_선택' : '_지도')), '.dxf');
+  if (!dest) return;
+  saveBlobTo(dest, new Blob([txt], { type: 'application/dxf' }));
+  showSaveStatus('📐 DXF (' + (DXF_CRS.find(c => c[0] === code) || [0, code])[1] + ') — 선 ' + nLine + ' · 면 ' + nArea + ' · 마커 ' + nMk + ' · 문자 ' + nTx);
+}
+
+// ── 가져오기: DXF 파일 → KML File (페이지가 loadKMZ 로 연다). 취소·실패면 null ──
+function _dxfDecode(buf){
+  const u8 = new Uint8Array(buf);
+  let t;
+  try { t = new TextDecoder('utf-8', { fatal: true }).decode(u8); }
+  catch (e) { t = new TextDecoder('euc-kr').decode(u8); }   // 옛 도면(ANSI_949)
+  return t.replace(/\\U\+([0-9A-Fa-f]{4})/g, (m, h) => String.fromCharCode(parseInt(h, 16)));
+}
+function _mtextPlain(s){
+  return String(s || '').replace(/\\P/g, '\n').replace(/\\[ACFHQTW][^;]*;/gi, '').replace(/\\[LlOoKk]/g, '')
+    .replace(/\\S([^;]*);/g, (m, a) => a.replace(/[#^]/, '/')).replace(/[{}]/g, '').replace(/\\~/g, ' ').replace(/\\\\/g, '\\').trim();
+}
+async function dxfToKmlFile(file){
+  if (!file) return null;
+  const text = _dxfDecode(await file.arrayBuffer());
+  if (/^\s*AutoCAD Binary DXF/.test(text)) { alert('바이너리 DXF 는 읽지 못합니다. 캐드에서 ASCII DXF 로 저장해 주세요.'); return null; }
+  const L = text.split(/\r\n|\r|\n/);
+  const pairs = [];
+  for (let i = 0; i + 1 < L.length; i += 2) pairs.push([parseInt(L[i], 10), L[i + 1]]);
+  // ── 구역별로 읽기: 레이어 색(TABLES), 블록(BLOCKS — 치수선 *D 블록 포함), 객체(ENTITIES) ──
+  const layerAci = {}, blocks = {}, ents = [];
+  let sec = '', curBlk = null;
+  for (let i = 0; i < pairs.length; i++) {
+    const [c, v0] = pairs[i];
+    if (c !== 0) continue;
+    const v = (v0 || '').trim();
+    if (v === 'SECTION') { sec = ((pairs[i + 1] || [])[1] || '').trim(); continue; }
+    if (v === 'ENDSEC') { sec = ''; continue; }
+    const e = { type: v, g: [] };
+    for (let j = i + 1; j < pairs.length && pairs[j][0] !== 0; j++) e.g.push(pairs[j]);
+    if (sec === 'TABLES' && v === 'LAYER') {
+      let nm = '', col = 7;
+      e.g.forEach(p => { if (p[0] === 2) nm = p[1].trim(); if (p[0] === 62) col = Math.abs(parseInt(p[1], 10)) || 7; });
+      layerAci[nm] = col;
+    } else if (sec === 'BLOCKS') {
+      if (v === 'BLOCK') {
+        const nm = ((e.g.find(p => p[0] === 2) || [])[1] || '').trim();
+        const bx = parseFloat((e.g.find(p => p[0] === 10) || [])[1]) || 0, by = parseFloat((e.g.find(p => p[0] === 20) || [])[1]) || 0;
+        curBlk = blocks[nm] = { base: [bx, by], ents: [] };
+      } else if (v === 'ENDBLK') curBlk = null;
+      else if (curBlk) curBlk.ents.push(e);
+    } else if (sec === 'ENTITIES') ents.push(e);
+  }
+  const val = (e, c) => { const p = e.g.find(x => x[0] === c); return p ? p[1] : undefined; };
+  const num = (e, c, d) => { const v = parseFloat(val(e, c)); return isFinite(v) ? v : d; };
+  const pts2 = (e, cx, cy) => { const xs = e.g.filter(p => p[0] === cx).map(p => parseFloat(p[1])), ys = e.g.filter(p => p[0] === cy).map(p => parseFloat(p[1])); return xs.map((x, k) => [x, ys[k]]); };
+  // ── 좌표계 고르기 — 위경도로 보이면 4326, 아니면 DwgOut.lsp 처럼 Y(북) 20만대 → 5174(구 중부), 30만대 이상 → 5186 계열 ──
+  let sample = null;
+  for (const e of ents) { const x = num(e, 10, NaN), y = num(e, 20, NaN); if (isFinite(x) && isFinite(y) && (x || y)) { sample = [x, y]; break; } }
+  let guess = null, why = '';
+  if (sample && Math.abs(sample[0]) <= 180 && Math.abs(sample[1]) <= 90) { guess = '4326'; why = ' (위경도로 보입니다)'; }
+  else if (sample && sample[1] >= 150000 && sample[1] < 300000) { guess = '5174'; why = ' (Y 20만대 → 구 중부원점으로 추정)'; }
+  else if (sample && sample[1] >= 300000 && sample[1] < 700000) {
+    let last = ''; try { last = localStorage.getItem('jty_dxf_crs') || ''; } catch (e) {}
+    guess = /^518[5-8]$/.test(last) ? last : '5186'; why = ' (Y 30만대 이상 → GRS80 원점으로 추정)';
+  }
+  const code = await _dxfAskCrs('📐 DXF 좌표계 — ' + file.name,
+    sample ? '도면 좌표 예: X ' + sample[0].toFixed(3) + ', Y ' + sample[1].toFixed(3) + why : '', guess);
+  if (!code) return null;
+  let cv;
+  try { cv = await _dxfConv(code); } catch (e) { alert(e.message); return null; }
+  const toLL = (x, y) => { const p = cv.inv([x, y]); return p[1].toFixed(8) + ',' + p[0].toFixed(8) + ',0'; };
+
+  const groups = new Map();   // 레이어|색|치수 → {layer, color, dim, parts:[좌표문자열]}
+  const texts = [], points = [];
+  const cnt = { skipped: 0, blocks: 0, dims: 0 };
+  // 블록 변환: 블록 안 좌표 → 바깥 좌표
+  const mkXf = (parent, ins, base, sx, sy, rotDeg) => {
+    const r = rotDeg * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
+    const f = p => { const x = (p[0] - base[0]) * sx, y = (p[1] - base[1]) * sy; return parent.f([ins[0] + x * cs - y * sn, ins[1] + x * sn + y * cs]); };
+    return { f: f, rot: parent.rot + rotDeg, s: parent.s * Math.abs(sx) };
+  };
+  const ID = { f: p => p, rot: 0, s: 1 };
+  const arcPts = (cx, cy, r, a0, a1) => {
+    if (a1 <= a0) a1 += 360;
+    const n = Math.max(8, Math.ceil((a1 - a0) / 10)), out = [];
+    for (let k = 0; k <= n; k++) { const a = (a0 + (a1 - a0) * k / n) * Math.PI / 180; out.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); }
+    return out;
+  };
+  // ctx: {xf, layer(바깥 레이어 — 블록 안 '0' 레이어는 이걸 따름), color(BYBLOCK 색), dim(치수 유래), dimRot(치수 글자 각도)}
+  const layerOf = (e, ctx) => { const ly = (val(e, 8) || '0').trim(); return (ly === '0' && ctx.layer) ? ctx.layer : ly; };
+  const colorOf = (e, ctx) => {
+    const tc = val(e, 420); if (tc !== undefined) return (parseInt(tc, 10) & 0xffffff).toString(16).padStart(6, '0');
+    const a = parseInt(val(e, 62), 10);
+    if (a === 0 && ctx.color) return ctx.color;                     // BYBLOCK
+    if (a > 0 && a < 256) return _aciRgb(a);
+    const ly = layerOf(e, ctx);                                     // BYLAYER
+    if ((ly === (val(e, 8) || '0').trim() || !ctx.color) && layerAci[ly]) return _aciRgb(layerAci[ly]);
+    return ctx.color || _aciRgb(layerAci[ly] || 7);
+  };
+  const addPart = (e, ctx, xys, closed) => {
+    if (xys.length < 2) return;
+    if (closed) xys = xys.concat([xys[0]]);
+    const ly = layerOf(e, ctx), col = colorOf(e, ctx), k = ly + '|' + col + '|' + (ctx.dim ? 1 : 0);
+    if (!groups.has(k)) groups.set(k, { layer: ly, color: col, dim: ctx.dim, parts: [] });
+    groups.get(k).parts.push(xys.map(p => { const q = ctx.xf.f(p); return toLL(q[0], q[1]); }).join(' '));
+  };
+  const walk = (list, ctx, depth) => {
+    if (depth > 12) return;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i], t = e.type;
+      if (t === 'LINE') addPart(e, ctx, [[num(e, 10, 0), num(e, 20, 0)], [num(e, 11, 0), num(e, 21, 0)]], false);
+      else if (t === 'LWPOLYLINE') addPart(e, ctx, pts2(e, 10, 20), (parseInt(val(e, 70), 10) & 1) === 1);
+      else if (t === 'POLYLINE') {
+        const closed = (parseInt(val(e, 70), 10) & 1) === 1, vs = [];
+        for (i++; i < list.length && list[i].type === 'VERTEX'; i++) vs.push([num(list[i], 10, 0), num(list[i], 20, 0)]);
+        addPart(e, ctx, vs, closed);   // i 는 SEQEND
+      } else if (t === 'ARC') addPart(e, ctx, arcPts(num(e, 10, 0), num(e, 20, 0), num(e, 40, 0), num(e, 50, 0), num(e, 51, 360)), false);
+      else if (t === 'CIRCLE') addPart(e, ctx, arcPts(num(e, 10, 0), num(e, 20, 0), num(e, 40, 0), 0, 360), false);
+      else if (t === 'SOLID' || t === 'TRACE' || t === '3DFACE') {   // 치수 화살촉 등 — 꼭짓점 순서 1,2,4,3
+        const a = [num(e, 10, 0), num(e, 20, 0)], b = [num(e, 11, 0), num(e, 21, 0)], c = [num(e, 12, 0), num(e, 22, 0)], d = [num(e, 13, c[0]), num(e, 23, c[1])];
+        addPart(e, ctx, t === '3DFACE' ? [a, b, c, d] : [a, b, d, c], true);
+      } else if (t === 'SPLINE') {
+        let p = pts2(e, 11, 21); if (p.length < 2) p = pts2(e, 10, 20);
+        addPart(e, ctx, p, false);
+      } else if (t === 'POINT') {
+        const ly = layerOf(e, ctx);
+        if (ctx.dim || ly.toLowerCase() === 'defpoints') continue;   // 치수 정의점·Defpoints 는 뺀다 (Vector_Convert.py 와 같음)
+        const q = ctx.xf.f([num(e, 10, 0), num(e, 20, 0)]);
+        points.push({ e: e, x: q[0], y: q[1], name: '' });
+      } else if (t === 'TEXT' || t === 'MTEXT' || t === 'ATTRIB') {
+        const ly = layerOf(e, ctx);
+        let s = t !== 'MTEXT' ? (val(e, 1) || '') : _mtextPlain(e.g.filter(p => p[0] === 3).map(p => p[1]).join('') + (val(e, 1) || ''));
+        s = s.replace(/%%[cC]/g, 'Ø').replace(/%%[dD]/g, '°').replace(/%%[pP]/g, '±').replace(/%%[uUoO]/g, '');
+        if (!s.trim()) continue;
+        // 이 프로그램이 내보낸 마커 이름(MAP_MARKER 레이어, 점 바로 뒤) → 마커 이름으로
+        const prev = points[points.length - 1];
+        if (!depth && ly === 'MAP_MARKER' && prev && !prev.name && i > 0 && list[i - 1] === prev.e) { prev.name = s; continue; }
+        let x = num(e, 10, 0), y = num(e, 20, 0), ax = 0, ay = 0, rot = num(e, 50, 0);
+        if (t !== 'MTEXT') {
+          const h72 = parseInt(val(e, 72), 10) || 0, v73 = parseInt(val(e, t === 'ATTRIB' ? 74 : 73), 10) || 0;
+          if ((h72 || v73) && val(e, 11) !== undefined) { x = num(e, 11, x); y = num(e, 21, y); }
+          ax = h72 === 1 || h72 === 4 ? 0.5 : h72 === 2 ? 1 : 0; ay = v73 === 3 ? 1 : v73 === 2 || h72 === 4 ? 0.5 : 0;
+        } else {
+          const ap = parseInt(val(e, 71), 10) || 1;
+          ax = [0, 0.5, 1][(ap - 1) % 3]; ay = [1, 0.5, 0][Math.floor((ap - 1) / 3)];
+          if (val(e, 50) === undefined && val(e, 11) !== undefined) rot = Math.atan2(num(e, 21, 0), num(e, 11, 1)) * 180 / Math.PI;
+        }
+        if (ctx.dimRot != null) rot = ctx.dimRot - ctx.xf.rot;   // 치수 글자는 치수선 방향으로
+        const q = ctx.xf.f([x, y]);
+        const h = num(e, 40, 0) * ctx.xf.s * (cv.geo ? 111000 : 1);
+        texts.push({ s, x: q[0], y: q[1], h, rot: rot + ctx.xf.rot, ax, ay, color: colorOf(e, ctx) });
+      } else if (t === 'INSERT') {
+        const b = blocks[(val(e, 2) || '').trim()]; if (!b) continue;
+        cnt.blocks++;
+        const sx = num(e, 41, 1), sy = num(e, 42, sx);
+        const sub = { xf: mkXf(ctx.xf, [num(e, 10, 0), num(e, 20, 0)], b.base, sx, sy, num(e, 50, 0)),
+          layer: layerOf(e, ctx), color: colorOf(e, ctx), dim: ctx.dim, dimRot: ctx.dimRot };
+        walk(b.ents, sub, depth + 1);
+        // 블록 속성값(ATTRIB) — INSERT 뒤에 따라온다 (이미 바깥 좌표)
+        for (; i + 1 < list.length && (list[i + 1].type === 'ATTRIB' || list[i + 1].type === 'SEQEND'); i++)
+          if (list[i + 1].type === 'ATTRIB' && !(parseInt(val(list[i + 1], 70), 10) & 1)) walk([list[i + 1]], ctx, depth + 1);
+      } else if (/DIMENSION$/.test(t) || t === 'LEADER') {
+        if (t === 'LEADER') { addPart(e, ctx, pts2(e, 10, 20), false); continue; }
+        // 치수선 — 그림은 *D 블록에 들어 있다(블록 좌표 = 도면 좌표). 치수 정의점은 빼고, 글자는 치수선 방향으로
+        const b = blocks[(val(e, 2) || '').trim()]; if (!b) { cnt.skipped++; continue; }
+        cnt.dims++;
+        let dimRot = null;
+        const dt = (parseInt(val(e, 70), 10) || 0) & 7;
+        if (dt === 0 || dt === 1) {
+          let a = val(e, 50) !== undefined ? num(e, 50, 0) : null;
+          if (a === null) a = Math.atan2(num(e, 24, 0) - num(e, 23, 0), num(e, 14, 0) - num(e, 13, 0)) * 180 / Math.PI;
+          a = ((a % 360) + 360) % 360;
+          if (a > 90 && a <= 270) a -= 180;   // 글자 뒤집힘 방지
+          dimRot = a + ctx.xf.rot;
+        }
+        walk(b.ents, { xf: ctx.xf, layer: layerOf(e, ctx), color: colorOf(e, ctx), dim: true, dimRot: dimRot }, depth + 1);
+      } else if (t !== 'SEQEND' && t !== 'VERTEX' && t !== 'ATTDEF') cnt.skipped++;
+    }
+  };
+  walk(ents, { xf: ID, layer: '', color: '', dim: false, dimRot: null }, 0);
+
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const kcol = h => 'ff' + h.slice(4, 6) + h.slice(2, 4) + h.slice(0, 2);
+  let kml = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>' + esc(file.name) + '</name>\n';
+  let si = 0;
+  for (const gr of groups.values()) {
+    const id = 'dx' + (si++);
+    // 치수선은 얇게(1) — Vector_Convert.py KMZ_DIM_WIDTH 와 같음
+    kml += '<Style id="' + id + '"><LineStyle><color>' + kcol(gr.color) + '</color><width>' + (gr.dim ? 1 : 2) + '</width></LineStyle></Style>\n';
+    kml += '<Placemark><name>' + esc(gr.layer + (gr.dim ? ' (치수)' : '')) + '</name><styleUrl>#' + id + '</styleUrl><MultiGeometry>'
+      + gr.parts.map(p => '<LineString><coordinates>' + p + '</coordinates></LineString>').join('') + '</MultiGeometry></Placemark>\n';
+  }
+  points.slice(0, 2000).forEach(p => { kml += '<Placemark><name>' + esc(p.name || '점') + '</name><Point><coordinates>' + toLL(p.x, p.y) + '</coordinates></Point></Placemark>\n'; });
+  texts.forEach(t => {
+    kml += '<Placemark><name>' + esc(t.s) + '</name><ExtendedData><Data name="kind"><value>text</value></Data>'
+      + '<Data name="rot"><value>' + t.rot.toFixed(2) + '</value></Data><Data name="color"><value>#' + t.color + '</value></Data>'
+      + '<Data name="h"><value>' + (+t.h.toFixed(3)) + '</value></Data><Data name="ax"><value>' + t.ax + '</value></Data><Data name="ay"><value>' + t.ay + '</value></Data>'
+      + '</ExtendedData><Point><coordinates>' + toLL(t.x, t.y) + '</coordinates></Point></Placemark>\n';
+  });
+  kml += '</Document></kml>';
+  if (!groups.size && !points.length && !texts.length) { alert('DXF 에서 읽을 수 있는 선·점·문자가 없습니다.' + (cnt.skipped ? '\n(읽지 못한 객체 ' + cnt.skipped + '개)' : '')); return null; }
+  showSaveStatus('📐 DXF 읽음 — 선 묶음 ' + groups.size + ' · 점 ' + Math.min(points.length, 2000) + ' · 문자 ' + texts.length
+    + (cnt.dims ? ' · 치수 ' + cnt.dims : '') + (cnt.blocks ? ' · 블록 ' + cnt.blocks : '')
+    + (points.length > 2000 ? ' (점은 2000개까지)' : '') + (cnt.skipped ? ' · 못 읽은 객체 ' + cnt.skipped + '개' : ''));
+  return new File([kml], file.name.replace(/\.dxf$/i, '') + '.kml', { type: 'application/vnd.google-earth.kml+xml' });
+}

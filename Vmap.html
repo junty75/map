@@ -433,17 +433,18 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
       <button onclick="doExport()">💾 저장</button>
       <button onclick="document.getElementById('openFileInput').click()" title="KMZ·KML·GPX·CSV·htm·사진 파일 열기 — 드래그&드롭이 안 되는 휴대폰/태블릿용">📂 열기</button>
       <input type="file" id="openFileInput" multiple style="display:none"
-             accept=".kmz,.kml,.zip,.gpx,.bgpx,.csv,.htm,.html,image/*"
+             accept=".kmz,.kml,.zip,.gpx,.bgpx,.csv,.htm,.html,.dxf,image/*"
              onchange="handleDroppedFiles(Array.from(this.files),new Map());this.value='';">
       <label id="photoNumWrap" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="체크하면 사진명을 변경합니다 — KMZ 안에 저장되는 사진과 디스크의 원본 사진을 [KMZ 파일명]_000, _001 ... 로 바꿉니다 (원본 파일명 변경은 서버 연동 필요)">
         <input type="checkbox" id="addPhotoNum"> 사진명 변경
       </label>
-      <select id="exportFmt" onchange="onFmtChange(this.value)">
-        <option value="kmz">KMZ 내보내기</option>
-        <option value="gpx">GPX 내보내기</option>
-        <option value="csv">CSV 내보내기</option>
+      <select id="exportFmt" onchange="onFmtChange(this.value);try{localStorage.setItem('jty_export_fmt',this.value);}catch(e){}">
         <option value="htm">HTM 내보내기</option>
         <option value="htmlink">HTM(모바일) 내보내기</option>
+        <option value="kmz">KMZ 내보내기</option>
+        <option value="dxf">DXF(CAD) 내보내기</option>
+        <option value="gpx">GPX 내보내기</option>
+        <option value="csv">CSV 내보내기</option>
         <option value="photos">사진</option>
       </select>
       <select id="exportArea" title="전체객체=목록에 보이는 객체 전부(필터 켜면 화면 안 객체만) · 선택객체=사이드바에서 선택한 것 · 각각저장=거리별 여러 파일">
@@ -1685,6 +1686,28 @@ function _trackSetPts(item, pts){
 // 한 줄짜리 선 트랙의 좌표 [[lat,lng],..] — 면·묶음선은 null (우클릭 경유지·출발지·도착지 메뉴용)
 // ── 빈 곳 우클릭 메뉴 어댑터 (mapcommon.js mapCtxMenu) ──
 function _ctxMarkerAt(lat,lng){ showMarkerInput(toMerc(lng,lat)); }
+function _ctxLatLngAt(x,y){   // 화면 좌표 → [lat,lng]
+  const c=vmap.getCoordinateFromPixel(vmap.getEventPixel({clientX:x,clientY:y})); if(!c) return null;
+  const ll=fromMerc(c); return [ll[1], ll[0]];
+}
+// 📐 DXF 내보내기용 KML (KMZ 와 같은 내용, 사진 파일 빼고). 선택 없음이면 null
+function _exportKml(selected){
+  let items;
+  if(selected){
+    if(selectedItems.size===0){alert('선택된 항목이 없습니다.');return null;}
+    const filtered=getFilteredItems();
+    const selSet=new Set([...selectedItems].map(i=>filtered[i]).filter(Boolean));
+    items=allItems.filter(item=>selSet.has(item));
+  } else items=getFilteredItems();
+  const nnm=buildNumNameMap(), lnStyles=new Map();
+  let kml='<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document>\n';
+  for(const item of items){
+    if(item.polyLyr) kml+=_lineKmlPlacemarksV(item,nnm,null,lnStyles);
+    else if(item.mkObj){const m=item.mkObj;const ll=fromMerc(m.feat.getGeometry().getCoordinates());kml+=`<Placemark><name>${esc(nnm?.get(m)||m.name||'')}</name><Point><coordinates>${ll[0]},${ll[1]},0</coordinates></Point></Placemark>\n`;}
+  }
+  if(!selected) kml+=_textKmlPlacemarksV();
+  return kml+_lineKmlStyleDefsV(lnStyles)+'</Document></kml>';
+}
 function _ctxTextAt(lat,lng){ openTextEditor(toMerc(lng,lat),null); }
 function _ctxAreaAt(lat,lng){ if(!areaMode) toggleAreaMeasure(); areaAddPointV(toMerc(lng,lat)); }
 function _trackPtsOf(item){
@@ -2539,7 +2562,8 @@ function findNearPoly(pixel,thr){let near=null,minD=Infinity;polylines.forEach(l
 function ptSegDist(p,a,b){const dx=b[0]-a[0],dy=b[1]-a[1];if(!dx&&!dy)return Math.hypot(p[0]-a[0],p[1]-a[1]);const t=Math.max(0,Math.min(1,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/(dx*dx+dy*dy)));return Math.hypot(p[0]-(a[0]+t*dx),p[1]-(a[1]+t*dy));}
 
 /* 선 메뉴 */
-function showPolyMenu(x,y,lyr){polyTarget=lyr;const m=document.getElementById('polyMenu');m.style.left=Math.min(x,innerWidth-160)+'px';m.style.top=Math.min(y,innerHeight-120)+'px';m.classList.add('show');}
+function showPolyMenu(x,y,lyr){if(routeCtxOnPoly(x,y,lyr))return;   // 고른 경로 트랙의 선 → 경로 편집 메뉴 (mapcommon.js)
+  polyTarget=lyr;const m=document.getElementById('polyMenu');m.style.left=Math.min(x,innerWidth-160)+'px';m.style.top=Math.min(y,innerHeight-120)+'px';m.classList.add('show');}
 function hidePolyMenu(){document.getElementById('polyMenu').classList.remove('show');polyTarget=null;}
 document.addEventListener('click',e=>{if(!document.getElementById('polyMenu').contains(e.target))hidePolyMenu();});
 document.getElementById('polyMenuCancelBtn').onclick=hidePolyMenu;
@@ -2948,7 +2972,7 @@ function resetAll(){
 ════════════════════════════════════ */
 /* ── 폴더 드롭 — 하위폴더 재귀 스캔 + 선택 ── */
 // 지도에 표시 가능한 확장자만 폴더에서 걷어온다(폴더엔 무관한 파일이 섞여 있음).
-const DROP_EXT = /\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2|kmz|kml|zip|gpx|bgpx|csv|htm|html)$/i;
+const DROP_EXT = /\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2|kmz|kml|zip|gpx|bgpx|csv|htm|html|dxf)$/i;
 
 
 document.addEventListener('dragover',e=>e.preventDefault());
@@ -2987,6 +3011,7 @@ function handleDroppedFiles(files,fhMap){
     const n=file.name.toLowerCase();
     if(n.endsWith('.kmz')||n.endsWith('.zip')||n.endsWith('.kml')||n.endsWith('.bgpx'))loadKMZ(file);   // .bgpx(이진 GPX)는 loadKMZ 가 헤더로 판별
     else if(n.endsWith('.gpx'))loadGPX(file);
+    else if(n.endsWith('.dxf'))dxfToKmlFile(file).then(f=>{if(f)loadKMZ(f);}).catch(e=>alert('DXF 읽기 실패: '+e.message));   // 📐 mapcommon.js
     else if(n.endsWith('.csv'))loadCSV(file);
     else if(n.endsWith('.htm')||n.endsWith('.html'))loadHTM(file);
   });
@@ -3897,6 +3922,7 @@ function doExport(){
   if(fmt==='kmz'){if(area==='selected')exportSelectedKMZ();else exportKMZ();}
   else if(fmt==='gpx'){if(area==='selected')exportSelectedGPX();else exportGPX();}
   else if(fmt==='csv'){if(area==='selected')exportSelectedCSV();else exportCSV();}
+  else if(fmt==='dxf'){exportDXF(area==='selected');}   // 📐 mapcommon.js
   else if(fmt==='htm'){exportHTM(area==='selected');}
   else if(fmt==='htmlink'){exportHTMLink(area==='selected');}
   else if(fmt==='photos'){if(area==='selected')downloadSelectedPhotos();else downloadAllPhotos();}
