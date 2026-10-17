@@ -5624,6 +5624,8 @@ window.onload=()=>{
             setBadge(true, '저장 취소됨');
         } else if (d.type === 'parcel') {
           if (window.__onParcel) window.__onParcel(d);   // 🟥 검색한 토지 경계
+        } else if (d.type === 'route_kakao') {
+          if (window.__onRouteKakao) window.__onRouteKakao(d);   // 🧭 카카오 길찾기 결과
         } else if (d.type === 'relink_dirs') {
           if (window.__onRelinkDirs) window.__onRelinkDirs(d);   // 📁 경로폴더 창 결과
         } else if (d.type === 'track_autosaved' || d.type === 'temp_track_dir') {

@@ -2010,7 +2010,11 @@ else initRelinkDirsBtn();
 //   · 길찾기 서버 두 곳(둘 다 OpenStreetMap 도로, 키 없음, CORS 허용):
 //       OSRM    routing.openstreetmap.de/routed-{car,bike,foot} — 빠름, 옵션 없음(exclude 미지원)
 //       BRouter brouter.de — 프로필·옵션(avoid_toll, avoid_motorways 등) 지원, 조금 느림, 고도(ele)도 준다
+//       카카오  카카오모빌리티 자동차 길찾기 — PC 서버(사진위치표시.py)가 REST 키로 대신 묻는다(ws 'route_kakao', 2026-10-17).
+//               OSM 에 없는 농로·마을길도 있어 '길 없는 곳 직선'이 크게 준다. 서버가 없으면(깃허브 페이지만 연 경우) 건너뜀.
 //     옵션마다 ROUTE_OPTS 의 순서대로 시도하고, 다 실패하면 그 구간만 직선으로 잇는다.
+//     길 끝이 찍은 점에서 ROUTE_GAP_M 넘게 떨어지면(그 근처 길이 지도 데이터에 없음) 다음 서버도 물어
+//     빈 거리가 가장 짧은 결과를 쓴다 → 도보·등산 옵션도 OSM 에 길이 없으면 카카오로 메운다.
 //   · 가까운길: 최단거리 옵션이 있는 자동차 서버가 없어 후보 여러 개(OSRM 대안경로 + BRouter car-eco) 중 가장 짧은 것.
 //   · 찍은 점(경유점)을 기억한다 → 옵션을 바꾸면 그 경로를 새 옵션으로 다시 찾고(그리는 중·끝낸 경로 모두),
 //     끝낸 경로는 item._routeWps / item._routeOpt 에 담긴다. 옵션 변경 대상: 그리는 중인 경로 → 사이드바에서 고른 경로 트랙 → 방금 끝낸 경로 순.
@@ -2026,17 +2030,19 @@ var _routeQ = Promise.resolve(); // 구간 요청 순서 보장
 var _routeGen = 0;               // 끝내기/취소 후 늦게 온 응답 버리기용
 var _routeLastItem = null;       // 방금 끝낸 경로 트랙 (옵션 변경·경유지 대상)
 // 옵션 → 이름, 시도할 서버 목록  (o = OSRM 프로필, b = BRouter 프로필, p = BRouter 옵션)
+//  k = 카카오 priority(RECOMMEND|TIME|DISTANCE), avoid = 카카오 회피('toll', 'motorway|toll')
 var ROUTE_OPTS = {
-  fast:     { name:'빠른길',       src:[{ o:'car' }, { b:'car-fast' }] },
-  motorway: { name:'고속도로 우선', src:[{ b:'car-fast' }, { o:'car' }] },
-  free:     { name:'무료도로',     src:[{ b:'car-fast', p:{ avoid_toll:1 } }] },
-  local:    { name:'일반도로',     src:[{ b:'car-fast', p:{ avoid_motorways:1, avoid_toll:1 } }] },
-  short:    { name:'가까운길',     src:[{ o:'car', alt:1 }, { b:'car-eco' }], pick:'short' },
-  bike:     { name:'자전거도로',   src:[{ b:'trekking', p:{ stick_to_cycleroutes:1 } }, { b:'trekking' }, { o:'bike' }] },
-  foot:     { name:'도보',         src:[{ o:'foot' }, { b:'shortest' }] },
-  hike:     { name:'등산로',       src:[{ b:'hiking-mountain' }, { o:'foot' }] },
+  fast:     { name:'빠른길',       src:[{ k:'RECOMMEND' }, { o:'car' }, { b:'car-fast' }] },
+  motorway: { name:'고속도로 우선', src:[{ k:'TIME' }, { b:'car-fast' }, { o:'car' }] },
+  free:     { name:'무료도로',     src:[{ k:'RECOMMEND', avoid:'toll' }, { b:'car-fast', p:{ avoid_toll:1 } }] },
+  local:    { name:'일반도로',     src:[{ k:'RECOMMEND', avoid:'motorway|toll' }, { b:'car-fast', p:{ avoid_motorways:1, avoid_toll:1 } }] },
+  short:    { name:'가까운길',     src:[{ k:'DISTANCE' }, { o:'car', alt:1 }, { b:'car-eco' }], pick:'short' },
+  bike:     { name:'자전거도로',   src:[{ b:'trekking', p:{ stick_to_cycleroutes:1 } }, { b:'trekking' }, { o:'bike' }, { k:'DISTANCE' }] },
+  foot:     { name:'도보',         src:[{ o:'foot' }, { b:'shortest' }, { k:'DISTANCE' }] },
+  hike:     { name:'등산로',       src:[{ b:'hiking-mountain' }, { o:'foot' }, { k:'DISTANCE' }] },
   line:     { name:'직선',         src:[] }
 };
+var ROUTE_GAP_M = 30;            // 길 끝과 찍은 점 사이가 이보다 멀면 '그 근처 길 없음'으로 보고 다음 서버도 물어 본다
 
 function _routeProfile(){
   const s = document.getElementById('routeProfile');
@@ -2066,8 +2072,24 @@ async function _routeGet(url, ms){
   catch (e) { return null; }
   finally { clearTimeout(t); }
 }
+// 카카오 길찾기 — PC 서버에 묻고 응답('route_kakao')을 기다린다. 서버 없음·실패·15초 넘으면 []
+var _rkSeq = 0, _rkWait = {};
+function _routeKakao(s, a, b){
+  if (!(window.__wsReady && window.__wsReady() && window.__wsSend)) return Promise.resolve([]);
+  const id = 'rk' + (++_rkSeq);
+  return new Promise(res => {
+    const t = setTimeout(() => { delete _rkWait[id]; res([]); }, 15000);
+    _rkWait[id] = d => { clearTimeout(t); delete _rkWait[id];
+      res(d.ok && d.pts && d.pts.length >= 2 ? [{ pts: d.pts, dist: +d.dist || 0, time: +d.time || 0, src: 'kakao' }] : []); };
+    if (!window.__wsSend({ type: 'route_kakao', reqid: id, a: a, b: b, priority: s.k, avoid: s.avoid || '' })) {
+      clearTimeout(t); delete _rkWait[id]; res([]);
+    }
+  });
+}
+window.__onRouteKakao = d => { const f = _rkWait[d.reqid]; if (f) f(d); };
 // 서버 하나에 물어 경로 후보들 [{pts:[[lat,lng],..], dist(m), time(초)}] — 실패하면 []
 async function _routeAsk(s, a, b){
+  if (s.k) return _routeKakao(s, a, b);
   if (s.o) {
     const j = await _routeGet('https://routing.openstreetmap.de/routed-' + s.o + '/route/v1/driving/'
       + a[1] + ',' + a[0] + ';' + b[1] + ',' + b[0] + '?overview=full&geometries=geojson'
@@ -2093,13 +2115,28 @@ async function _routeFetch(a, b, opt){
   if (!o || !o.src.length) return null;
   if (o.pick === 'short') {                       // 가까운길 — 후보 전부 받아 가장 짧은 것
     const all = [].concat(...await Promise.all(o.src.map(s => _routeAsk(s, a, b))));
-    return all.length ? all.reduce((m, r) => (r.dist < m.dist ? r : m)) : null;
+    if (!all.length) return null;
+    all.forEach(r => { r.gap = _routeGap(r, a, b); });
+    // 찍은 점까지 오는 후보끼리만 거리 비교 (길이 중간에 끊겨 짧아 보이는 후보 제외)
+    const near = all.filter(r => r.gap <= ROUTE_GAP_M);
+    if (!near.length) return all.reduce((m, r) => (r.gap < m.gap ? r : m));
+    return near.reduce((m, r) => (r.dist < m.dist ? r : m));
   }
+  // 길 끝이 찍은 점 가까이 오는 첫 결과를 쓴다. 다 멀면(그 근처 길이 데이터에 없음) 빈 거리가 가장 짧은 것
+  let best = null;
   for (const s of o.src) {
     const r = await _routeAsk(s, a, b);
-    if (r.length) return r[0];
+    if (!r.length) continue;
+    const g = _routeGap(r[0], a, b);
+    if (g <= ROUTE_GAP_M) return r[0];
+    if (!best || g < best.gap - 5) best = Object.assign(r[0], { gap: g });
   }
-  return null;
+  return best;
+}
+// 길 처음·끝과 찍은 두 점 사이 빈 거리(m) 중 큰 쪽
+function _routeGap(r, a, b){
+  const p = r.pts;
+  return Math.max(_routeHav(a, p[0]), _routeHav(b, p[p.length - 1]));
 }
 // 구간 좌표 다듬기 — 앞 점과 같은 첫 점은 빼고, 길 끝이 찍은 점과 떨어져 있으면 마저 잇는다
 function _routeTrim(pts, last, to){
@@ -2172,7 +2209,9 @@ function routeClick(lat, lng){
       r = await _routeFetch(last, [lat, lng], prof);
       if (gen !== _routeGen || !_isDrawing()) return;
       if (!r) showSaveStatus('⚠️ 길을 찾지 못해 이 구간은 직선으로 이었습니다', false);
-      else showSaveStatus('🧭 ' + ROUTE_OPTS[prof].name + ' 구간 ' + _routeFmt(r));
+      else if (r.gap > ROUTE_GAP_M) showSaveStatus('🧭 ' + ROUTE_OPTS[prof].name + ' 구간 ' + _routeFmt(r)
+        + ' · ⚠️ 끝 ' + Math.round(r.gap) + 'm 는 지도에 길이 없어 직선' + (window.__wsReady && window.__wsReady() ? '' : ' (PC 서버를 켜면 카카오 길찾기로 더 찾습니다)'), false);
+      else showSaveStatus('🧭 ' + ROUTE_OPTS[prof].name + ' 구간 ' + _routeFmt(r) + (r.src === 'kakao' ? ' (카카오)' : ''));
     }
     const pts = _routeTrim(r && r.pts, last, [lat, lng]);
     _drawAppendPts(pts); _routeSegs.push(pts.length); _routeWps.push([lat, lng]);
