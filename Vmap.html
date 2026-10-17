@@ -406,7 +406,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
     <div style="display:flex;gap:5px;align-items:center;">
       <button onclick="document.getElementById('openFileInput').click()" title="KMZ·KML·GPX·CSV·htm·사진 파일 열기 — 드래그&드롭이 안 되는 휴대폰/태블릿용">📂 열기</button>
       <input type="file" id="openFileInput" multiple style="display:none"
-             accept=".kmz,.kml,.zip,.gpx,.bgpx,.csv,.htm,.html,.dxf,image/*"
+             accept=".kmz,.kml,.zip,.gpx,.bgpx,.csv,.htm,.html,.dxf,.dwg,image/*"
              onchange="handleDroppedFiles(Array.from(this.files),new Map());this.value='';">
       <button type="button" id="drawColorBtn" title="선 색상 (클릭하여 팔레트에서 선택)" style="background:#FF0000;"></button>
       <select id="drawWidth" title="선 두께" style="padding:4px;">
@@ -445,6 +445,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
         <option value="htmlink">HTM(모바일) 내보내기</option>
         <option value="kmz">KMZ 내보내기</option>
         <option value="dxf">DXF(CAD) 내보내기</option>
+        <option value="dwg">DWG(CAD) 내보내기</option>
         <option value="gpx">GPX 내보내기</option>
         <option value="csv">CSV 내보내기</option>
         <option value="photos">사진</option>
@@ -2962,7 +2963,7 @@ function resetAll(){
 ════════════════════════════════════ */
 /* ── 폴더 드롭 — 하위폴더 재귀 스캔 + 선택 ── */
 // 지도에 표시 가능한 확장자만 폴더에서 걷어온다(폴더엔 무관한 파일이 섞여 있음).
-const DROP_EXT = /\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2|kmz|kml|zip|gpx|bgpx|csv|htm|html|dxf)$/i;
+const DROP_EXT = /\.(jpe?g|png|gif|bmp|webp|heic|heif|tiff?|arw|cr2|cr3|nef|nrw|dng|orf|raf|rw2|pef|srw|x3f|3fr|mef|mos|mrw|rwl|srf|sr2|kmz|kml|zip|gpx|bgpx|csv|htm|html|dxf|dwg)$/i;
 
 
 document.addEventListener('dragover',e=>e.preventDefault());
@@ -3001,6 +3002,7 @@ function handleDroppedFiles(files,fhMap){
     const n=file.name.toLowerCase();
     if(n.endsWith('.kmz')||n.endsWith('.zip')||n.endsWith('.kml')||n.endsWith('.bgpx'))loadKMZ(file);   // .bgpx(이진 GPX)는 loadKMZ 가 헤더로 판별
     else if(n.endsWith('.gpx'))loadGPX(file);
+    else if(n.endsWith('.dwg'))dwgToKmlFile(file).then(f=>{if(f)loadKMZ(f);}).catch(e=>alert('DWG 읽기 실패: '+e.message));   // 📐 PC 서버 캐드 엔진
     else if(n.endsWith('.dxf'))dxfToKmlFile(file).then(f=>{if(f)loadKMZ(f);}).catch(e=>alert('DXF 읽기 실패: '+e.message));   // 📐 mapcommon.js
     else if(n.endsWith('.csv'))loadCSV(file);
     else if(n.endsWith('.htm')||n.endsWith('.html'))loadHTM(file);
@@ -3913,6 +3915,7 @@ function doExport(){
   else if(fmt==='gpx'){if(area==='selected')exportSelectedGPX();else exportGPX();}
   else if(fmt==='csv'){if(area==='selected')exportSelectedCSV();else exportCSV();}
   else if(fmt==='dxf'){exportDXF(area==='selected');}   // 📐 mapcommon.js
+  else if(fmt==='dwg'){exportDXF(area==='selected',true);}   // 📐 DWG = DXF 를 PC 서버가 캐드 엔진으로 변환
   else if(fmt==='htm'){exportHTM(area==='selected');}
   else if(fmt==='htmlink'){exportHTMLink(area==='selected');}
   else if(fmt==='photos'){if(area==='selected')downloadSelectedPhotos();else downloadAllPhotos();}
@@ -5548,6 +5551,8 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           if(window.__onParcel)window.__onParcel(d);   // 🟥 검색한 토지 경계
         } else if(d.type==='route_kakao'){
           if(window.__onRouteKakao)window.__onRouteKakao(d);   // 🧭 카카오 길찾기 결과
+        } else if(d.type==='dwg_conv'){
+          if(window.__onDwgConv)window.__onDwgConv(d);         // 📐 DWG 열기·저장
         } else if(d.type==='cadastral'){
           if(window.__onCadastral)window.__onCadastral(d);     // 🗺 지적도 불러오기
         } else if(d.type==='cadastral_dir'){

@@ -2788,7 +2788,9 @@ function _dxfStr(s){
 }
 
 // ── 내보내기 ──
-async function exportDXF(selected){
+// asDwg = true 면 같은 DXF 를 PC 서버(사진위치표시)가 캐드 변환기로 DWG 로 바꿔 저장 (2026-10-17)
+async function exportDXF(selected, asDwg){
+  if (asDwg && !(window.__wsReady && window.__wsReady())) { alert('DWG 저장은 PC 프로그램(사진위치표시)이 켜져 있을 때만 됩니다.\n(캐드 변환 엔진을 PC 에서 돌립니다 — DXF 저장은 그냥 됩니다)'); return; }
   const kml = _exportKml(selected);
   if (!kml) return;
   const code = await _dxfAskCrs('📐 DXF 좌표계', '캐드 도면에 쓸 좌표계를 고르세요 (다음에도 이 값으로 시작)');
@@ -2855,8 +2857,16 @@ async function exportDXF(selected){
   head.push('0', 'ENDTAB', '0', 'ENDSEC', '0', 'SECTION', '2', 'ENTITIES');
   const txt = head.concat(out.map(String), ['0', 'ENDSEC', '0', 'EOF']).join('\r\n') + '\r\n';
   const now = new Date(), ds = now.getFullYear() + String(now.getMonth() + 1).padStart(2, '0') + String(now.getDate()).padStart(2, '0');
-  const dest = await askSaveDest(defaultSaveName(ds + (selected ? '_선택' : '_지도')), '.dxf');
+  const dest = await askSaveDest(defaultSaveName(ds + (selected ? '_선택' : '_지도')), asDwg ? '.dwg' : '.dxf');
   if (!dest) return;
+  if (asDwg) {
+    if (!dest.folder) { alert('DWG 저장 위치를 받지 못했습니다(사진위치표시 연결 확인).'); return; }
+    showSaveStatus('📐 DWG 로 바꾸는 중… (캐드 엔진, 몇 초)');
+    const r = await _dwgConv({ type: 'dxf_to_dwg', folder: dest.folder, filename: dest.filename, data: txt });
+    if (!r.ok) { alert('DWG 저장 실패: ' + (r.error || '')); showSaveStatus('❌ DWG 저장 실패', false); return; }
+    showSaveStatus('📐 DWG 저장: ' + r.path + ' — 선 ' + nLine + ' · 면 ' + nArea + ' · 마커 ' + nMk + ' · 문자 ' + nTx);
+    return;
+  }
   saveBlobTo(dest, new Blob([txt], { type: 'application/dxf' }));
   showSaveStatus('📐 DXF (' + (DXF_CRS.find(c => c[0] === code) || [0, code])[1] + ') — 선 ' + nLine + ' · 면 ' + nArea + ' · 마커 ' + nMk + ' · 문자 ' + nTx);
 }
@@ -3168,4 +3178,35 @@ function copyAddressOnly(text){
     const t = document.createElement('textarea'); t.value = text; t.style = 'position:fixed;opacity:0;';
     document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); done();
   });
+}
+
+// ══════════════════════════════════════════════════
+//  📐 DWG 열기 (2026-10-17) — PC 서버가 캐드 변환기(DWG2DXF.py)로 DXF 로 바꿔 돌려주면 dxfToKmlFile 로 (좌표계 창 그대로)
+//   ws 'dwg_to_dxf'(name, data=base64) → 'dwg_conv'. DWG 저장은 exportDXF(selected, true).
+//   사진위치표시가 꺼져 있으면 안내만. 페이지는 .dwg 를 dwgToKmlFile(file) → loadKMZ.
+// ══════════════════════════════════════════════════
+var _dwgSeq = 0, _dwgWait = {};
+function _dwgConv(msg){
+  return new Promise(res => {
+    const id = 'g' + (++_dwgSeq);
+    const t = setTimeout(() => { delete _dwgWait[id]; res({ ok: false, error: '시간 초과(5분)' }); }, 300000);
+    _dwgWait[id] = d => { clearTimeout(t); delete _dwgWait[id]; res(d); };
+    if (!window.__wsSend(Object.assign({ reqid: id }, msg))) { clearTimeout(t); delete _dwgWait[id]; res({ ok: false, error: 'PC 서버 연결 없음' }); }
+  });
+}
+window.__onDwgConv = d => { const f = _dwgWait[d.reqid]; if (f) f(d); };
+function _b64(buf){
+  const u8 = new Uint8Array(buf); let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+async function dwgToKmlFile(file){
+  if (!(window.__wsReady && window.__wsReady())) { alert('DWG 열기는 PC 프로그램(사진위치표시)이 켜져 있을 때만 됩니다.\n(캐드에서 DXF 로 저장해 올리면 그냥 됩니다)'); return null; }
+  if (file.size > 36 * 1024 * 1024) { alert('DWG 가 너무 큽니다(36MB 넘음). 캐드에서 DXF 로 저장해 올리세요.'); return null; }
+  showSaveStatus('📐 DWG → DXF 바꾸는 중… ' + file.name + ' (캐드 엔진, 몇 초)');
+  const r = await _dwgConv({ type: 'dwg_to_dxf', name: file.name, data: _b64(await file.arrayBuffer()) });
+  if (!r.ok) { alert('DWG 열기 실패: ' + (r.error || '')); showSaveStatus('❌ DWG 열기 실패', false); return null; }
+  const bin = atob(r.data), u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return dxfToKmlFile(new File([u8], file.name.replace(/\.dwg$/i, '') + '.dxf'));
 }
