@@ -3094,10 +3094,10 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
   if (isCad) { kf._keepView = true; kf._cadName = cadName; }
   return kf;
 }
-// DXF·DWG 에서 바꾼 KML 열기 — 지적도 도면이면 보던 화면 그대로, 아니면 객체 전체로 맞춤(loadKMZ 기본)
+// DXF·DWG 에서 바꾼 KML 열기 — 도면이 지금 화면에 걸쳐 보이면 화면 그대로, 화면 밖이면 도면이 보이게 옮김 (2026-10-17)
 function openConvertedKml(f){
   if (!f) return;
-  return f._keepView ? _cadLoadKeepView(f) : _loadKmlFile(f);
+  return _cadLoadKeepView(f);
 }
 
 // ══════════════════════════════════════════════════
@@ -3192,11 +3192,30 @@ window.__onCadastral = async d => {
   await _cadLoadKeepView(new File([kml], name + '.kml'));
   showSaveStatus('🗺 ' + name + ' — ' + d.parcels.length.toLocaleString() + '필지 (' + d.file + ')');
 };
-// 지적도 삽입은 보던 화면 그대로 (2026-10-17 사용자 요청) — loadKMZ 가 객체 전체로 맞춘 줌·위치를 되돌린다.
-// 어댑터 _viewSave() / _viewRestore(v)
+// 도면·지적도 삽입 화면 (2026-10-17 사용자 요청): 삽입한 객체가 지금 화면 안에 조금이라도 보이면 보던 화면(줌·위치) 그대로,
+// 화면 밖에만 있으면 loadKMZ 가 맞춘 대로(객체 전체가 보이게) 둔다.
+// 어댑터 _viewSave() / _viewRestore(v) / _viewLLBounds() → [남, 서, 북, 동]
+function _kmlBBox(text){
+  let s = 90, w = 180, n = -90, e = -180, any = false;
+  const re = /<coordinates>([^<]*)<\/coordinates>/g; let m;
+  while ((m = re.exec(text))) {
+    const t = m[1].trim().split(/\s+/);
+    for (const c of t) {
+      const p = c.split(','), lng = parseFloat(p[0]), lat = parseFloat(p[1]);
+      if (!isFinite(lat) || !isFinite(lng)) continue;
+      any = true; if (lat < s) s = lat; if (lat > n) n = lat; if (lng < w) w = lng; if (lng > e) e = lng;
+    }
+  }
+  return any ? [s, w, n, e] : null;
+}
 async function _cadLoadKeepView(f){
   const v = _viewSave();
-  try { await _loadKmlFile(f); } finally { _viewRestore(v); setTimeout(() => _viewRestore(v), 300); }
+  let vb = null, bb = null;
+  try { vb = _viewLLBounds(); } catch (e) {}
+  try { bb = _kmlBBox(await f.text()); } catch (e) {}
+  const seen = !bb || !vb || (bb[0] <= vb[2] && bb[2] >= vb[0] && bb[1] <= vb[3] && bb[3] >= vb[1]);
+  try { await _loadKmlFile(f); }
+  finally { if (seen) { _viewRestore(v); setTimeout(() => _viewRestore(v), 300); } }
 }
 
 // 주소 클릭 = 주소 글자만 복사 (2026-10-17). 위경도+주소 복사·번호 마커는 Ctrl+C 에만 남김(copyAndMarkLocation / copyAndMark).

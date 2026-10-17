@@ -3346,6 +3346,7 @@ function _mapCenterLL() { const c = map.getCenter(); return [c.getLat(), c.getLn
 function _loadKmlFile(f) { return loadKMZ(f, new kakao.maps.LatLngBounds()); }
 function _viewSave() { return { c: map.getCenter(), l: map.getLevel() }; }
 function _viewRestore(v) { if (!v) return; map.setLevel(v.l); map.setCenter(v.c); }
+function _viewLLBounds() { const b = map.getBounds(), sw = b.getSouthWest(), ne = b.getNorthEast(); return [sw.getLat(), sw.getLng(), ne.getLat(), ne.getLng()]; }
 function _ctxLatLngAt(x, y) {   // 화면 좌표 → [lat,lng]
   const r = document.getElementById('map').getBoundingClientRect();
   const ll = map.getProjection().coordsFromContainerPoint(new kakao.maps.Point(x - r.left, y - r.top));
@@ -4024,11 +4025,11 @@ function handleDroppedFiles(files,_fhPromises){
 
     } else if (name.endsWith('.dwg')) {
       // 📐 DWG → (PC 서버 캐드 엔진) DXF → KML (mapcommon.js dwgToKmlFile)
-      dwgToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DWG 읽기 실패: '+e.message));   // 지적도 도면이면 화면 그대로
+      dwgToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DWG 읽기 실패: '+e.message));   // 화면에 보이면 화면 그대로, 밖이면 도면으로 이동
 
     } else if (name.endsWith('.dxf')) {
       // 📐 DXF → 좌표계 고르고 KML 로 바꿔 KMZ 와 같은 경로로 (mapcommon.js dxfToKmlFile)
-      dxfToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DXF 읽기 실패: '+e.message));   // 지적도 도면이면 화면 그대로
+      dxfToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DXF 읽기 실패: '+e.message));   // 화면에 보이면 화면 그대로, 밖이면 도면으로 이동
 
     } else if (name.endsWith('.htm')||name.endsWith('.html')) {
       const reader=new FileReader();

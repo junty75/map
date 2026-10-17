@@ -1677,6 +1677,7 @@ function _mapCenterLL(){ const ll=fromMerc(vmap.getView().getCenter()); return [
 function _loadKmlFile(f){ return loadKMZ(f); }
 function _viewSave(){ const v=vmap.getView(); return { c: v.getCenter().slice(), r: v.getResolution(), rot: v.getRotation() }; }
 function _viewRestore(s){ if(!s) return; const v=vmap.getView(); v.setResolution(s.r); v.setCenter(s.c); v.setRotation(s.rot); }
+function _viewLLBounds(){ const x=vmap.getView().calculateExtent(vmap.getSize()), a=fromMerc([x[0],x[1]]), b=fromMerc([x[2],x[3]]); return [a[1],a[0],b[1],b[0]]; }
 function _ctxLatLngAt(x,y){   // 화면 좌표 → [lat,lng]
   const c=vmap.getCoordinateFromPixel(vmap.getEventPixel({clientX:x,clientY:y})); if(!c) return null;
   const ll=fromMerc(c); return [ll[1], ll[0]];
@@ -3002,8 +3003,8 @@ function handleDroppedFiles(files,fhMap){
     const n=file.name.toLowerCase();
     if(n.endsWith('.kmz')||n.endsWith('.zip')||n.endsWith('.kml')||n.endsWith('.bgpx'))loadKMZ(file);   // .bgpx(이진 GPX)는 loadKMZ 가 헤더로 판별
     else if(n.endsWith('.gpx'))loadGPX(file);
-    else if(n.endsWith('.dwg'))dwgToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DWG 읽기 실패: '+e.message));   // 📐 PC 서버 캐드 엔진 (지적도 도면이면 화면 그대로)
-    else if(n.endsWith('.dxf'))dxfToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DXF 읽기 실패: '+e.message));   // 📐 mapcommon.js (지적도 도면이면 화면 그대로)
+    else if(n.endsWith('.dwg'))dwgToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DWG 읽기 실패: '+e.message));   // 📐 PC 서버 캐드 엔진 (화면에 보이면 화면 그대로, 밖이면 도면으로 이동)
+    else if(n.endsWith('.dxf'))dxfToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DXF 읽기 실패: '+e.message));   // 📐 mapcommon.js (화면에 보이면 화면 그대로, 밖이면 도면으로 이동)
     else if(n.endsWith('.csv'))loadCSV(file);
     else if(n.endsWith('.htm')||n.endsWith('.html'))loadHTM(file);
   });
