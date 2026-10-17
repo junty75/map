@@ -2458,7 +2458,38 @@ function _updateAreaTotalV(pts){
     _fmtAreaV(_calcAreaV(pts))+'</div>';
   areaTotalOv.setPosition(pts[pts.length-1]);
 }
-function finishAreaMeasureV(){ if(!areaDrawing)return; areaDrawing=false; _redrawAreaV(null); }
+// 우클릭·더블클릭 = 측정 끝 + 면적재기 모드 종료 (2026-10-17).
+// 잰 면(꼭짓점 3개 이상)은 목록 트랙(면)으로 남긴다 → 다음 측정에도 그대로, 지우개·우클릭 삭제·KMZ 저장은 다른 트랙과 같다.
+function finishAreaMeasureV(){
+  const cs=areaDrawing?areaCoords.slice():[];
+  stopAreaMeasure();
+  if(cs.length>=3) _areaKeepTrackV(cs);
+}
+var AREA_STYLE={color:'#fb8c00', width:3, fill:'#fb8c00', fillOpacity:0.25};
+function _areaKeepTrackV(cs){
+  const txt='면적 '+_fmtAreaV(_calcAreaV(cs)), st=AREA_STYLE;
+  const lyr=mkShapeLyr([], [[cs.concat([cs[0]])]], {color:st.color, lw:st.width, pw:st.width, opacity:1, fill:{c:st.fill, o:st.fillOpacity}});
+  addLyr(lyr); polylines.push(lyr);
+  let x=0, y=0; cs.forEach(c=>{x+=c[0];y+=c[1];});
+  const c=[x/cs.length, y/cs.length];
+  // 면적 글자 — 레이어가 지도에 있고 보일 때만 (지우기·되살리기·목록 숨기기 따라감). 표시용이라 저장 안 됨(저장은 트랙 이름으로)
+  const el=document.createElement('div');
+  el.style.cssText='padding:3px 7px;background:#fb8c00;color:#fff;font-size:12px;font-weight:bold;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;pointer-events:none;';
+  el.textContent=txt;
+  const ov=new ol.Overlay({element:el, positioning:'center-center', stopEvent:false});
+  vmap.addOverlay(ov);
+  const sync=()=>ov.setPosition(vmap.getLayers().getArray().includes(lyr)&&lyr.getVisible()?c:undefined);
+  lyr.on('change:visible', sync); vmap.getLayers().on('add', sync); vmap.getLayers().on('remove', sync); sync();
+  const item={type:'track', name:txt, address:'', polyLyr:lyr, _origColor:st.color, _addrPt:c};
+  allItems.push(item);
+  if(allItems.length===1) openSidebar();
+  renderList(); fetchAddrForItem(item);
+  pushHistory({
+    undo(){removeLyr(lyr);polylines=polylines.filter(p=>p!==lyr);allItems=allItems.filter(i=>i!==item);},
+    redo(){addLyr(lyr);polylines.push(lyr);allItems.push(item);if(allItems.length===1)openSidebar();}
+  });
+  showSaveStatus('📐 '+txt+' — 목록에 면으로 남겼습니다 (지우개·우클릭으로 삭제)');
+}
 // 구면 다각형 면적(m²) — 웹메르카토르 좌표를 위경도로 변환해 계산
 function _calcAreaV(pts){
   const R=6378137,toR=d=>d*Math.PI/180;

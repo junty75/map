@@ -2947,11 +2947,37 @@ function _updateAreaTotal(pos, finalize) {
       'border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;">면적 ' +
       _fmtArea(_calcArea(areaPath)) + '</div>' });
 }
+// 우클릭·더블클릭 = 측정 끝 + 면적재기 모드 종료 (2026-10-17).
+// 잰 면(꼭짓점 3개 이상)은 목록 트랙(면)으로 남긴다 → 다음 측정에도 그대로, 지우개·우클릭 삭제·KMZ 저장은 다른 트랙과 같다.
 function finishAreaMeasure() {
-  if (!areaDrawing) return;
-  areaDrawing = false;
-  if (areaMoveLine) { areaMoveLine.setMap(null); areaMoveLine = null; }
-  _updateAreaTotal(areaPath[areaPath.length - 1], true);
+  const path = areaDrawing ? areaPath.slice() : [];
+  stopAreaMeasure();
+  if (path.length >= 3) _areaKeepTrack(path);
+}
+var AREA_STYLE = { color: '#fb8c00', width: 3, fill: '#fb8c00', fillOpacity: 0.25 };
+function _areaKeepTrack(path) {
+  const txt = '면적 ' + _fmtArea(_calcArea(path)), st = AREA_STYLE;
+  const pgo = new kakao.maps.Polygon({ map, path, strokeWeight: st.width, strokeColor: st.color, strokeOpacity: 1,
+    strokeStyle: 'solid', fillColor: st.fill, fillOpacity: st.fillOpacity });
+  pgo._origWeight = st.width; pgo._origColor = st.color; pgo._opacity = 1;
+  pgo._isPoly = true; pgo._fillColor = st.fill; pgo._fillOpacity = st.fillOpacity;
+  pgo._rings = [path]; pgo._polys = [[path]]; pgo._name = txt;
+  polylines.push(pgo); attachPolylineRightClick(pgo);
+  let la = 0, lo = 0; path.forEach(p => { la += p.getLat(); lo += p.getLng(); });
+  const c = new kakao.maps.LatLng(la / path.length, lo / path.length);
+  const el = document.createElement('div');
+  el.style.cssText = 'padding:3px 7px;background:#fb8c00;color:#fff;font-size:12px;font-weight:bold;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,.4);white-space:nowrap;pointer-events:none;';
+  el.textContent = txt;
+  _areaLblBind(pgo, new kakao.maps.CustomOverlay({ map, position: c, content: el, xAnchor: 0.5, yAnchor: 0.5, zIndex: 6 }));
+  addItem({ type: 'track', name: txt, address: '', polyline: pgo, _origColor: st.color, _addrPt: c });
+  showSaveStatus('📐 ' + txt + ' — 목록에 면으로 남겼습니다 (지우개·우클릭으로 삭제)');
+}
+// 면적 글자는 면을 따라 보이고 숨는다(지우기·되살리기·목록 숨기기 모두 setMap 을 거친다). 표시용이라 저장되지 않음 — 저장은 트랙 이름으로.
+function _areaLblBind(pg, lbl) {
+  pg._areaLbl = lbl;
+  const orig = pg.setMap;
+  pg.setMap = function (m) { orig.call(this, m); if (this._areaLbl) this._areaLbl.setMap(m); };
+  lbl.setMap(pg.getMap());
 }
 // 구면 다각형 면적(m²)
 function _calcArea(path) {
@@ -3238,6 +3264,7 @@ function _recreatePoly(old, color, weight){
   }
   np._origColor=c; np._origWeight=w; np._opacity=op; np._name=old._name;
   old.setMap(null);
+  if(old._areaLbl){ const l=old._areaLbl; old._areaLbl=null; _areaLblBind(np,l); }   // 면적재기 면의 글자를 새 면으로
   const i=polylines.indexOf(old); if(i>=0)polylines[i]=np; else polylines.push(np);
   attachPolylineRightClick(np);
   return np;
