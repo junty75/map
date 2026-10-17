@@ -231,6 +231,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
 .controls button,.controls select,.controls input{padding:4px 7px;font-size:12px;font-family:inherit;border:1px solid #ccc;border-radius:4px;cursor:pointer;}
 /* 패널 밖 떠 있는 버튼줄 (지우개 / 지적도) */
 #eraseRow,.float-row{display:flex;gap:6px;align-items:center;}
+/* 패널 밖 오른쪽 세로줄 (지도 종류·지적도·로드뷰) */ #sideCol{display:flex;flex-direction:column;align-items:flex-end;gap:6px;}#sideCol button,#sideCol select{padding:5px 11px;font-size:12px;font-family:inherit;border:none;border-radius:6px;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.3);cursor:pointer;white-space:nowrap;}
 #eraseRow button,.float-row button{padding:5px 11px;font-size:12px;font-family:inherit;border:none;border-radius:6px;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.3);cursor:pointer;white-space:nowrap;}
 #polyMenu{display:none;position:fixed;z-index:9999;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);min-width:140px;overflow:hidden;}
 #polyMenu.show{display:block;}
@@ -399,9 +400,14 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
   </div>
 
   <div id="ctrlWrap">
+  <!-- 2026-10-17 사용자 그림대로: 윗줄 열기·색·두께·(되돌리기)·지우개·선 초기화·화면 초기화·📁·❓ /
+       아랫줄 저장·사진 용량·저장 범위·내보내기 형식·사진명 변경 / 패널 밖 오른쪽 세로줄 지도 종류·지적도·로드뷰 -->
   <div class="controls">
     <div style="display:flex;gap:5px;align-items:center;">
-      <!-- 2026-10-17: 좌표창은 아래 주소 옆으로, 선 그리기·면적재기·경로찾기·경로옵션 목록은 뺌(우클릭 메뉴·Alt 로) -->
+      <button onclick="document.getElementById('openFileInput').click()" title="KMZ·KML·GPX·CSV·htm·사진 파일 열기 — 드래그&드롭이 안 되는 휴대폰/태블릿용">📂 열기</button>
+      <input type="file" id="openFileInput" multiple style="display:none"
+             accept=".kmz,.kml,.zip,.gpx,.bgpx,.csv,.htm,.html,.dxf,image/*"
+             onchange="handleDroppedFiles(Array.from(this.files),new Map());this.value='';">
       <button type="button" id="drawColorBtn" title="선 색상 (클릭하여 팔레트에서 선택)" style="background:#FF0000;"></button>
       <select id="drawWidth" title="선 두께" style="padding:4px;">
         <option value="1">1px</option>
@@ -411,34 +417,15 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
         <option value="8">8px</option>
         <option value="12">12px</option>
       </select>
+      <button id="eraseUndoBtn" onclick="undoErase()" style="display:none;" title="방금 지운 것부터 하나씩 되살립니다">↩️ 되돌리기</button>
+      <button id="eraseBtn" onclick="toggleEraseMode()" title="켜고 지도를 클릭하면 그 자리 근처 객체가 지워집니다 · 축소해서 누르면 근처 여러 개가 한 번에 · 버튼 다시 누르면 종료">🧽 지우개</button>
+      <button onclick="resetLines()">선 초기화</button>
+      <button onclick="resetAll()">화면 초기화</button>
       <button type="button" onclick="folderMenu(this)" title="폴더 지정 — 임시트랙 저장폴더(그린 선 자동저장) / 지적도 경로(지적도 버튼이 불러올 폴더)">📁</button>
-      <button type="button" id="cadastralLoadBtn" onclick="loadCadastral()" title="지도 가운데가 든 리의 연속지적도를 불러옵니다 (📁 → 지적도 경로 지정 · 사진위치표시 실행 중일 때)">지적도</button>
-      <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
-      <button onclick="openHelp()" title="도움말 (F1)">❓ 도움말</button>
+      <button onclick="openHelp()" title="도움말 (F1)">❓</button>
     </div>
     <div style="display:flex;gap:5px;align-items:center;">
       <button onclick="doExport()">💾 저장</button>
-      <button onclick="document.getElementById('openFileInput').click()" title="KMZ·KML·GPX·CSV·htm·사진 파일 열기 — 드래그&드롭이 안 되는 휴대폰/태블릿용">📂 열기</button>
-      <input type="file" id="openFileInput" multiple style="display:none"
-             accept=".kmz,.kml,.zip,.gpx,.bgpx,.csv,.htm,.html,.dxf,image/*"
-             onchange="handleDroppedFiles(Array.from(this.files),new Map());this.value='';">
-      <label id="photoNumWrap" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="체크하면 사진명을 변경합니다 — KMZ 안에 저장되는 사진과 디스크의 원본 사진을 [KMZ 파일명]_000, _001 ... 로 바꿉니다 (원본 파일명 변경은 서버 연동 필요)">
-        <input type="checkbox" id="addPhotoNum"> 사진명 변경
-      </label>
-      <select id="exportFmt" onchange="onFmtChange(this.value);try{localStorage.setItem('jty_export_fmt',this.value);}catch(e){}">
-        <option value="htm">HTM 내보내기</option>
-        <option value="htmlink">HTM(모바일) 내보내기</option>
-        <option value="kmz">KMZ 내보내기</option>
-        <option value="dxf">DXF(CAD) 내보내기</option>
-        <option value="gpx">GPX 내보내기</option>
-        <option value="csv">CSV 내보내기</option>
-        <option value="photos">사진</option>
-      </select>
-      <select id="exportArea" title="전체객체=목록에 보이는 객체 전부(필터 켜면 화면 안 객체만) · 선택객체=사이드바에서 선택한 것 · 각각저장=거리별 여러 파일">
-        <option value="all">전체객체</option>
-        <option value="selected">선택객체</option>
-        <option value="clustered">각각저장</option>
-      </select>
       <select id="photoQuality">
         <option value="100">100KB↓</option>
         <option value="200" selected>200KB↓</option>
@@ -448,30 +435,43 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
         <option value="1024">1MB↓</option>
         <option value="0">원본</option>
       </select>
-      <select id="mapType" onchange="chgMapType(this.value)">
+      <select id="exportArea" title="전체객체=목록에 보이는 객체 전부(필터 켜면 화면 안 객체만) · 선택객체=사이드바에서 선택한 것 · 각각저장=거리별 여러 파일">
+        <option value="all">전체객체</option>
+        <option value="selected">선택객체</option>
+        <option value="clustered">각각저장</option>
+      </select>
+      <select id="exportFmt" onchange="onFmtChange(this.value);try{localStorage.setItem('jty_export_fmt',this.value);}catch(e){}">
+        <option value="htm">HTM 내보내기</option>
+        <option value="htmlink">HTM(모바일) 내보내기</option>
+        <option value="kmz">KMZ 내보내기</option>
+        <option value="dxf">DXF(CAD) 내보내기</option>
+        <option value="gpx">GPX 내보내기</option>
+        <option value="csv">CSV 내보내기</option>
+        <option value="photos">사진</option>
+      </select>
+      <label id="photoNumWrap" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="체크하면 사진명을 변경합니다 — KMZ 안에 저장되는 사진과 디스크의 원본 사진을 [KMZ 파일명]_000, _001 ... 로 바꿉니다 (원본 파일명 변경은 서버 연동 필요)">
+        <input type="checkbox" id="addPhotoNum"> 사진명 변경
+      </label>
+    </div>
+  </div>
+  <div id="sideCol">
+    <select id="mapType" onchange="chgMapType(this.value)">
         <option value="GRAPHIC">일반지도</option>
         <option value="GRAPHIC_WHITE">백지도</option>
         <option value="GRAPHIC_NIGHT">야간지도</option>
         <option value="PHOTO">항공사진</option>
         <option value="PHOTO_HYBRID" selected>하이브리드</option>
       </select>
-      <select id="airYear" onchange="chgAirYear(this.value)" title="국토지리정보원(국토정보플랫폼) 연도별 항공사진을 배경지도 위에 덮어서 봅니다. 지역에 따라 해당 연도 촬영본이 없으면 빈 화면으로 보일 수 있습니다.">
+    <select id="airYear" onchange="chgAirYear(this.value)" title="국토지리정보원(국토정보플랫폼) 연도별 항공사진을 배경지도 위에 덮어서 봅니다. 지역에 따라 해당 연도 촬영본이 없으면 빈 화면으로 보일 수 있습니다.">
         <option value="">촬영연도(현재)</option>
       </select>
-      <button onclick="resetLines()">선 초기화</button>
-      <button onclick="resetAll()">화면 초기화</button>
-    </div>
-  </div>
-  <!-- 흰 패널 밖, 오른쪽 끝에 세로로: 지우개 → 지적도
-       (되돌리기는 지우개 왼쪽에, 지우개로 지운 게 있을 때만) -->
-  <div id="eraseRow">
-    <button id="eraseUndoBtn" onclick="undoErase()" style="display:none;" title="방금 지운 것부터 하나씩 되살립니다">↩️ 되돌리기</button>
-    <button id="eraseBtn" onclick="toggleEraseMode()" title="켜고 지도를 클릭하면 그 자리 근처 객체가 지워집니다 · 축소해서 누르면 근처 여러 개가 한 번에 · 버튼 다시 누르면 종료">🧽 지우개</button>
-  </div>
-  <div class="float-row">
+    <button type="button" id="cadastralLoadBtn" onclick="loadCadastral()" title="지도 가운데가 든 리의 연속지적도를 불러옵니다 (📁 → 지적도 경로 지정 · 사진위치표시 실행 중일 때)">지적도</button>
     <button id="cadastralBtn" onclick="toggleCadastral()" title="지적도 켜기/끄기">🗺️ 지적도</button>
+    <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
   </div>
   </div>
+
+  
 
   <div id="vmap"></div>
   <div id="airYearMsg"></div>
