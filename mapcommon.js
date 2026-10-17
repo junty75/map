@@ -2883,7 +2883,7 @@ function _mtextPlain(s){
   return String(s || '').replace(/\\P/g, '\n').replace(/\\[ACFHQTW][^;]*;/gi, '').replace(/\\[LlOoKk]/g, '')
     .replace(/\\S([^;]*);/g, (m, a) => a.replace(/[#^]/, '/')).replace(/[{}]/g, '').replace(/\\~/g, ' ').replace(/\\\\/g, '\\').trim();
 }
-async function dxfToKmlFile(file, forceCode){   // forceCode = 좌표계 창 없이 쓸 코드(지적도 불러오기)
+async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표계 창 없이 쓸 코드, cadName = 지적도 이름(지적도 삽입)
   if (!file) return null;
   const text = _dxfDecode(await file.arrayBuffer());
   if (/^\s*AutoCAD Binary DXF/.test(text)) { alert('바이너리 DXF 는 읽지 못합니다. 캐드에서 ASCII DXF 로 저장해 주세요.'); return null; }
@@ -3045,13 +3045,22 @@ async function dxfToKmlFile(file, forceCode){   // forceCode = 좌표계 창 없
 
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   const kcol = h => 'ff' + h.slice(4, 6) + h.slice(2, 4) + h.slice(0, 2);
-  let kml = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>' + esc(file.name) + '</name>\n';
-  let si = 0;
+  // 지적도 도면(레이어·파일 이름에 지적/LSMD/KMAP/LDREG)이면 이름을 「○○리 지적도」로 짧게, 열어도 화면(줌) 그대로 (2026-10-17)
+  const CADRE = /지적|LSMD|KMAP|LDREG/i;
+  const isCad = !!cadName || CADRE.test(file.name) || [...groups.values()].some(g => CADRE.test(g.layer));
+  if (isCad && !cadName) {
+    const src = [file.name.replace(/\.[^.]+$/, '')].concat([...groups.values()].map(g => g.layer)).join(' ');
+    const m = src.match(/[가-힣]+[리동가](?=[^가-힣]|$)/g);
+    cadName = (m ? m[m.length - 1] + ' ' : '') + '지적도';
+  }
+  let kml = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>' + esc(cadName || file.name) + '</name>\n';
+  let si = 0, ci = 0;
   for (const gr of groups.values()) {
     const id = 'dx' + (si++);
     // 치수선은 얇게(1) — Vector_Convert.py KMZ_DIM_WIDTH 와 같음
     kml += '<Style id="' + id + '"><LineStyle><color>' + kcol(gr.color) + '</color><width>' + (gr.dim ? 1 : 2) + '</width></LineStyle></Style>\n';
-    kml += '<Placemark><name>' + esc(gr.layer + (gr.dim ? ' (치수)' : '')) + '</name><styleUrl>#' + id + '</styleUrl><MultiGeometry>'
+    const gname = isCad ? cadName + (ci++ ? ' ' + ci : '') : gr.layer + (gr.dim ? ' (치수)' : '');
+    kml += '<Placemark><name>' + esc(gname) + '</name><styleUrl>#' + id + '</styleUrl><MultiGeometry>'
       + gr.parts.map(p => '<LineString><coordinates>' + p + '</coordinates></LineString>').join('') + '</MultiGeometry></Placemark>\n';
   }
   points.slice(0, 2000).forEach(p => { kml += '<Placemark><name>' + esc(p.name || '점') + '</name><Point><coordinates>' + toLL(p.x, p.y) + '</coordinates></Point></Placemark>\n'; });
@@ -3066,7 +3075,14 @@ async function dxfToKmlFile(file, forceCode){   // forceCode = 좌표계 창 없
   showSaveStatus('📐 DXF 읽음 — 선 묶음 ' + groups.size + ' · 점 ' + Math.min(points.length, 2000) + ' · 문자 ' + texts.length
     + (cnt.dims ? ' · 치수 ' + cnt.dims : '') + (cnt.blocks ? ' · 블록 ' + cnt.blocks : '')
     + (points.length > 2000 ? ' (점은 2000개까지)' : '') + (cnt.skipped ? ' · 못 읽은 객체 ' + cnt.skipped + '개' : ''));
-  return new File([kml], file.name.replace(/\.dxf$/i, '') + '.kml', { type: 'application/vnd.google-earth.kml+xml' });
+  const kf = new File([kml], file.name.replace(/\.dxf$/i, '') + '.kml', { type: 'application/vnd.google-earth.kml+xml' });
+  if (isCad) { kf._keepView = true; kf._cadName = cadName; }
+  return kf;
+}
+// DXF·DWG 에서 바꾼 KML 열기 — 지적도 도면이면 보던 화면 그대로, 아니면 객체 전체로 맞춤(loadKMZ 기본)
+function openConvertedKml(f){
+  if (!f) return;
+  return f._keepView ? _cadLoadKeepView(f) : _loadKmlFile(f);
 }
 
 // ══════════════════════════════════════════════════
@@ -3114,7 +3130,7 @@ function loadCadastral(){
   if (!(window.__wsReady && window.__wsReady())) { alert('지적도 불러오기는 PC 프로그램(사진위치표시)이 켜져 있을 때만 됩니다.'); return; }
   const c = _mapCenterLL(); if (!c) return;
   const send = (emd, ri) => {
-    _cadWait = { id: 'c' + (++_cadSeq), name: [emd, ri].filter(Boolean).join(' ') };
+    _cadWait = { id: 'c' + (++_cadSeq), name: [emd, ri].filter(Boolean).join(' '), ri: ri || '' };
     showSaveStatus('🗺 지적도 불러오는 중… (' + (_cadWait.name || '지도 가운데') + ')');
     window.__wsSend({ type: 'cadastral_load', reqid: _cadWait.id, lat: c[0], lng: c[1], emd: emd || '', ri: ri || '' });
   };
@@ -3128,7 +3144,7 @@ function loadCadastral(){
 }
 window.__onCadastral = async d => {
   if (!_cadWait || d.reqid !== _cadWait.id) return;
-  const name = '지적도 ' + (_cadWait.name || d.li || '');
+  const name = ((_cadWait.ri || _cadWait.name || d.li || '') + ' 지적도').trim();   // 「장수리 지적도」 (SHP·DXF 같음)
   _cadWait = null;
   if (!d.ok) {
     if (d.reason === 'no_dir') { if (confirm('지적도 경로가 지정되지 않았습니다.\n지금 지정할까요? (📁 → 지적도 경로 지정)')) setCadastralDir(); }
@@ -3141,8 +3157,8 @@ window.__onCadastral = async d => {
   if (d.kind === 'dxf') {
     const bin = atob(d.data), u8 = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-    const f = await dxfToKmlFile(new File([u8], d.file), '5186');
-    if (f) await _cadLoadKeepView(new File([(await f.text()).replace(/<Document><name>[^<]*<\/name>/, '<Document><name>' + _hesc(name) + '</name>')], name + '.kml'));
+    const f = await dxfToKmlFile(new File([u8], d.file), '5186', name);
+    if (f) await _cadLoadKeepView(f);
     return;
   }
   const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

@@ -4024,11 +4024,11 @@ function handleDroppedFiles(files,_fhPromises){
 
     } else if (name.endsWith('.dwg')) {
       // 📐 DWG → (PC 서버 캐드 엔진) DXF → KML (mapcommon.js dwgToKmlFile)
-      dwgToKmlFile(file).then(f=>{ if(f) loadKMZ(f,new kakao.maps.LatLngBounds()); }).catch(e=>alert('DWG 읽기 실패: '+e.message));
+      dwgToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DWG 읽기 실패: '+e.message));   // 지적도 도면이면 화면 그대로
 
     } else if (name.endsWith('.dxf')) {
       // 📐 DXF → 좌표계 고르고 KML 로 바꿔 KMZ 와 같은 경로로 (mapcommon.js dxfToKmlFile)
-      dxfToKmlFile(file).then(f=>{ if(f) loadKMZ(f,new kakao.maps.LatLngBounds()); }).catch(e=>alert('DXF 읽기 실패: '+e.message));
+      dxfToKmlFile(file).then(f=>openConvertedKml(f)).catch(e=>alert('DXF 읽기 실패: '+e.message));   // 지적도 도면이면 화면 그대로
 
     } else if (name.endsWith('.htm')||name.endsWith('.html')) {
       const reader=new FileReader();
