@@ -2015,6 +2015,8 @@ else initRelinkDirsBtn();
 //     옵션마다 ROUTE_OPTS 의 순서대로 시도하고, 다 실패하면 그 구간만 직선으로 잇는다.
 //     길 끝이 찍은 점에서 ROUTE_GAP_M 넘게 떨어지면(그 근처 길이 지도 데이터에 없음) 다음 서버도 물어
 //     빈 거리가 가장 짧은 결과를 쓴다 → 도보·등산 옵션도 OSM 에 길이 없으면 카카오로 메운다.
+//       브이월드 연속수치지형도 도로중심선(LT_L_N3A0020000) — 모든 옵션의 맨 끝(2026-10-17). 길찾기 엔진이 없어 받아 온 선으로
+//               페이지 안에서 최단경로(_vwGraphRoute, 휴대폰 gdrive.js 와 같은 코드). PC 서버(카카오)가 없을 때 농로를 메운다.
 //   · 가까운길: 최단거리 옵션이 있는 자동차 서버가 없어 후보 여러 개(OSRM 대안경로 + BRouter car-eco) 중 가장 짧은 것.
 //   · 찍은 점(경유점)을 기억한다 → 옵션을 바꾸면 그 경로를 새 옵션으로 다시 찾고(그리는 중·끝낸 경로 모두),
 //     끝낸 경로는 item._routeWps / item._routeOpt 에 담긴다. 옵션 변경 대상: 그리는 중인 경로 → 사이드바에서 고른 경로 트랙 → 방금 끝낸 경로 순.
@@ -2030,16 +2032,16 @@ var _routeQ = Promise.resolve(); // 구간 요청 순서 보장
 var _routeGen = 0;               // 끝내기/취소 후 늦게 온 응답 버리기용
 var _routeLastItem = null;       // 방금 끝낸 경로 트랙 (옵션 변경·경유지 대상)
 // 옵션 → 이름, 시도할 서버 목록  (o = OSRM 프로필, b = BRouter 프로필, p = BRouter 옵션)
-//  k = 카카오 priority(RECOMMEND|TIME|DISTANCE), avoid = 카카오 회피('toll', 'motorway|toll')
+//  k = 카카오 priority(RECOMMEND|TIME|DISTANCE), avoid = 카카오 회피('toll', 'motorway|toll'), v = 브이월드 도로중심선(옵션 무시, 최단거리)
 var ROUTE_OPTS = {
-  fast:     { name:'빠른길',       src:[{ k:'RECOMMEND' }, { o:'car' }, { b:'car-fast' }] },
-  motorway: { name:'고속도로 우선', src:[{ k:'TIME' }, { b:'car-fast' }, { o:'car' }] },
-  free:     { name:'무료도로',     src:[{ k:'RECOMMEND', avoid:'toll' }, { b:'car-fast', p:{ avoid_toll:1 } }] },
-  local:    { name:'일반도로',     src:[{ k:'RECOMMEND', avoid:'motorway|toll' }, { b:'car-fast', p:{ avoid_motorways:1, avoid_toll:1 } }] },
-  short:    { name:'가까운길',     src:[{ k:'DISTANCE' }, { o:'car', alt:1 }, { b:'car-eco' }], pick:'short' },
-  bike:     { name:'자전거도로',   src:[{ b:'trekking', p:{ stick_to_cycleroutes:1 } }, { b:'trekking' }, { o:'bike' }, { k:'DISTANCE' }] },
-  foot:     { name:'도보',         src:[{ o:'foot' }, { b:'shortest' }, { k:'DISTANCE' }] },
-  hike:     { name:'등산로',       src:[{ b:'hiking-mountain' }, { o:'foot' }, { k:'DISTANCE' }] },
+  fast:     { name:'빠른길',       src:[{ k:'RECOMMEND' }, { o:'car' }, { b:'car-fast' }, { v:1 }] },
+  motorway: { name:'고속도로 우선', src:[{ k:'TIME' }, { b:'car-fast' }, { o:'car' }, { v:1 }] },
+  free:     { name:'무료도로',     src:[{ k:'RECOMMEND', avoid:'toll' }, { b:'car-fast', p:{ avoid_toll:1 } }, { v:1 }] },
+  local:    { name:'일반도로',     src:[{ k:'RECOMMEND', avoid:'motorway|toll' }, { b:'car-fast', p:{ avoid_motorways:1, avoid_toll:1 } }, { v:1 }] },
+  short:    { name:'가까운길',     src:[{ k:'DISTANCE' }, { o:'car', alt:1 }, { b:'car-eco' }, { v:1 }], pick:'short' },
+  bike:     { name:'자전거도로',   src:[{ b:'trekking', p:{ stick_to_cycleroutes:1 } }, { b:'trekking' }, { o:'bike' }, { k:'DISTANCE' }, { v:1 }] },
+  foot:     { name:'도보',         src:[{ o:'foot' }, { b:'shortest' }, { k:'DISTANCE' }, { v:1 }] },
+  hike:     { name:'등산로',       src:[{ b:'hiking-mountain' }, { o:'foot' }, { k:'DISTANCE' }, { v:1 }] },
   line:     { name:'직선',         src:[] }
 };
 var ROUTE_GAP_M = 30;            // 길 끝과 찍은 점 사이가 이보다 멀면 '그 근처 길 없음'으로 보고 다음 서버도 물어 본다
@@ -2090,6 +2092,7 @@ window.__onRouteKakao = d => { const f = _rkWait[d.reqid]; if (f) f(d); };
 // 서버 하나에 물어 경로 후보들 [{pts:[[lat,lng],..], dist(m), time(초)}] — 실패하면 []
 async function _routeAsk(s, a, b){
   if (s.k) return _routeKakao(s, a, b);
+  if (s.v) return _routeVworld(a, b);
   if (s.o) {
     const j = await _routeGet('https://routing.openstreetmap.de/routed-' + s.o + '/route/v1/driving/'
       + a[1] + ',' + a[0] + ';' + b[1] + ',' + b[0] + '?overview=full&geometries=geojson'
@@ -2109,6 +2112,144 @@ async function _routeAsk(s, a, b){
   const pr = f.properties || {};
   return [{ pts: c.map(p => [p[1], p[0]]), dist: +pr['track-length'] || 0, time: +pr['total-time'] || 0 }];
 }
+
+// ── 브이월드 도로중심선 길찾기 (2026-10-17, 휴대폰 gdrive.js vwSeg 이식) ──
+//  연속수치지형도 도로중심선(LT_L_N3A0020000)을 JSONP 로 받아(CORS 헤더 없음) _vwGraphRoute 로 최단경로.
+//  키: 페이지 키(깃허브 배포본은 github.io 도메인 등록 키 고정) — file:// 로컬 모드는 domain=http://localhost.
+//  a→b 가 4km 넘으면 받는 양이 많아 안 한다. 결과 [{pts, dist, time:0, src:'vworld'}] 또는 [].
+var _vwCache = [];
+function _vwKey(){
+  try { if (window.JTY_API_KEYS && JTY_API_KEYS.vworld_key) return JTY_API_KEYS.vworld_key; } catch (e) {}
+  try { return localStorage.getItem('vworld_key') || ''; } catch (e) { return ''; }
+}
+function _vwJsonp(url, ms){
+  return new Promise(res => {
+    const cb = '_vwcb' + Date.now().toString(36) + Math.floor(Math.random() * 1e6), s = document.createElement('script');
+    const end = v => { clearTimeout(t); try { delete window[cb]; } catch (e) { window[cb] = undefined; } s.remove(); res(v); };
+    const t = setTimeout(() => { window[cb] = function () {}; end(null); }, ms);
+    window[cb] = j => end(j);
+    s.onerror = () => end(null);
+    s.src = url + '&callback=' + cb;
+    document.head.appendChild(s);
+  });
+}
+async function _vwRoads(box){
+  const key = _vwKey(); if (!key) return null;
+  const dom = location.protocol === 'file:' ? 'http://localhost' : location.origin;
+  const base = 'https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_L_N3A0020000&key=' + key
+    + '&domain=' + encodeURIComponent(dom) + '&geomFilter=BOX(' + box.map(v => v.toFixed(6)).join(',') + ')&crs=EPSG:4326&format=json&size=1000';
+  const hit = _vwCache.find(c => c[0] === base); if (hit) return hit[1];
+  let all = [];
+  for (let pg = 1; pg <= 4; pg++) {
+    const j = await _vwJsonp(base + '&page=' + pg, 10000), r = j && j.response;
+    if (!r) return null;
+    if (r.status === 'NOT_FOUND') break;
+    if (r.status !== 'OK') return null;
+    all = all.concat(r.result.featureCollection.features || []);
+    if (pg >= +((r.page && r.page.total) || 1)) break;
+  }
+  _vwCache.push([base, all]); if (_vwCache.length > 8) _vwCache.shift();
+  return all;
+}
+async function _routeVworld(a, b){
+  const d = _routeHav(a, b);
+  if (d > 4000 || navigator.onLine === false) return [];
+  const m = Math.max(250, d * 0.2), dLat = m / 110540, dLng = m / (111320 * Math.cos(a[0] * Math.PI / 180));
+  const box = [Math.min(a[1], b[1]) - dLng, Math.min(a[0], b[0]) - dLat, Math.max(a[1], b[1]) + dLng, Math.max(a[0], b[0]) + dLat];
+  try {
+    const f = await _vwRoads(box); if (!f || !f.length) return [];
+    const r = _vwGraphRoute(f, a, b); if (!r || r.pts.length < 2) return [];
+    return [{ pts: r.pts, dist: _routeLen(r.pts), time: 0, src: 'vworld' }];
+  } catch (e) { console.warn('[route] vworld', e); return []; }
+}
+// 휴대폰 gdrive.js 의 vwGraphRoute 와 같은 코드 (고치면 두 곳 같이) — dist 는 _routeHav
+function _vwGraphRoute(feats, a, b) {
+  var lat0 = (a[0] + b[0]) / 2, KX = 111320 * Math.cos(lat0 * Math.PI / 180), KY = 110540;
+  var xy = function (ll) { return [(ll[1] - a[1]) * KX, (ll[0] - a[0]) * KY]; };
+  var ll = function (p) { return [a[0] + p[1] / KY, a[1] + p[0] / KX]; };
+  var P = [], adj = [], grid = {};
+  var gk = function (x, y) { return Math.floor(x / 2) + ',' + Math.floor(y / 2); };
+  function node(p, tol) {
+    var cx = Math.floor(p[0] / 2), cy = Math.floor(p[1] / 2);
+    for (var i = -1; i <= 1; i++) for (var j = -1; j <= 1; j++) {
+      var c = grid[(cx + i) + ',' + (cy + j)]; if (!c) continue;
+      for (var k = 0; k < c.length; k++) { var q = P[c[k]]; if (Math.hypot(q[0] - p[0], q[1] - p[1]) <= tol) return c[k]; }
+    }
+    P.push(p); adj.push([]); var key = gk(p[0], p[1]); (grid[key] = grid[key] || []).push(P.length - 1);
+    return P.length - 1;
+  }
+  var E = [];   // [u,v]
+  function edge(u, v) { if (u === v) return; var w = Math.hypot(P[u][0] - P[v][0], P[u][1] - P[v][1]); adj[u].push([v, w]); adj[v].push([u, w]); E.push([u, v]); }
+  var lines = [];
+  feats.forEach(function (f) {
+    var g = f.geometry; if (!g) return;
+    var ls = g.type === 'MultiLineString' ? g.coordinates : g.type === 'LineString' ? [g.coordinates] : [];
+    ls.forEach(function (l) { if (l.length >= 2) lines.push(l.map(function (c) { return xy([c[1], c[0]]); })); });
+  });
+  // 끝점부터 노드로(1m 병합), 그다음 중간 꼭짓점(같은 자리만)
+  var ends = lines.map(function (l) { return [node(l[0], 1), node(l[l.length - 1], 1)]; });
+  lines.forEach(function (l, i) {
+    var prev = ends[i][0];
+    for (var k = 1; k < l.length; k++) {
+      var cur = k === l.length - 1 ? ends[i][1] : node(l[k], 0.01);
+      edge(prev, cur); prev = cur;
+    }
+  });
+  if (!E.length) return null;
+  // 가장 가까운 선분 위 점
+  function proj(p, e) {
+    var A = P[e[0]], B = P[e[1]], dx = B[0] - A[0], dy = B[1] - A[1], L = dx * dx + dy * dy;
+    var t = L ? Math.max(0, Math.min(1, ((p[0] - A[0]) * dx + (p[1] - A[1]) * dy) / L)) : 0;
+    var q = [A[0] + t * dx, A[1] + t * dy];
+    return { q: q, t: t, d: Math.hypot(q[0] - p[0], q[1] - p[1]) };
+  }
+  // T자 길: 연결이 하나뿐인 끝점이 다른 선분 중간 2m 안이면 그 선분을 잘라 잇는다
+  for (var n = 0, nP = P.length; n < nP; n++) {
+    if (adj[n].length !== 1) continue;
+    for (var ei = 0; ei < E.length; ei++) {
+      var e = E[ei]; if (!e || e[0] === n || e[1] === n) continue;
+      var r = proj(P[n], e);
+      if (r.d <= 2 && r.t > 0 && r.t < 1) { splitAt(ei, n); break; }
+    }
+  }
+  function unlink(u, v) { adj[u] = adj[u].filter(function (x) { return x[0] !== v; }); adj[v] = adj[v].filter(function (x) { return x[0] !== u; }); }
+  function splitAt(ei, m) { var e = E[ei]; unlink(e[0], e[1]); E[ei] = null; edge(e[0], m); edge(m, e[1]); }
+  function nearestEdge(p, ok) {
+    var best = null;
+    for (var i = 0; i < E.length; i++) {
+      var e = E[i]; if (!e || (ok && !ok(e))) continue;
+      var r = proj(p, e); if (!best || r.d < best.d) { best = r; best.i = i; }
+    }
+    return best;
+  }
+  function insert(s) {   // 선분 위 점을 노드로
+    var e = E[s.i];
+    if (s.t <= 0) return e[0]; if (s.t >= 1) return e[1];
+    P.push(s.q); adj.push([]); var m = P.length - 1; splitAt(s.i, m); return m;
+  }
+  var pa = xy(a), pb = xy(b);
+  var sa = nearestEdge(pa); var na = insert(sa);
+  // a 에서 갈 수 있는 곳 전부 (다익스트라)
+  var D = new Float64Array(P.length).fill(Infinity), prv = new Int32Array(P.length).fill(-1), done = new Uint8Array(P.length);
+  D[na] = 0;
+  var heap = [[0, na]];
+  function push(x) { heap.push(x); var i = heap.length - 1; while (i) { var p = (i - 1) >> 1; if (heap[p][0] <= x[0]) break; heap[i] = heap[p]; i = p; } heap[i] = x; }
+  function pop() { var top = heap[0], x = heap.pop(); if (heap.length) { var i = 0, n = heap.length; for (;;) { var l = 2 * i + 1, r = l + 1, m = i; if (l < n && heap[l][0] < (m === i ? x[0] : heap[m][0])) m = l; if (r < n && heap[r][0] < (m === i ? x[0] : heap[m][0])) m = r; if (m === i) break; heap[i] = heap[m]; i = m; } heap[i] = x; } return top; }
+  while (heap.length) {
+    var t = pop(), u = t[1]; if (done[u]) continue; done[u] = 1;
+    adj[u].forEach(function (x) { var nd = D[u] + x[1]; if (nd < D[x[0]]) { D[x[0]] = nd; prv[x[0]] = u; push([nd, x[0]]); } });
+  }
+  var sb = nearestEdge(pb, function (e) { return D[e[0]] < Infinity; });
+  if (!sb) return null;
+  var e = E[sb.i], A = P[e[0]], B = P[e[1]];
+  var ca = D[e[0]] + Math.hypot(sb.q[0] - A[0], sb.q[1] - A[1]), cb = D[e[1]] + Math.hypot(sb.q[0] - B[0], sb.q[1] - B[1]);
+  var path = [sb.q], v = ca <= cb ? e[0] : e[1];
+  if (Math.hypot(P[v][0] - sb.q[0], P[v][1] - sb.q[1]) > 0.01) path.push(P[v]);
+  while (prv[v] >= 0) { v = prv[v]; path.push(P[v]); }
+  path.reverse();
+  return { pts: path.map(ll), gapA: sa.d, gapB: sb.d };
+}
+
 // 두 점 사이 길 따라 {pts, dist, time} — 실패하면 null
 async function _routeFetch(a, b, opt){
   const o = ROUTE_OPTS[opt];
@@ -2211,7 +2352,7 @@ function routeClick(lat, lng){
       if (!r) showSaveStatus('⚠️ 길을 찾지 못해 이 구간은 직선으로 이었습니다', false);
       else if (r.gap > ROUTE_GAP_M) showSaveStatus('🧭 ' + ROUTE_OPTS[prof].name + ' 구간 ' + _routeFmt(r)
         + ' · ⚠️ 끝 ' + Math.round(r.gap) + 'm 는 지도에 길이 없어 직선' + (window.__wsReady && window.__wsReady() ? '' : ' (PC 서버를 켜면 카카오 길찾기로 더 찾습니다)'), false);
-      else showSaveStatus('🧭 ' + ROUTE_OPTS[prof].name + ' 구간 ' + _routeFmt(r) + (r.src === 'kakao' ? ' (카카오)' : ''));
+      else showSaveStatus('🧭 ' + ROUTE_OPTS[prof].name + ' 구간 ' + _routeFmt(r) + (r.src === 'kakao' ? ' (카카오)' : r.src === 'vworld' ? ' (브이월드 도로중심선)' : ''));
     }
     const pts = _routeTrim(r && r.pts, last, [lat, lng]);
     _drawAppendPts(pts); _routeSegs.push(pts.length); _routeWps.push([lat, lng]);
