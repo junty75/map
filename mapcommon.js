@@ -3151,3 +3151,15 @@ window.__onCadastral = async d => {
   _loadKmlFile(new File([kml], name + '.kml'));
   showSaveStatus('🗺 ' + name + ' — ' + d.parcels.length.toLocaleString() + '필지 (' + d.file + ')');
 };
+
+// 주소 클릭 = 주소 글자만 복사 (2026-10-17). 위경도+주소 복사·번호 마커는 Ctrl+C 에만 남김(copyAndMarkLocation / copyAndMark).
+function copyAddressOnly(text){
+  const el = document.getElementById('address-display');
+  text = String(text || '').trim();
+  if (!text || text === '주소 없음' || text === '✅ 복사됨') return;
+  const done = () => { const prev = el.innerText; el.innerText = '✅ 복사됨'; setTimeout(() => { if (el.innerText === '✅ 복사됨') el.innerText = prev; }, 1200); };
+  navigator.clipboard.writeText(text).then(done).catch(() => {
+    const t = document.createElement('textarea'); t.value = text; t.style = 'position:fixed;opacity:0;';
+    document.body.appendChild(t); t.select(); document.execCommand('copy'); document.body.removeChild(t); done();
+  });
+}

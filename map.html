@@ -2183,7 +2183,7 @@ function initializeMap(center, level) {
     document.getElementById('latlng-display').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;   // 브이월드 판과 같은 6자리(주소 옆 좁은 칸)
     geocoder.coord2Address(lng, lat, (res, status) => {
       const el = document.getElementById('address-display');
-      el.onclick = () => { if (!el.innerText||el.innerText==='주소 없음'||el.innerText==='✅ 복사됨') return; copyAndMarkLocation(); };
+      el.onclick = () => copyAddressOnly(el.innerText);   // 주소만 복사 (위경도+주소+번호 마커는 Ctrl+C) — mapcommon.js
       if (status===kakao.maps.services.Status.OK && res[0]?.address) {
         const legal = res[0].address.address_name;
         const roadFull = res[0].road_address?.address_name;
