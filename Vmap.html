@@ -1505,8 +1505,8 @@ function mapRightClick(e) {
   if (hitMk) return;
   const nearPoly = findNearPoly(px, 10);
   if (nearPoly) { showPolyMenu(lastCX||e.clientX, lastCY||e.clientY, nearPoly); return; }
-  // 빈 곳 우클릭 + 사이드바에서 트랙을 골라 둠 → 경유지 추가 / 출발지 변경 / 도착지 변경 (선·마커·글자 위는 원래 메뉴)
-  { const rl = fromMerc(coord); if (routeCtxMenu(e.clientX, e.clientY, rl[1], rl[0])) return; }
+  // 빈 곳 우클릭 → 메뉴(마커·문자·거리·면적·경로, 트랙을 골라 두었으면 경유지·출발지·도착지도) — mapcommon.js mapCtxMenu
+  { const rl = fromMerc(coord); if (mapCtxMenu(e.clientX, e.clientY, rl[1], rl[0])) return; }
   showMarkerInput(coord);
 }
 
@@ -1683,6 +1683,10 @@ function _trackSetPts(item, pts){
   if(l._autoSave) autoSaveTrackV(item);   // 임시트랙 파일도 같은 이름으로 덮어씀
 }
 // 한 줄짜리 선 트랙의 좌표 [[lat,lng],..] — 면·묶음선은 null (우클릭 경유지·출발지·도착지 메뉴용)
+// ── 빈 곳 우클릭 메뉴 어댑터 (mapcommon.js mapCtxMenu) ──
+function _ctxMarkerAt(lat,lng){ showMarkerInput(toMerc(lng,lat)); }
+function _ctxTextAt(lat,lng){ openTextEditor(toMerc(lng,lat),null); }
+function _ctxAreaAt(lat,lng){ if(!areaMode) toggleAreaMeasure(); areaAddPointV(toMerc(lng,lat)); }
 function _trackPtsOf(item){
   const l=item&&item.polyLyr; if(!l) return null;
   const L=_lyrLines([l]); return (L.length===1&&L[0].length>=2)?L[0]:null;

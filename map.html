@@ -2228,8 +2228,8 @@ function initializeMap(center, level) {
       }
     });
     if (nearestPoly && nearestDist<=10) showPolyMenu(lastClientX, lastClientY, nearestPoly);
-    // 빈 곳 우클릭 + 사이드바에서 트랙을 골라 둠 → 경유지 추가 / 출발지 변경 / 도착지 변경 (선·마커·글자 위는 원래 메뉴)
-    else if (!routeCtxMenu(lastClientX, lastClientY, e.latLng.getLat(), e.latLng.getLng())) showMarkerInput(e.latLng);
+    // 빈 곳 우클릭 → 메뉴(마커·문자·거리·면적·경로, 트랙을 골라 두었으면 경유지·출발지·도착지도) — mapcommon.js mapCtxMenu
+    else if (!mapCtxMenu(lastClientX, lastClientY, e.latLng.getLat(), e.latLng.getLng())) showMarkerInput(e.latLng);
   });
 
   function ptSegDist(p,a,b) {
@@ -3321,6 +3321,10 @@ function _trackSetPts(item, pts) {
   if (pl._autoSave) autoSaveTrack(item);   // 임시트랙 파일도 같은 이름으로 덮어씀
 }
 // 한 줄짜리 선 트랙의 좌표 [[lat,lng],..] — 면·묶음선은 null (우클릭 경유지·출발지·도착지 메뉴용)
+// ── 빈 곳 우클릭 메뉴 어댑터 (mapcommon.js mapCtxMenu) ──
+function _ctxMarkerAt(lat, lng) { showMarkerInput(new kakao.maps.LatLng(lat, lng)); }
+function _ctxTextAt(lat, lng) { openTextEditor(new kakao.maps.LatLng(lat, lng), null); }
+function _ctxAreaAt(lat, lng) { if (!areaMode) toggleAreaMeasure(); areaAddPoint(new kakao.maps.LatLng(lat, lng)); }
 function _trackPtsOf(item) {
   const pl = item && item.polyline;
   if (!pl || pl._isPoly || pl._parts || (item.extraOverlays && item.extraOverlays.length)) return null;
