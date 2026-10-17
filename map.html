@@ -223,8 +223,12 @@ _apiKeyError = function(storeKey, name){
     }
 
     /* 주소 표시 → 좌측 하단 */
+    #addrBar { position:absolute; bottom:10px; left:10px; z-index:1000; display:flex; gap:6px; align-items:stretch; }
+    #latlng-display { background:rgba(0,0,0,0.65); color:#fff; border:none; outline:none; font:12px inherit; font-family:inherit;
+      padding:5px 8px; border-radius:5px; width:170px; cursor:pointer; box-shadow:0 2px 6px rgba(0,0,0,0.3); }
+    #latlng-display:hover { background:rgba(0,0,0,0.85); }
     #address-display {
-      position:absolute; bottom:10px; left:10px; z-index:1000;
+      position:static;
       background:rgba(0,0,0,0.65); color:#fff;
       font-size:12px; padding:5px 8px; border-radius:5px;
       white-space:nowrap; cursor:pointer;
@@ -440,7 +444,8 @@ _apiKeyError = function(storeKey, name){
       <input id="address-input" type="text" placeholder="주소 검색" style="padding:5px;width:180px;">
       <button type="submit" style="padding:5px;">검색</button>
     </form>
-    <div id="address-display">주소 없음</div>
+    <!-- 주소 + 좌표 (좌하단, 2026-10-17 좌표창을 툴바에서 여기로) -->
+    <div id="addrBar"><div id="address-display">주소 없음</div><input id="latlng-display" readonly title="클릭하여 복사" onclick="copyCoordFromInput(this)"></div>
     <div id="polyMenu">
       <button id="polySelectBtn">✅ 선택 (사이드바)</button>
       <button id="polyEditBtn">✏️ 수정</button>
@@ -460,25 +465,7 @@ _apiKeyError = function(storeKey, name){
     <div id="ctrlWrap">
     <div class="controls">
       <div style="display:flex;gap:6px;align-items:center;">
-        <input id="latlng-display" readonly style="flex:1;min-width:178px;font-size:12px;cursor:pointer;" title="클릭하여 복사" onclick="copyCoordFromInput(this)">
-        <button type="button" onclick="startDrawing()">선 그리기 (Alt)</button>
-        <button type="button" id="areaBtn" onclick="toggleAreaMeasure()" title="클릭으로 꼭짓점 찍기 · 더블클릭/우클릭으로 확정 · 버튼 다시 누르면 지우고 종료">면적재기</button>
-        <button type="button" id="routeBtn" onclick="toggleRouteDraw()" title="경로찾기 — 지도를 차례로 클릭하면 점 사이를 길(OpenStreetMap 도로) 따라 잇습니다&#10;우클릭=끝내기(목록에 트랙으로 추가) · Backspace=한 점 취소&#10;선 그리기 중에 누르면 그 선을 이어서 길 따라 그립니다">🧭 경로찾기</button>
-        <select id="routeProfile" title="경로찾기 방식 (OpenStreetMap 도로 기준 — 고른 방식은 기억됩니다)&#10;빠른길·가까운길·고속도로 우선·무료도로·일반도로 = 자동차&#10;자전거도로 = 자전거길 우선 · 등산로 = 산길 포함 도보" style="padding:4px;">
-          <optgroup label="자동차">
-            <option value="fast" selected>빠른길</option>
-            <option value="short">가까운길</option>
-            <option value="motorway">고속도로 우선</option>
-            <option value="free">무료도로</option>
-            <option value="local" title="고속도로·유료도로 제외">일반도로</option>
-          </optgroup>
-          <optgroup label="자전거·도보">
-            <option value="bike">자전거도로</option>
-            <option value="foot">도보</option>
-            <option value="hike">등산로</option>
-          </optgroup>
-          <option value="line">직선</option>
-        </select>
+        <!-- 2026-10-17: 좌표창은 아래 주소 옆으로, 선 그리기·면적재기·경로찾기·경로옵션 목록은 뺌(우클릭 메뉴·Alt 로) -->
         <button type="button" id="drawColorBtn" title="선 색상 (클릭하여 팔레트에서 선택)" style="background:#FF0000;"></button>
         <select id="drawWidth" title="선 두께" style="padding:4px;">
           <option value="1">1px</option>
@@ -488,7 +475,8 @@ _apiKeyError = function(storeKey, name){
           <option value="8">8px</option>
           <option value="12">12px</option>
         </select>
-        <button type="button" onclick="setTempTrackDir()" title="임시트랙 저장폴더 지정 — 지도에서 그린 선이 따로 저장하지 않아도 이 폴더에 자동 저장됩니다 (파일명: 날짜시각_읍면리번지.gpx)">📁</button>
+        <button type="button" onclick="folderMenu(this)" title="폴더 지정 — 임시트랙 저장폴더(그린 선 자동저장) / 지적도 경로(지적도 버튼이 불러올 폴더)">📁</button>
+        <button type="button" id="cadastralLoadBtn" onclick="loadCadastral()" title="지도 가운데가 든 리의 연속지적도를 불러옵니다 (📁 → 지적도 경로 지정 · 사진위치표시 실행 중일 때)">지적도</button>
         <button type="button" id="roadviewBtn" onclick="startRoadviewPick()" style="padding-left:14px;padding-right:14px;">로드뷰</button>
         <button type="button" onclick="window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes')" title="도움말 (F1)">❓</button>
       </div>
@@ -538,7 +526,6 @@ _apiKeyError = function(storeKey, name){
     <!-- 지우개 줄 — 흰 패널 밖, 오른쪽 끝(화면 초기화 아래). 되돌리기는 지우개 왼쪽에 필요할 때만 -->
     <div id="eraseRow">
       <button type="button" id="eraseUndoBtn" onclick="undoErase()" style="display:none;" title="방금 지운 것부터 하나씩 되살립니다">↩️ 되돌리기</button>
-      <button type="button" id="textBtn" onclick="toggleTextMode()" title="지도에 글자(메모)를 넣습니다 — 단축키 T&#10;켜고 지도를 클릭하면 입력창이 열립니다 · Enter=줄바꿈, Ctrl+Enter=확인&#10;글자 크기(m)는 목록에서 고르거나 직접 입력 (0 = 화면 고정 크기)&#10;이미 있는 글자는 우클릭해서 수정·삭제 · Esc=종료">📝 문자</button>
       <button type="button" id="eraseBtn" onclick="toggleEraseMode()" title="켜고 지도를 클릭하면 그 자리 근처 객체가 지워집니다 · 축소해서 누르면 근처 여러 개가 한 번에 · 버튼 다시 누르면 종료">🧽 지우개</button>
     </div>
     </div>
@@ -2193,7 +2180,7 @@ function initializeMap(center, level) {
       if (showNumbers) renderNumbers();
     }
     const lat=e.latLng.getLat(), lng=e.latLng.getLng();
-    document.getElementById('latlng-display').value = `${lat}, ${lng}`;
+    document.getElementById('latlng-display').value = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;   // 브이월드 판과 같은 6자리(주소 옆 좁은 칸)
     geocoder.coord2Address(lng, lat, (res, status) => {
       const el = document.getElementById('address-display');
       el.onclick = () => { if (!el.innerText||el.innerText==='주소 없음'||el.innerText==='✅ 복사됨') return; copyAndMarkLocation(); };
@@ -3352,6 +3339,8 @@ function _trackSetPts(item, pts) {
 // 한 줄짜리 선 트랙의 좌표 [[lat,lng],..] — 면·묶음선은 null (우클릭 경유지·출발지·도착지 메뉴용)
 // ── 빈 곳 우클릭 메뉴 어댑터 (mapcommon.js mapCtxMenu) ──
 function _ctxMarkerAt(lat, lng) { showMarkerInput(new kakao.maps.LatLng(lat, lng)); }
+function _mapCenterLL() { const c = map.getCenter(); return [c.getLat(), c.getLng()]; }   // 🗺 지적도 (mapcommon.js)
+function _loadKmlFile(f) { loadKMZ(f, new kakao.maps.LatLngBounds()); }
 function _ctxLatLngAt(x, y) {   // 화면 좌표 → [lat,lng]
   const r = document.getElementById('map').getBoundingClientRect();
   const ll = map.getProjection().coordsFromContainerPoint(new kakao.maps.Point(x - r.left, y - r.top));
@@ -5688,6 +5677,10 @@ window.onload=()=>{
           if (window.__onParcel) window.__onParcel(d);   // 🟥 검색한 토지 경계
         } else if (d.type === 'route_kakao') {
           if (window.__onRouteKakao) window.__onRouteKakao(d);   // 🧭 카카오 길찾기 결과
+        } else if (d.type === 'cadastral') {
+          if (window.__onCadastral) window.__onCadastral(d);     // 🗺 지적도 불러오기
+        } else if (d.type === 'cadastral_dir') {
+          if (window.__onCadastralDir) window.__onCadastralDir(d);
         } else if (d.type === 'relink_dirs') {
           if (window.__onRelinkDirs) window.__onRelinkDirs(d);   // 📁 경로폴더 창 결과
         } else if (d.type === 'track_autosaved' || d.type === 'temp_track_dir') {

@@ -1006,6 +1006,17 @@ function askSaveFolder(title, key){
 async function askSaveDest(defBase, ext){
   const r = await askSavePath(defBase + ext);
   if (r === undefined){
+    // 서버 없음 — 크롬 저장 창(폴더·이름 고르기). id 가 같으면 크롬이 마지막에 고른 폴더로 연다(2026-10-17).
+    if (window.showSaveFilePicker) {
+      try {
+        const h = await window.showSaveFilePicker({ id: 'jtymap-save', suggestedName: defBase + ext,
+          types: [{ description: ext.slice(1).toUpperCase() + ' 파일', accept: { 'application/octet-stream': [ext] } }] });
+        return { folder:'', filename:h.name, base:h.name.replace(/\.[^.]+$/, ''), handle:h };
+      } catch (e) {
+        if (e && e.name === 'AbortError') return null;   // 사용자가 취소
+        console.warn('저장 창 실패 — 다운로드 폴더로', e);  // 클릭 직후가 아니면(보안) 예전 방식
+      }
+    }
     const n = prompt('파일명', defBase);
     return n ? { folder:'', filename:n + ext, base:n } : null;
   }
@@ -1016,6 +1027,14 @@ async function askSaveDest(defBase, ext){
 
 // 대화상자에서 고른 위치에 저장. folder 가 없으면 브라우저 다운로드로 폴백.
 function saveBlobTo(dest, blob, onSaved){
+  if (dest && dest.handle) {   // 서버 없을 때 크롬 저장 창으로 고른 파일
+    (async () => {
+      const w = await dest.handle.createWritable(); await w.write(blob); await w.close();
+      showSaveStatus('💾 저장: ' + dest.filename);
+      if (onSaved) onSaved();
+    })().catch(e => alert('저장 실패: ' + (e && e.message || e)));
+    return;
+  }
   if (dest && dest.folder && window.__wsReady && window.__wsReady()){
     window.__kmzOnSaved = onSaved || null;   // file_saved(ok) 때 호출 / 실패 시 미실행
     const fr = new FileReader();
@@ -2046,9 +2065,12 @@ var ROUTE_OPTS = {
 };
 var ROUTE_GAP_M = 30;            // 길 끝과 찍은 점 사이가 이보다 멀면 '그 근처 길 없음'으로 보고 다음 서버도 물어 본다
 
+// 경로 옵션 — 툴바 목록은 2026-10-17 에 뺐다(사용자 요청). 마지막에 고른 옵션(localStorage route_profile)을 쓰고,
+// 바꾸는 곳은 경로 트랙 우클릭 메뉴 머리줄 목록(_routeSetOpt).
 function _routeProfile(){
   const s = document.getElementById('routeProfile');
-  const v = s && s.value;
+  let v = s && s.value;
+  if (!s) { try { v = localStorage.getItem('route_profile'); } catch (e) {} }
   return ROUTE_OPTS[v] ? v : 'fast';
 }
 function _routeUiSync(){
@@ -2479,7 +2501,7 @@ function mapCtxMenu(x, y, lat, lng){
   } else {
     btn('📍 마커 입력', () => _ctxMarkerAt(lat, lng));
     btn('📝 문자 입력', () => _ctxTextAt(lat, lng));
-    btn('📏 거리 재기', () => {
+    btn('📏 거리 재기 (Alt)', () => {
       if (typeof areaMode !== 'undefined' && areaMode) stopAreaMeasure();
       _drawStart(); _drawAppendPts([[lat, lng]]);
       showSaveStatus('📏 거리 재기 — 지도를 클릭해 점 찍기 · 우클릭=끝내기(목록에 트랙으로) · Backspace=한 점 취소');
@@ -2520,6 +2542,7 @@ async function _routeSetOpt(it, opt){
     it._routeWps = [pts[0], pts[pts.length - 1]];
   }
   it._routeOpt = opt;
+  try { localStorage.setItem('route_profile', opt); } catch (e) {}   // 다음 새 경로도 이 옵션으로
   await _routeRedoItem(it, opt, ROUTE_OPTS[opt].name + '(으)로 다시 찾는 중…');
 }
 async function _routeEditWp(it, kind, p){
@@ -2850,7 +2873,7 @@ function _mtextPlain(s){
   return String(s || '').replace(/\\P/g, '\n').replace(/\\[ACFHQTW][^;]*;/gi, '').replace(/\\[LlOoKk]/g, '')
     .replace(/\\S([^;]*);/g, (m, a) => a.replace(/[#^]/, '/')).replace(/[{}]/g, '').replace(/\\~/g, ' ').replace(/\\\\/g, '\\').trim();
 }
-async function dxfToKmlFile(file){
+async function dxfToKmlFile(file, forceCode){   // forceCode = 좌표계 창 없이 쓸 코드(지적도 불러오기)
   if (!file) return null;
   const text = _dxfDecode(await file.arrayBuffer());
   if (/^\s*AutoCAD Binary DXF/.test(text)) { alert('바이너리 DXF 는 읽지 못합니다. 캐드에서 ASCII DXF 로 저장해 주세요.'); return null; }
@@ -2894,7 +2917,7 @@ async function dxfToKmlFile(file){
     let last = ''; try { last = localStorage.getItem('jty_dxf_crs') || ''; } catch (e) {}
     guess = /^518[5-8]$/.test(last) ? last : '5186'; why = ' (Y 30만대 이상 → GRS80 원점으로 추정)';
   }
-  const code = await _dxfAskCrs('📐 DXF 좌표계 — ' + file.name,
+  const code = forceCode || await _dxfAskCrs('📐 DXF 좌표계 — ' + file.name,
     sample ? '도면 좌표 예: X ' + sample[0].toFixed(3) + ', Y ' + sample[1].toFixed(3) + why : '', guess);
   if (!code) return null;
   let cv;
@@ -3035,3 +3058,96 @@ async function dxfToKmlFile(file){
     + (points.length > 2000 ? ' (점은 2000개까지)' : '') + (cnt.skipped ? ' · 못 읽은 객체 ' + cnt.skipped + '개' : ''));
   return new File([kml], file.name.replace(/\.dxf$/i, '') + '.kml', { type: 'application/vnd.google-earth.kml+xml' });
 }
+
+// ══════════════════════════════════════════════════
+//  📁 폴더 메뉴 + 🗺 지적도 불러오기 (2026-10-17)
+//   · 📁 버튼 → 메뉴: 임시트랙 저장폴더 지정 / 지적도 경로 지정 (둘 다 PC 서버 대화상자, 서버가 기억)
+//   · '지적도' 버튼 → 지도 가운데가 든 리의 연속지적도를 불러온다(서버 cadastral_load). SHP 면 리 단위로 잘라 오고,
+//     리별 DXF 폴더면 이름이 맞는 파일(dxfToKmlFile, 5186). 선은 노랑 1px 한 항목('지적도 ○○면 ○○리'), 지번은 문자(높이 2m).
+//   · 사진위치표시(PC 서버)가 켜져 있을 때만 된다(사용자 결정).
+//   · 페이지 어댑터: _mapCenterLL() → [lat,lng], _loadKmlFile(File)
+// ══════════════════════════════════════════════════
+function _folderMenuClose(){ const m = document.getElementById('folderMenu'); if (m) m.remove(); document.removeEventListener('mousedown', _folderMenuOut, true); }
+function _folderMenuOut(e){ const m = document.getElementById('folderMenu'); if (m && !m.contains(e.target)) _folderMenuClose(); }
+function folderMenu(btn){
+  _folderMenuClose();
+  const m = document.createElement('div');
+  m.id = 'folderMenu';
+  m.style.cssText = 'position:fixed;z-index:100000;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);overflow:hidden;min-width:190px;font-size:14px;';
+  [['🗂 임시트랙 저장폴더 지정', setTempTrackDir], ['🗺 지적도 경로 지정', setCadastralDir]].forEach(([t, fn]) => {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = t;
+    b.style.cssText = 'display:block;width:100%;padding:9px 16px;border:none;background:none;text-align:left;font-size:14px;cursor:pointer;font-family:inherit;';
+    b.onmouseenter = () => { b.style.background = '#e8f0fe'; };
+    b.onmouseleave = () => { b.style.background = 'none'; };
+    b.onclick = e => { e.stopPropagation(); _folderMenuClose(); fn(); };
+    m.appendChild(b);
+  });
+  document.body.appendChild(m);
+  const r = btn.getBoundingClientRect(), w = m.getBoundingClientRect().width;
+  m.style.left = Math.max(4, Math.min(r.left, innerWidth - w - 6)) + 'px';
+  m.style.top = (r.bottom + 4) + 'px';
+  setTimeout(() => document.addEventListener('mousedown', _folderMenuOut, true), 0);
+}
+function setCadastralDir(){
+  if (!(window.__wsReady && window.__wsReady())) { alert('지적도 경로는 PC 프로그램(사진위치표시)과 연결된 상태에서 지정할 수 있습니다.'); return; }
+  if (window.__setBadge) window.__setBadge(true, '🗺 지적도 폴더 선택...');
+  window.__wsSend({ type: 'set_cadastral_dir' });
+}
+window.__onCadastralDir = d => {
+  const say = t => { if (window.__setBadge) window.__setBadge(true, t); };
+  if (d.folder) say('🗺 지적도 폴더: ' + d.folder);
+  else say(d.current ? '🗺 지적도 폴더 그대로: ' + d.current : '지적도 폴더 지정 취소');
+};
+var _cadSeq = 0, _cadWait = null;
+function loadCadastral(){
+  if (!(window.__wsReady && window.__wsReady())) { alert('지적도 불러오기는 PC 프로그램(사진위치표시)이 켜져 있을 때만 됩니다.'); return; }
+  const c = _mapCenterLL(); if (!c) return;
+  const send = (emd, ri) => {
+    _cadWait = { id: 'c' + (++_cadSeq), name: [emd, ri].filter(Boolean).join(' ') };
+    showSaveStatus('🗺 지적도 불러오는 중… (' + (_cadWait.name || '지도 가운데') + ')');
+    window.__wsSend({ type: 'cadastral_load', reqid: _cadWait.id, lat: c[0], lng: c[1], emd: emd || '', ri: ri || '' });
+  };
+  // 리 이름(리별 DXF 파일 찾기·항목 이름용) — 카카오 법정동 조회
+  try {
+    new kakao.maps.services.Geocoder().coord2RegionCode(c[1], c[0], (res, st) => {
+      const b = st === kakao.maps.services.Status.OK && res.find(x => x.region_type === 'B');
+      send(b ? b.region_3depth_name : '', b ? b.region_4depth_name : '');
+    });
+  } catch (e) { send('', ''); }
+}
+window.__onCadastral = async d => {
+  if (!_cadWait || d.reqid !== _cadWait.id) return;
+  const name = '지적도 ' + (_cadWait.name || d.li || '');
+  _cadWait = null;
+  if (!d.ok) {
+    if (d.reason === 'no_dir') { if (confirm('지적도 경로가 지정되지 않았습니다.\n지금 지정할까요? (📁 → 지적도 경로 지정)')) setCadastralDir(); }
+    else if (d.reason === 'too_big') alert('지적도 파일이 너무 큽니다: ' + (d.file || ''));
+    else alert('이 위치의 지적도를 지적도 폴더에서 찾지 못했습니다.\n폴더: ' + (d.current || '') + '\n(연속지적도 SHP+DBF 또는 「읍면_리.dxf」 파일)');
+    showSaveStatus('🗺 지적도 없음', false);
+    return;
+  }
+  if (allItems.some(i => i.name === name)) { showSaveStatus('🗺 이미 불러온 지적도입니다 — ' + name); return; }
+  if (d.kind === 'dxf') {
+    const bin = atob(d.data), u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const f = await dxfToKmlFile(new File([u8], d.file), '5186');
+    if (f) _loadKmlFile(new File([(await f.text()).replace(/<Document><name>[^<]*<\/name>/, '<Document><name>' + _hesc(name) + '</name>')], name + '.kml'));
+    return;
+  }
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  let kml = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>' + esc(name) + '</name>\n'
+    + '<Style id="cad"><LineStyle><color>ff00d4ff</color><width>1</width></LineStyle></Style>\n'
+    + '<Placemark><name>' + esc(name) + '</name><styleUrl>#cad</styleUrl><MultiGeometry>';
+  d.parcels.forEach(p => p.r.forEach(r => { kml += '<LineString><coordinates>' + r.map(q => q[1] + ',' + q[0] + ',0').join(' ') + '</coordinates></LineString>'; }));
+  kml += '</MultiGeometry></Placemark>\n';
+  d.parcels.forEach(p => {
+    if (!p.j) return;
+    kml += '<Placemark><name>' + esc(p.j) + '</name><ExtendedData><Data name="kind"><value>text</value></Data><Data name="rot"><value>0</value></Data>'
+      + '<Data name="color"><value>#FFFF00</value></Data><Data name="h"><value>2</value></Data><Data name="ax"><value>0.5</value></Data><Data name="ay"><value>0.5</value></Data>'
+      + '</ExtendedData><Point><coordinates>' + p.c[1] + ',' + p.c[0] + ',0</coordinates></Point></Placemark>\n';
+  });
+  kml += '</Document></kml>';
+  _loadKmlFile(new File([kml], name + '.kml'));
+  showSaveStatus('🗺 ' + name + ' — ' + d.parcels.length.toLocaleString() + '필지 (' + d.file + ')');
+};
