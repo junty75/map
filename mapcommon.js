@@ -2891,7 +2891,7 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
   const pairs = [];
   for (let i = 0; i + 1 < L.length; i += 2) pairs.push([parseInt(L[i], 10), L[i + 1]]);
   // ── 구역별로 읽기: 레이어 색(TABLES), 블록(BLOCKS — 치수선 *D 블록 포함), 객체(ENTITIES) ──
-  const layerAci = {}, blocks = {}, ents = [];
+  const layerAci = {}, layerOff = {}, layerFrz = {}, blocks = {}, ents = [];
   let sec = '', curBlk = null;
   for (let i = 0; i < pairs.length; i++) {
     const [c, v0] = pairs[i];
@@ -2902,9 +2902,11 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
     const e = { type: v, g: [] };
     for (let j = i + 1; j < pairs.length && pairs[j][0] !== 0; j++) e.g.push(pairs[j]);
     if (sec === 'TABLES' && v === 'LAYER') {
-      let nm = '', col = 7;
-      e.g.forEach(p => { if (p[0] === 2) nm = p[1].trim(); if (p[0] === 62) col = Math.abs(parseInt(p[1], 10)) || 7; });
+      let nm = '', col = 7, off = false, frz = false;
+      e.g.forEach(p => { if (p[0] === 2) nm = p[1].trim(); if (p[0] === 62) { const a = parseInt(p[1], 10); col = Math.abs(a) || 7; off = a < 0; } if (p[0] === 70) frz = (parseInt(p[1], 10) & 1) === 1; });
       layerAci[nm] = col;
+      if (off) layerOff[nm] = 1;   // 꺼진 레이어(색 번호가 음수)
+      if (frz) layerFrz[nm] = 1;   // 동결된 레이어(70 의 1 비트)
     } else if (sec === 'BLOCKS') {
       if (v === 'BLOCK') {
         const nm = ((e.g.find(p => p[0] === 2) || [])[1] || '').trim();
@@ -2919,7 +2921,7 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
   const pts2 = (e, cx, cy) => { const xs = e.g.filter(p => p[0] === cx).map(p => parseFloat(p[1])), ys = e.g.filter(p => p[0] === cy).map(p => parseFloat(p[1])); return xs.map((x, k) => [x, ys[k]]); };
   // ── 좌표계 고르기 — 위경도로 보이면 4326, 아니면 DwgOut.lsp 처럼 Y(북) 20만대 → 5174(구 중부), 30만대 이상 → 5186 계열 ──
   let sample = null;
-  for (const e of ents) { const x = num(e, 10, NaN), y = num(e, 20, NaN); if (isFinite(x) && isFinite(y) && (x || y)) { sample = [x, y]; break; } }
+  for (const e of ents) { if (String(val(e, 67) || '').trim() === '1') continue; const x = num(e, 10, NaN), y = num(e, 20, NaN); if (isFinite(x) && isFinite(y) && (x || y)) { sample = [x, y]; break; } }
   let guess = null, why = '';
   if (sample && Math.abs(sample[0]) <= 180 && Math.abs(sample[1]) <= 90) { guess = '4326'; why = ' (위경도로 보입니다)'; }
   else if (sample && sample[1] >= 150000 && sample[1] < 300000) { guess = '5174'; why = ' (Y 20만대 → 구 중부원점으로 추정)'; }
@@ -2936,7 +2938,7 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
 
   const groups = new Map();   // 레이어|색|치수 → {layer, color, dim, parts:[좌표문자열]}
   const texts = [], points = [];
-  const cnt = { skipped: 0, blocks: 0, dims: 0 };
+  const cnt = { skipped: 0, blocks: 0, dims: 0, hidden: 0, paper: 0 };
   // 블록 변환: 블록 안 좌표 → 바깥 좌표
   const mkXf = (parent, ins, base, sx, sy, rotDeg) => {
     const r = rotDeg * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
@@ -2968,10 +2970,23 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
     if (!groups.has(k)) groups.set(k, { layer: ly, color: col, dim: ctx.dim, parts: [] });
     groups.get(k).parts.push(xys.map(p => { const q = ctx.xf.f(p); return toLL(q[0], q[1]); }).join(' '));
   };
+  // 꺼진·동결 레이어는 지도에 안 올린다 (2026-10-17) — 캐드 화면에 안 보이는 것은 빼고, 블록 안 '0' 레이어는 블록 레이어를 따름.
+  // 블록(INSERT)이 동결 레이어면 통째로, 꺼진 레이어면 안의 '0' 레이어 것만 빠진다(캐드와 같음)
+  const hiddenLy = ly => !!(layerOff[ly] || layerFrz[ly]);
   const walk = (list, ctx, depth) => {
     if (depth > 12) return;
     for (let i = 0; i < list.length; i++) {
       const e = list[i], t = e.type;
+      if (t !== 'VERTEX' && t !== 'SEQEND' && t !== 'ATTDEF') {
+        const ly = layerOf(e, ctx);
+        const paper = !depth && String(val(e, 67) || '').trim() === '1';   // 배치탭(도면 공간) 객체 — 모형탭만 올린다
+        if (paper || (t === 'INSERT' ? !!layerFrz[ly] : hiddenLy(ly))) {
+          if (paper) cnt.paper++; else cnt.hidden++;
+          if (t === 'POLYLINE') while (i + 1 < list.length && list[i + 1].type === 'VERTEX') i++;
+          else if (t === 'INSERT') while (i + 1 < list.length && (list[i + 1].type === 'ATTRIB' || list[i + 1].type === 'SEQEND')) i++;
+          continue;
+        }
+      }
       if (t === 'LINE') addPart(e, ctx, [[num(e, 10, 0), num(e, 20, 0)], [num(e, 11, 0), num(e, 21, 0)]], false);
       else if (t === 'LWPOLYLINE') addPart(e, ctx, pts2(e, 10, 20), (parseInt(val(e, 70), 10) & 1) === 1);
       else if (t === 'POLYLINE') {
@@ -3071,10 +3086,10 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
       + '</ExtendedData><Point><coordinates>' + toLL(t.x, t.y) + '</coordinates></Point></Placemark>\n';
   });
   kml += '</Document></kml>';
-  if (!groups.size && !points.length && !texts.length) { alert('DXF 에서 읽을 수 있는 선·점·문자가 없습니다.' + (cnt.skipped ? '\n(읽지 못한 객체 ' + cnt.skipped + '개)' : '')); return null; }
+  if (!groups.size && !points.length && !texts.length) { alert('DXF 에서 읽을 수 있는 선·점·문자가 없습니다.' + (cnt.skipped ? '\n(읽지 못한 객체 ' + cnt.skipped + '개)' : '') + (cnt.hidden ? '\n(꺼짐·동결 레이어 객체 ' + cnt.hidden + '개는 뺐습니다)' : '') + (cnt.paper ? '\n(배치탭 객체 ' + cnt.paper + '개는 뺐습니다 — 모형탭만 올립니다)' : '')); return null; }
   showSaveStatus('📐 DXF 읽음 — 선 묶음 ' + groups.size + ' · 점 ' + Math.min(points.length, 2000) + ' · 문자 ' + texts.length
     + (cnt.dims ? ' · 치수 ' + cnt.dims : '') + (cnt.blocks ? ' · 블록 ' + cnt.blocks : '')
-    + (points.length > 2000 ? ' (점은 2000개까지)' : '') + (cnt.skipped ? ' · 못 읽은 객체 ' + cnt.skipped + '개' : ''));
+    + (points.length > 2000 ? ' (점은 2000개까지)' : '') + (cnt.skipped ? ' · 못 읽은 객체 ' + cnt.skipped + '개' : '') + (cnt.hidden ? ' · 꺼짐·동결 레이어 ' + cnt.hidden + '개 뺌' : '') + (cnt.paper ? ' · 배치탭 ' + cnt.paper + '개 뺌' : ''));
   const kf = new File([kml], file.name.replace(/\.dxf$/i, '') + '.kml', { type: 'application/vnd.google-earth.kml+xml' });
   if (isCad) { kf._keepView = true; kf._cadName = cadName; }
   return kf;
