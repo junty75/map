@@ -2495,6 +2495,7 @@ function updateTextLabelSizes() {
 }
 // 어댑터 — mapcommon.js _syncOwnedTexts (항목을 지우면 딸린 지번 문자도 숨김/되살림)
 function _textShownSet() { return new Set(textLabels); }
+function _textRecolorMany(ls, c) { ls.forEach(o => { o.col = c; o.el.style.color = c; }); }
 function _textHideMany(ls) { const s = new Set(ls); ls.forEach(o => o.ov.setMap(null)); textLabels = textLabels.filter(o => !s.has(o)); }
 function _textShowMany(ls) { const mpp = _mapMetersPerPixel(); ls.forEach(o => { o.ov.setMap(textLabelsVisible ? map : null); if (!textLabels.includes(o)) textLabels.push(o); _applyTextLabelSize(o, mpp); }); }
 function clearTextLabels() {
@@ -3334,6 +3335,7 @@ function recolorTrack(item, color){
   if(item.polyline)item.polyline=_recreatePoly(item.polyline,color,null);
   if(item.extraOverlays)item.extraOverlays=item.extraOverlays.map(o=>_recreatePoly(o,color,null));
   item._origColor=color;
+  _recolorOwnedTexts(item,color);   // 딸린 지번 문자도 같은 색으로
   renderList(); updateTrackHighlights(); scheduleBundleCull();
 }
 function resizeTrack(item, width){

@@ -1572,6 +1572,7 @@ function recolorTrackV(item,color){
     f.setStyle(polySt(color,w,lyr._opacity,isPg?lyr._fill:null));
   });
   lyr._color=color; item._origColor=color;
+  _recolorOwnedTexts(item,color);   // 딸린 지번 문자도 같은 색으로
   renderList(); if(typeof updateTrackHighlights==='function')updateTrackHighlights();
 }
 function trackColorOf(item){return (item&&(item._origColor||(item.polyLyr&&item.polyLyr._color)))||'#1e8449';}
@@ -2029,6 +2030,8 @@ function addTextLabelV(coord,text,rot,color,h,ax,ay,tw){
   return f;
 }
 // 어댑터 — mapcommon.js _syncOwnedTexts (항목을 지우면 딸린 지번 문자도 숨김/되살림)
+// 글자 스타일은 만들 때 색을 품으므로 같은 값으로 새로 만들어 스타일만 옮긴다(피처는 그대로 — 주인 연결 유지)
+function _textRecolorMany(ls,c){ const src=_ensureTextLabelLyr().getSource(); ls.forEach(f=>{ const t=f._t||{}; const nf=addTextLabelV(f.getGeometry().getCoordinates(),t.txt,t.rot,c,t.h,t.ax,t.ay,t.tw); f.setStyle(nf.getStyle()); f._t=nf._t; try{src.removeFeature(nf);}catch(e){} }); }
 function _textShownSet(){ return new Set(textLabelLyr?textLabelLyr.getSource().getFeatures():[]); }
 function _textHideMany(ls){ if(!textLabelLyr)return; const src=textLabelLyr.getSource(); ls.forEach(f=>{ try{src.removeFeature(f);}catch(e){} }); }
 function _textShowMany(ls){ try{ _ensureTextLabelLyr().getSource().addFeatures(ls); }catch(e){} }

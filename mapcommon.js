@@ -2757,6 +2757,32 @@ function _dxfAskCrs(title, hint, guess){
     sel.focus();
   });
 }
+// 연속지적도 같이 불러올지 묻는 창 (2026-10-18) — 기본값 = 빼고 불러오기. Enter 를 연달아 누르면 '빼고' → 좌표계 확인으로 바로 열림.
+// true = 같이 불러옴, false = 빼고 불러옴(Enter), null = 열기 취소(Esc)
+function _dxfAskCadLoad(fname, info){
+  return new Promise(res => {
+    const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const bg = document.createElement('div');
+    bg.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;';
+    bg.innerHTML = '<div style="background:#fff;border-radius:10px;padding:16px 18px;min-width:330px;max-width:520px;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:14px;">'
+      + '<div style="font-weight:bold;margin-bottom:8px;">🗺 연속지적도가 들어 있습니다 — ' + esc(fname) + '</div>'
+      + '<div style="color:#555;font-size:12px;margin-bottom:10px;">' + info.split('<br>').map(esc).join('<br>') + '</div>'
+      + '<div style="margin-bottom:4px;">지적도도 같이 불러올까요? <span style="color:#888;font-size:12px;">(지적도는 \'지적도 삽입\' 버튼으로 따로 넣을 수 있습니다)</span></div>'
+      + '<div style="text-align:right;margin-top:12px;"><button class="ca-skip" style="padding:6px 14px;margin-right:6px;font-weight:bold;">지적도 빼고 불러오기 (Enter)</button>'
+      + '<button class="ca-load" style="padding:6px 14px;margin-right:6px;">같이 불러오기</button><button class="ca-no" style="padding:6px 14px;">열기 취소</button></div></div>';
+    document.body.appendChild(bg);
+    const done = v => { bg.remove(); document.removeEventListener('keydown', key, true); res(v); };
+    const key = e => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(null); }
+      else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); done(document.activeElement === bg.querySelector('.ca-load') ? true : false); }
+    };
+    document.addEventListener('keydown', key, true);
+    bg.querySelector('.ca-skip').onclick = () => done(false);
+    bg.querySelector('.ca-load').onclick = () => done(true);
+    bg.querySelector('.ca-no').onclick = () => done(null);
+    bg.querySelector('.ca-skip').focus();
+  });
+}
 
 // ── 색: #RRGGBB ↔ ACI(캐드 색 번호) ──
 function _aciRgb(i){
@@ -2959,10 +2985,10 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
     const cl = Object.keys(cadCnt), bl = Object.keys(cadBlk);
     if (cl.length && other) {
       const n = cl.reduce((a, k) => a + cadCnt[k], 0);
-      if (!confirm('이 도면에 연속지적도 레이어가 있습니다.\n  ' + cl.slice(0, 6).join(', ') + (cl.length > 6 ? ' 외 ' + (cl.length - 6) + '개' : '')
-        + '  (객체 ' + n.toLocaleString() + '개)' + (bl.length ? '\n  블록: ' + bl.slice(0, 4).join(', ') + (bl.length > 4 ? ' 외 ' + (bl.length - 4) + '개' : '') : '')
-        + '\n\n지적도도 같이 불러올까요?\n\n[확인] 같이 불러옴\n[취소] 지적도 레이어는 빼고 불러옴 (지적도는 \'지적도 삽입\' 버튼으로 따로 넣을 수 있습니다)'))
-        cl.forEach(k => { skipCad[k] = 1; });
+      const ok = await _dxfAskCadLoad(file.name, cl.slice(0, 6).join(', ') + (cl.length > 6 ? ' 외 ' + (cl.length - 6) + '개' : '')
+        + '  (객체 ' + n.toLocaleString() + '개)' + (bl.length ? '<br>블록: ' + bl.slice(0, 4).join(', ') + (bl.length > 4 ? ' 외 ' + (bl.length - 4) + '개' : '') : ''));
+      if (ok === null) return null;
+      if (!ok) cl.forEach(k => { skipCad[k] = 1; });
     }
   }
   const code = forceCode || await _dxfAskCrs('📐 DXF 좌표계 — ' + file.name,
@@ -3318,6 +3344,11 @@ function _textOwnerLink(labels, tracks) {
     const o = (ly && (byName[ly] || byName[ly + ' (치수)'])) || (tracks.length === 1 ? tracks[0] : null);
     if (o) { l._owner = o; _ownedTexts.push(l); }
   }
+}
+// 항목 색을 바꾸면 딸린 문자도 같은 색으로 (2026-10-18) — 어댑터 _textRecolorMany(labels, color)
+function _recolorOwnedTexts(item, color) {
+  const ls = _ownedTexts.filter(l => l._owner === item);
+  if (ls.length) _textRecolorMany(ls, color);
 }
 function _syncOwnedTexts() {
   if (!_ownedTexts.length) return;
