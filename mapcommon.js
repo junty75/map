@@ -3180,7 +3180,7 @@ function folderMenu(btn){
   const m = document.createElement('div');
   m.id = 'folderMenu';
   m.style.cssText = 'position:fixed;z-index:100000;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);overflow:hidden;min-width:190px;font-size:14px;';
-  [['🗂 임시트랙 저장폴더 지정', setTempTrackDir], ['🗺 지적도 경로 지정', setCadastralDir], ['🧭 위치로 검색 폴더 지정', setSearchDirs]].forEach(([t, fn]) => {
+  [['🗂 임시트랙 저장폴더 지정', setTempTrackDir], ['🗺 지적도 경로 지정', setCadastralDir], ['🧭 위치로 검색 폴더 지정', setSearchDirs], ['🛰 항공영상 저장폴더 지정', setTileDir]].forEach(([t, fn]) => {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = t;
     b.style.cssText = 'display:block;width:100%;padding:9px 16px;border:none;background:none;text-align:left;font-size:14px;cursor:pointer;font-family:inherit;';
@@ -3377,4 +3377,119 @@ function _syncOwnedTexts() {
   if (hide.length) _textHideMany(hide);
   if (show.length) _textShowMany(show);
   _ownedTexts = _ownedTexts.filter(l => l._owner);
+}
+
+// ══════════════════════════════════════════════════
+//  🛰 지도저장 · 오프라인 항공영상 (2026-10-18)
+//  · 📁 메뉴 '항공영상 저장폴더 지정' → 서버 set_tile_dir → 그 폴더의 항공영상.mbtiles(MBTiles = SQLite 한 파일)
+//  · 🛰 지도저장 버튼 → 지금 화면 범위 × 고른 줌 범위의 브이월드 위성 타일을 서버가 받아 같은 파일에 더한다(있는 건 건너뜀)
+//  · 저장 타일은 서버 http://127.0.0.1:8766/tile/{z}/{x}/{y} 로 나오고, 브이월드 판은 배경 아래 층으로 깔아 둔다
+//    → 인터넷이 끊겨 배경 영상이 안 오면 저장해 둔 영상이 보인다. 카카오 판은 격자가 달라 표시는 안 함(저장만).
+//  · 인터넷이 없을 때 사진위치표시를 켜면 로컬 주소(127.0.0.1:8766/map/Vmap)의 브이월드 지도가 열린다(서버가 받아 둔 페이지).
+//  · 페이지 어댑터: _viewLLBounds() → [남,서,북,동], _viewZoomWM() → 웹메르카토르 줌, _offlineTileLayer(port, on)
+// ══════════════════════════════════════════════════
+var TILE_PORT = 8766, _tileInfo = null, _tileAsked = false, _tilePlanCb = null, _tileProgBox = null;
+function _tileSrvOk(){ return !!(window.__wsReady && window.__wsReady()); }
+function _tileBadge(t){ if (window.__setBadge) window.__setBadge(true, t); }
+function setTileDir(){
+  if (!_tileSrvOk()) { alert('항공영상 저장폴더는 PC 프로그램(사진위치표시)과 연결된 상태에서 지정할 수 있습니다.'); return; }
+  _tileBadge('🛰 항공영상 저장폴더 선택...');
+  window.__wsSend({ type: 'set_tile_dir' });
+}
+setInterval(function(){
+  if (!_tileSrvOk()) { _tileAsked = false; return; }
+  if (!_tileAsked) { _tileAsked = true; window.__wsSend({ type: 'tile_info' }); }
+}, 2000);
+function _tileMB(n){ return n * 0.02; }   // 장당 약 20KB (장수 실측 평균)
+window.__onTileMsg = function(d){
+  if (d.type === 'tile_info') {
+    _tileInfo = d;
+    if (d.picked !== undefined) _tileBadge(d.picked ? '🛰 항공영상 저장폴더: ' + d.picked + (d.count ? ' (이미 ' + d.count.toLocaleString() + '장)' : '') : '항공영상 저장폴더 — 바꾸지 않음');
+    if (typeof _offlineTileLayer === 'function') _offlineTileLayer(TILE_PORT, d.count > 0);
+  } else if (d.type === 'tile_plan') {
+    if (_tilePlanCb) _tilePlanCb(d);
+  } else if (d.type === 'tile_progress') {
+    _tileProg(d.busy ? '🛰 이미 지도저장 중입니다' : '🛰 지도저장 ' + d.done.toLocaleString() + ' / ' + d.total.toLocaleString()
+      + ' (저장 ' + d.saved.toLocaleString() + (d.failed ? ' · 실패 ' + d.failed : '') + ')', true);
+  } else if (d.type === 'tile_done') {
+    _tileInfo = d.info || _tileInfo;
+    const why = { no_key: '브이월드 키가 없습니다', no_dir: '항공영상 저장폴더를 먼저 지정하세요', too_many: '타일이 너무 많습니다(' + (d.need || 0).toLocaleString() + '장)', error: '오류 ' + (d.error || '') };
+    _tileProg(d.ok ? '🛰 지도저장 ' + (d.cancelled ? '중단' : '완료') + ' — 새로 ' + (d.saved || 0).toLocaleString() + '장' + (d.failed ? ' · 실패 ' + d.failed : '')
+      + (_tileInfo ? ' · 파일 전체 ' + (_tileInfo.count || 0).toLocaleString() + '장' + (_tileInfo.mb != null ? ' (' + _tileInfo.mb + ' MB)' : '') : '')
+      + (d.offline ? ' · 오프라인 지도 준비됨' : '')
+      : '🛰 지도저장 못 함 — ' + (why[d.reason] || d.reason), false);
+    setTimeout(function(){ if (_tileProgBox && !_tileProgBox._busy) { _tileProgBox.remove(); _tileProgBox = null; } }, 8000);
+    if (typeof _offlineTileLayer === 'function') _offlineTileLayer(TILE_PORT, !!(_tileInfo && _tileInfo.count), true);
+  }
+};
+function _tileProg(text, busy){
+  if (!_tileProgBox) {
+    _tileProgBox = document.createElement('div');
+    _tileProgBox.style.cssText = 'position:fixed;left:50%;bottom:46px;transform:translateX(-50%);z-index:100000;background:rgba(0,0,0,.78);color:#fff;'
+      + 'padding:8px 12px;border-radius:8px;font-size:13px;display:flex;gap:10px;align-items:center;';
+    _tileProgBox.innerHTML = '<span></span><button type="button" style="padding:2px 10px;font-size:12px;">중단</button>';
+    _tileProgBox.querySelector('button').onclick = function(){
+      if (_tileProgBox._busy) { window.__wsSend({ type: 'tile_cancel' }); this.textContent = '중단 중…'; }
+      else { _tileProgBox.remove(); _tileProgBox = null; }
+    };
+    document.body.appendChild(_tileProgBox);
+  }
+  _tileProgBox._busy = busy;
+  _tileProgBox.querySelector('span').textContent = text;
+  _tileProgBox.querySelector('button').textContent = busy ? '중단' : '닫기';
+}
+// 🛰 지도저장 — 지금 화면 범위, 줌 범위를 골라 받을 타일 수를 보고 저장
+function saveMapTiles(){
+  if (!_tileSrvOk()) { alert('지도저장은 PC 프로그램(사진위치표시)이 켜져 있어야 합니다 — 타일은 그 PC 의 저장폴더에 들어갑니다.'); return; }
+  const b = _viewLLBounds(), bbox = [b[1], b[0], b[3], b[2]];   // [서,남,동,북]
+  const cur = Math.round(_viewZoomWM() || 14);
+  const zMax0 = Math.min(19, Math.max(cur + 3, 17)), zMin0 = Math.max(6, cur - 4);
+  const opts = (sel) => { let s = ''; for (let z = 6; z <= 19; z++) s += '<option value="' + z + '"' + (z === sel ? ' selected' : '') + '>' + z + '</option>'; return s; };
+  const bg = document.createElement('div');
+  bg.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;';
+  bg.innerHTML = '<div style="background:#fff;border-radius:10px;padding:16px 18px;min-width:360px;max-width:520px;box-shadow:0 6px 24px rgba(0,0,0,.3);font-size:14px;">'
+    + '<div style="font-weight:bold;margin-bottom:8px;">🛰 지도저장 — 지금 화면의 항공영상</div>'
+    + '<div class="ts-dir" style="color:#555;font-size:12px;margin-bottom:10px;word-break:break-all;"></div>'
+    + '<div>줌 <select class="ts-z0">' + opts(zMin0) + '</select> ~ <select class="ts-z1">' + opts(zMax0) + '</select>'
+    + ' <span style="color:#888;font-size:12px;">(지금 ' + cur + ', 클수록 자세함 · 19 = 가장 자세함)</span></div>'
+    + '<div class="ts-cnt" style="margin-top:10px;color:#333;">계산 중…</div>'
+    + '<div style="text-align:right;margin-top:14px;"><button class="ts-dirbtn" style="padding:6px 12px;margin-right:auto;float:left;">📁 저장폴더</button>'
+    + '<button class="ts-ok" style="padding:6px 16px;margin-right:6px;font-weight:bold;">저장 (Enter)</button><button class="ts-no" style="padding:6px 16px;">취소</button></div></div>';
+  document.body.appendChild(bg);
+  const $ = s => bg.querySelector(s);
+  let plan = null, seq = 0;
+  const showDir = () => { $('.ts-dir').textContent = (_tileInfo && _tileInfo.dir) ? '저장: ' + _tileInfo.dir + '\\항공영상.mbtiles' + (_tileInfo.count ? ' (지금 ' + _tileInfo.count.toLocaleString() + '장 — 여기에 더합니다)' : '') : '⚠ 저장폴더가 아직 없습니다 — [📁 저장폴더] 로 먼저 지정하세요'; };
+  const ask = () => {
+    let z0 = +$('.ts-z0').value, z1 = +$('.ts-z1').value;
+    if (z0 > z1) { $('.ts-z1').value = z0; z1 = z0; }
+    plan = null; $('.ts-cnt').textContent = '계산 중…'; $('.ts-ok').disabled = true;
+    const my = ++seq;
+    _tilePlanCb = d => {
+      if (my !== seq) return;
+      plan = d; showDir();
+      if (d.error) { $('.ts-cnt').textContent = '계산 실패: ' + d.error; return; }
+      $('.ts-cnt').innerHTML = '받을 타일 <b>' + d.need.toLocaleString() + '</b>장 (전체 ' + d.total.toLocaleString() + ' · 이미 있음 ' + d.have.toLocaleString() + ')'
+        + ' · 약 ' + Math.max(1, Math.round(_tileMB(d.need))).toLocaleString() + ' MB'
+        + (d.need > d.max ? '<br><span style="color:#c62828;">한 번에 ' + d.max.toLocaleString() + '장까지 — 줌 범위를 줄이거나 화면을 좁혀 주세요</span>' : '');
+      $('.ts-ok').disabled = !(d.dir && d.need > 0 && d.need <= d.max);
+    };
+    window.__wsSend({ type: 'tile_plan', bbox: bbox, zmin: z0, zmax: z1, reqid: String(my) });
+  };
+  const done = go => {
+    bg.remove(); document.removeEventListener('keydown', key, true); _tilePlanCb = null;
+    if (!go) return;
+    window.__wsSend({ type: 'tile_save', bbox: bbox, zmin: +$('.ts-z0').value, zmax: +$('.ts-z1').value });
+    _tileProg('🛰 지도저장 시작…', true);
+  };
+  const key = e => {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done(false); }
+    else if (e.key === 'Enter' && !$('.ts-ok').disabled && e.target.tagName !== 'SELECT') { e.preventDefault(); e.stopPropagation(); done(true); }
+  };
+  document.addEventListener('keydown', key, true);
+  $('.ts-z0').onchange = ask; $('.ts-z1').onchange = ask;
+  $('.ts-ok').onclick = () => done(true);
+  $('.ts-no').onclick = () => done(false);
+  $('.ts-dirbtn').onclick = () => { setTileDir(); const w = setInterval(() => { if (_tileInfo && _tileInfo.picked !== undefined) { clearInterval(w); delete _tileInfo.picked; ask(); } }, 400); setTimeout(() => clearInterval(w), 120000); };
+  showDir(); ask();
+  $('.ts-ok').focus();
 }
