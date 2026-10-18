@@ -3405,7 +3405,17 @@ window.__onTileMsg = function(d){
   if (d.type === 'tile_info') {
     _tileInfo = d;
     if (d.picked !== undefined) _tileBadge(d.picked ? '🛰 항공영상 저장폴더: ' + d.picked + (d.count ? ' (이미 ' + d.count.toLocaleString() + '장)' : '') : '항공영상 저장폴더 — 바꾸지 않음');
-    if (typeof _offlineTileLayer === 'function') _offlineTileLayer(TILE_PORT, d.count > 0);
+    if (d.switched) _tileBadge('🗺 맵: ' + (d.name || '') + ' (' + (d.count || 0).toLocaleString() + '장)');
+    if (typeof _offlineTileLayer === 'function') _offlineTileLayer(TILE_PORT, d.count > 0, !!d.switched);
+  } else if (d.type === 'tile_files') {
+    _tileMenuFill(d);
+  } else if (d.type === 'tile_auto_stat') {
+    _tileAutoStat = d;
+    const now = Date.now();
+    if (_tileInfo && !_tileInfo.count) window.__wsSend({ type: 'tile_info' });          // 빈 파일에 처음 들어옴 → 층 만들기
+    else if (_tileTop() && typeof _offlineTileLayer === 'function' && now - (window._tileRefAt || 0) > 10000) {
+      window._tileRefAt = now; _offlineTileLayer(TILE_PORT, true, true);             // 맨 위 보기면 새 영상이 보이게
+    }
   } else if (d.type === 'tile_plan') {
     if (_tilePlanCb) _tilePlanCb(d);
   } else if (d.type === 'tile_progress') {
@@ -3414,6 +3424,7 @@ window.__onTileMsg = function(d){
   } else if (d.type === 'tile_done') {
     _tileInfo = d.info || _tileInfo;
     const why = { no_key: '브이월드 키가 없습니다', no_dir: '항공영상 저장폴더를 먼저 지정하세요', too_many: '타일이 너무 많습니다(' + (d.need || 0).toLocaleString() + '장)', error: '오류 ' + (d.error || '') };
+    _tileAutoLast = '';
     _tileProg(d.ok ? '🛰 지도저장 ' + (d.cancelled ? '중단' : '완료') + ' — 새로 ' + (d.saved || 0).toLocaleString() + '장' + (d.failed ? ' · 실패 ' + d.failed : '')
       + (_tileInfo ? ' · 파일 전체 ' + (_tileInfo.count || 0).toLocaleString() + '장' + (_tileInfo.mb != null ? ' (' + _tileInfo.mb + ' MB)' : '') : '')
       + (d.offline ? ' · 오프라인 지도 준비됨' : '')
@@ -3443,7 +3454,7 @@ function saveMapTiles(){
   if (!_tileSrvOk()) { alert('지도저장은 PC 프로그램(사진위치표시)이 켜져 있어야 합니다 — 타일은 그 PC 의 저장폴더에 들어갑니다.'); return; }
   const b = _viewLLBounds(), bbox = [b[1], b[0], b[3], b[2]];   // [서,남,동,북]
   const cur = Math.round(_viewZoomWM() || 14);
-  const zMax0 = Math.min(19, Math.max(cur + 3, 17)), zMin0 = Math.max(6, cur - 4);
+  const zMax0 = Math.min(19, Math.max(cur + 3, 17)), zMin0 = 6;   // 브이월드 위성은 줌 6부터
   const opts = (sel) => { let s = ''; for (let z = 6; z <= 19; z++) s += '<option value="' + z + '"' + (z === sel ? ' selected' : '') + '>' + z + '</option>'; return s; };
   const bg = document.createElement('div');
   bg.style.cssText = 'position:fixed;inset:0;z-index:100001;background:rgba(0,0,0,.35);display:flex;align-items:center;justify-content:center;';
@@ -3492,4 +3503,91 @@ function saveMapTiles(){
   $('.ts-dirbtn').onclick = () => { setTileDir(); const w = setInterval(() => { if (_tileInfo && _tileInfo.picked !== undefined) { clearInterval(w); delete _tileInfo.picked; ask(); } }, 400); setTimeout(() => clearInterval(w), 120000); };
   showDir(); ask();
   $('.ts-ok').focus();
+}
+
+// ── 🗺 맵선택 · 보는 화면 자동 저장 (2026-10-18) ──
+//  · 🗺 맵선택 버튼 → 저장폴더의 .mbtiles 목록에서 쓸 파일 고르기 / 새 파일 / 자동 저장 켜기·끄기 / (브이월드) 저장 영상 맨 위에 보기 / 저장폴더 바꾸기
+//  · 자동 저장: 화면이 바뀌면 보이는 범위의 타일 번호(지금 줌부터 줌 6까지)를 서버로 → 없는 건 받아 넣고 30일 지난 건 새로 받아 바꿈(서버 tile_auto)
+//  · 설정: localStorage jty_tile_auto ('0' = 끔, 기본 켬), jty_tile_top ('1' = 저장 영상 맨 위, 브이월드만)
+function _tileAutoOn(){ try { return localStorage.getItem('jty_tile_auto') !== '0'; } catch (e) { return true; } }
+function _tileTop(){ try { return localStorage.getItem('jty_tile_top') === '1'; } catch (e) { return false; } }
+function _wmTile(lon, lat, z){
+  const n = Math.pow(2, z), la = Math.max(-85.05, Math.min(85.05, lat)) * Math.PI / 180;
+  return [Math.max(0, Math.min(n - 1, Math.floor((lon + 180) / 360 * n))),
+          Math.max(0, Math.min(n - 1, Math.floor((1 - Math.log(Math.tan(la) + 1 / Math.cos(la)) / Math.PI) / 2 * n)))];
+}
+var _tileAutoLast = '', _tileAutoStat = null;
+setInterval(function(){
+  if (!_tileSrvOk() || !_tileInfo || !_tileInfo.dir || !_tileAutoOn()) return;
+  if (typeof _viewLLBounds !== 'function' || typeof _viewZoomWM !== 'function') return;
+  let b, z;
+  try { b = _viewLLBounds(); z = Math.min(19, Math.round(_viewZoomWM())); } catch (e) { return; }
+  if (!b || !(z >= 6)) return;
+  const sig = z + ':' + b.map(v => v.toFixed(4)).join(',');
+  if (sig === _tileAutoLast) return;
+  _tileAutoLast = sig;
+  for (let zz = z; zz >= 6; zz--) {   // 지금 줌부터 6(브이월드 위성 최소)까지 — 아래 단계는 몇 장 안 됨
+    const a = _wmTile(b[1], b[2], zz), c = _wmTile(b[3], b[0], zz);   // 서북 · 동남
+    window.__wsSend({ type: 'tile_auto', z: zz, x0: a[0], x1: c[0], y0: a[1], y1: c[1] });
+  }
+}, 2500);
+var _tileMenuEl = null;
+function _tileMenuClose(){ if (_tileMenuEl) { _tileMenuEl.remove(); _tileMenuEl = null; } document.removeEventListener('mousedown', _tileMenuOut, true); }
+function _tileMenuOut(e){ if (_tileMenuEl && !_tileMenuEl.contains(e.target)) _tileMenuClose(); }
+function tileMapMenu(btn){
+  if (!_tileSrvOk()) { alert('맵선택은 PC 프로그램(사진위치표시)이 켜져 있어야 합니다 — 저장 영상은 그 PC 에 있습니다.'); return; }
+  _tileMenuClose();
+  const m = document.createElement('div');
+  m.style.cssText = 'position:fixed;z-index:100000;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);min-width:280px;max-width:420px;font-size:13px;padding:6px 0;';
+  m.innerHTML = '<div style="padding:6px 14px;color:#888;">불러오는 중…</div>';
+  document.body.appendChild(m);
+  _tileMenuEl = m;
+  const r = btn.getBoundingClientRect();
+  m.style.left = Math.max(4, Math.min(r.left, innerWidth - 430)) + 'px';
+  m.style.top = (r.bottom + 4) + 'px';
+  setTimeout(() => document.addEventListener('mousedown', _tileMenuOut, true), 0);
+  window.__wsSend({ type: 'tile_files' });
+}
+function _tileMenuFill(d){
+  const m = _tileMenuEl; if (!m) return;
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  const row = 'display:block;width:100%;padding:7px 14px;border:none;background:none;text-align:left;font-size:13px;cursor:pointer;font-family:inherit;';
+  let h = '';
+  if (!d.dir) h += '<div style="padding:6px 14px;color:#c62828;">저장폴더가 아직 없습니다</div>';
+  else {
+    h += '<div style="padding:4px 14px 6px;color:#888;font-size:12px;word-break:break-all;">' + esc(d.dir) + '</div>';
+    if (!d.files.length) h += '<div style="padding:4px 14px;color:#888;">저장 파일 없음 — 지도저장·자동 저장을 하면 ' + esc(d.active) + ' 이 생깁니다</div>';
+    d.files.forEach(f => {
+      const on = f.name === d.active;
+      h += '<button type="button" class="tm-file" data-n="' + esc(f.name) + '" style="' + row + (on ? 'font-weight:bold;background:#e8f0fe;' : '') + '">'
+        + (on ? '✔ ' : '　 ') + esc(f.name) + ' <span style="color:#888;font-weight:normal;">' + (f.count != null ? f.count.toLocaleString() + '장 · ' : '') + f.mb + ' MB</span></button>';
+    });
+    h += '<button type="button" class="tm-new" style="' + row + '">➕ 새 파일 만들기</button>';
+  }
+  h += '<div style="border-top:1px solid #eee;margin:4px 0;"></div>';
+  h += '<label style="' + row + '"><input type="checkbox" class="tm-auto"' + (_tileAutoOn() ? ' checked' : '') + '> 보는 화면 자동 저장 (없으면 추가 · 30일 지나면 갱신)</label>';
+  if (typeof _offlineTileLayer === 'function')
+    h += '<label style="' + row + '"><input type="checkbox" class="tm-top"' + (_tileTop() ? ' checked' : '') + '> 저장 영상을 맨 위에 보기 (끄면 인터넷 영상이 없을 때만 보임)</label>';
+  if (_tileAutoStat) h += '<div style="padding:2px 14px 4px;color:#888;font-size:12px;">이번 실행 자동 저장: 새로 ' + _tileAutoStat.saved.toLocaleString() + ' · 갱신 ' + _tileAutoStat.updated.toLocaleString() + '장</div>';
+  h += '<div style="border-top:1px solid #eee;margin:4px 0;"></div>';
+  h += '<button type="button" class="tm-dir" style="' + row + '">📁 저장폴더 ' + (d.dir ? '바꾸기' : '지정') + '</button>';
+  m.innerHTML = h;
+  m.querySelectorAll('.tm-file').forEach(b => {
+    b.onmouseenter = () => { if (!b.style.fontWeight) b.style.background = '#f3f6fb'; };
+    b.onmouseleave = () => { if (!b.style.fontWeight) b.style.background = 'none'; };
+    b.onclick = () => { window.__wsSend({ type: 'tile_use', name: b.dataset.n }); _tileMenuClose(); };
+  });
+  const nb = m.querySelector('.tm-new');
+  if (nb) nb.onclick = () => {
+    _tileMenuClose();
+    const n = prompt('새 저장 파일 이름 (예: 장수군_2026)', '');
+    if (n && n.trim()) window.__wsSend({ type: 'tile_use', name: n.trim() });
+  };
+  m.querySelector('.tm-auto').onchange = e => { try { localStorage.setItem('jty_tile_auto', e.target.checked ? '1' : '0'); } catch (er) {} _tileAutoLast = ''; };
+  const tp = m.querySelector('.tm-top');
+  if (tp) tp.onchange = e => {
+    try { localStorage.setItem('jty_tile_top', e.target.checked ? '1' : '0'); } catch (er) {}
+    _offlineTileLayer(TILE_PORT, !!(_tileInfo && _tileInfo.count), true);
+  };
+  m.querySelector('.tm-dir').onclick = () => { _tileMenuClose(); setTileDir(); };
 }
