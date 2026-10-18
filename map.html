@@ -2719,8 +2719,8 @@ function openTextEditor(latlng, target) {
 //
 //  켜고 지도를 클릭하면 그 지점 화면 ERASE_TOL_PX 픽셀 안의 객체를 한 번에 지운다.
 //  → 축소한 상태에서 누르면 같은 반경이 넓은 지역을 덮으므로 근처 여러 개가 한꺼번에.
-//  삭제 단위는 '사이드바 항목 하나'다(선 메뉴의 삭제와 같은 기준) — 묶음선처럼 한
-//  항목이 여러 오버레이를 갖고 있으면 그 항목 전체가 지워진다.
+//  삭제 단위는 '사이드바 항목 하나'다(선 메뉴의 삭제와 같은 기준). 단 묶음객체(MultiGeometry·CAD 레이어 묶음)는
+//  닿은 선·폴리곤 조각만 지우고, 조각이 전부 닿았을 때만 항목째 지운다(2026-10-18).
 //  되돌리기 버튼은 지우개로 실제로 지웠을 때만 나타나고, 모드를 끄면 이력과 함께 사라진다.
 //  (앱 전체 Undo 스택과는 섞지 않는다 — Ctrl+Z 와 서로 꼬이지 않게)
 // ══════════════════════════════════════════════════
@@ -2787,7 +2787,19 @@ function _eraseCollect(hitPt, hitPoly) {
       const p = item.markerObj.marker.getPosition();
       if (p && hitPt(p.getLat(), p.getLng())) { batch.push({ kind: 'item', item }); continue; }
     }
-    if (item.type === 'track') {
+    if (item.type === 'track' && isBundleItem(item)) {
+      // 묶음객체는 닿은 조각(선 하나 / 폴리곤 하나)만 지운다 — 전부 닿았을 때만 항목째 (2026-10-18)
+      const hits = []; let total = 0, nh = 0;
+      for (const o of _itemOverlays(item)) {
+        const us = _eraseUnits(o); total += us.length;
+        if (!(o.getMap() || o._viewCulled)) continue;
+        const idx = [];
+        us.forEach((u, i) => { if (hitPoly({ _rings: u })) idx.push(i); });
+        if (idx.length) { hits.push({ o, idx }); nh += idx.length; }
+      }
+      if (nh && nh === total) batch.push({ kind: 'item', item });
+      else if (nh) batch.push({ kind: 'parts', item, hits });
+    } else if (item.type === 'track') {
       for (const o of _itemOverlays(item)) {
         if ((o.getMap() || o._viewCulled) && hitPoly(o)) { batch.push({ kind: 'item', item }); break; }
       }
@@ -2800,10 +2812,60 @@ function _eraseCollect(hitPt, hitPoly) {
   }
   return batch;
 }
+// 묶음 오버레이의 지울 수 있는 조각 — 조각마다 링(좌표열) 배열. 선은 경로 하나, 면은 폴리곤 하나(외곽+구멍)
+function _eraseUnits(o) {
+  if (o._isPoly) return (o._polys && o._polys.length) ? o._polys : [(o._rings && o._rings.length) ? o._rings : pathParts(o)];
+  return pathParts(o).map(p => [p]);
+}
+// 오버레이 하나의 경로를 조각 목록으로 다시 세팅
+function _eraseSetUnits(o, units) {
+  if (o._isPoly) {
+    o._polys = units; o._rings = units.flat();
+    o.setPath(o._rings.length === 1 ? o._rings[0] : o._rings);
+  } else {
+    const ps = units.map(u => u[0]);
+    if (ps.length > 1) { o._parts = ps; o.setPath(ps); }
+    else { delete o._parts; o.setPath(ps[0]); }
+    delete o._pnum;   // 컬링 좌표 캐시 다시 만들게
+  }
+}
+function _eraseParts(b) {
+  const item = b.item;
+  b.snap = { polyline: item.polyline, extra: item.extraOverlays ? item.extraOverlays.slice() : undefined,
+             ovs: _itemOverlays(item).map(o => ({ o, parts: o._parts, pnum: o._pnum, rings: o._rings, polys: o._polys,
+                                                  path: o._parts ? null : o.getPath(), onMap: !!o.getMap() || !!o._viewCulled })) };
+  for (const h of b.hits) {
+    const o = h.o, rem = _eraseUnits(o).filter((u, i) => !h.idx.includes(i));
+    if (rem.length) { _eraseSetUnits(o, rem); continue; }
+    // 오버레이의 조각이 다 지워짐 → 항목에서 뺌
+    o.setMap(null); o._viewCulled = false;
+    polylines = polylines.filter(p => p !== o);
+    const ovs = _itemOverlays(item).filter(x => x !== o);
+    item.polyline = ovs[0];
+    item.extraOverlays = ovs.length > 1 ? ovs.slice(1) : undefined;
+  }
+  scheduleBundleCull();
+  renderList();
+}
+function _unerasePartsK(b) {
+  const item = b.item, s = b.snap;
+  item.polyline = s.polyline; item.extraOverlays = s.extra;
+  for (const v of s.ovs) {
+    const o = v.o;
+    o._parts = v.parts; o._pnum = v.pnum; o._rings = v.rings; o._polys = v.polys;
+    if (!v.parts) delete o._parts;
+    if (o._isPoly && v.rings) o.setPath(v.rings.length === 1 ? v.rings[0] : v.rings);
+    else o.setPath(v.parts || v.path);
+    if (!polylines.includes(o)) polylines.push(o);
+    if (v.onMap) o.setMap(map);
+  }
+  renderList();
+}
 function _eraseApply(batch) {
   if (!batch.length) return;
   for (const b of batch) {
     if (b.kind === 'item') _removeItemSilent(b.item);
+    else if (b.kind === 'parts') _eraseParts(b);
     else { b.obj.ov.setMap(null); textLabels = textLabels.filter(x => x !== b.obj); }
   }
   eraseHistory.push(batch);
@@ -2875,8 +2937,9 @@ function _installEraseDrag() {
 function undoErase() {
   const batch = eraseHistory.pop();
   if (!batch) { _updateEraseUndoBtn(); return; }
-  for (const b of batch) {
+  for (const b of batch.slice().reverse()) {
     if (b.kind === 'item') _readdItemSilent(b.item);
+    else if (b.kind === 'parts') _unerasePartsK(b);
     else { b.obj.ov.setMap(map); if (!textLabels.includes(b.obj)) textLabels.push(b.obj); }
   }
   try { cullBundlePolys(); updateTextLabelSizes(); } catch (e) {}

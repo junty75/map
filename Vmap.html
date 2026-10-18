@@ -2254,7 +2254,8 @@ function _ensureAreaLyr(){
 
    켜고 지도를 클릭하면 그 지점 화면 ERASE_TOL_PX 픽셀 안의 객체를 한 번에 지운다.
    → 축소한 상태에서 누르면 같은 반경이 넓은 지역을 덮으므로 근처 여러 개가 한꺼번에.
-   삭제 단위는 '사이드바 항목 하나'다(선 메뉴의 삭제와 같은 기준).
+   삭제 단위는 '사이드바 항목 하나'다(선 메뉴의 삭제와 같은 기준). 단 묶음객체(MultiGeometry·CAD 레이어 묶음)는
+   닿은 선·폴리곤 피처만 지우고, 피처가 전부 닿았을 때만 항목째 지운다(2026-10-18).
    되돌리기 버튼은 지우개로 실제로 지웠을 때만 나타나고, 모드를 끄면 이력과 함께 사라진다.
    (앱 전체 Undo 스택과는 섞지 않는다 — Ctrl+Z 와 서로 꼬이지 않게)
 ══════════════════════════════════════════════════ */
@@ -2306,7 +2307,13 @@ function _eraseCollectV(hitPt,hitLyr){
     if(hitPt(m.feat.getGeometry().getCoordinates())) batch.push({kind:'mk',m});
   }
   for(const lyr of polylines.slice()){
-    if(hitLyr(lyr)) batch.push({kind:'poly',lyr});
+    const fs=lyr.getSource().getFeatures();
+    if(fs.length>1){
+      // 묶음객체(피처 여러 개)는 닿은 선·폴리곤 피처만 지운다 — 전부 닿았을 때만 항목째 (2026-10-18)
+      const hit=fs.filter(f=>hitLyr(_eraseFeatLyr(f)));
+      if(hit.length===fs.length) batch.push({kind:'poly',lyr});
+      else if(hit.length) batch.push({kind:'feats',lyr,fs:hit});
+    }else if(hitLyr(lyr)) batch.push({kind:'poly',lyr});
   }
   if(textLabelLyr){
     for(const f of textLabelLyr.getSource().getFeatures().slice()){
@@ -2378,11 +2385,19 @@ function _installEraseDrag(){
   });
 }
 
+// 피처 하나를 hitLyr 가 받는 '레이어 모양'으로 (coordParts 가 getSource().getFeatures() 를 씀)
+function _eraseFeatLyr(f){ return {getSource:()=>({getFeatures:()=>[f]})}; }
 function _eraseApplyV(batch){
   if(!batch.length)return;
   closeAllPopups();
   for(const b of batch){
-    if(b.kind==='mk'){
+    if(b.kind==='feats'){
+      const src=b.lyr.getSource();
+      b.coords0=b.lyr._coords;
+      b.fs.forEach(f=>{ try{src.removeFeature(f);}catch(e){} });
+      const g=(src.getFeatures()[0]||{getGeometry:()=>null}).getGeometry();
+      if(g) b.lyr._coords=(g instanceof ol.geom.Polygon)?(g.getCoordinates()[0]||[]):g.getCoordinates();
+    }else if(b.kind==='mk'){
       const item=allItems.find(i=>i.mkObj===b.m);
       b.item=item; b.allIdx=item?allItems.indexOf(item):-1;
       removeLyr(b.m.lyr); if(b.m.ov){vmap.removeOverlay(b.m.ov);b.m.ov=null;}
@@ -2407,8 +2422,11 @@ function _eraseApplyV(batch){
 function undoErase(){
   const batch=eraseHistory.pop();
   if(!batch){_updateEraseUndoBtn();return;}
-  for(const b of batch){
-    if(b.kind==='mk'){
+  for(const b of batch.slice().reverse()){
+    if(b.kind==='feats'){
+      try{ b.lyr.getSource().addFeatures(b.fs); }catch(e){}
+      b.lyr._coords=b.coords0;
+    }else if(b.kind==='mk'){
       addLyr(b.m.lyr); markers.push(b.m);
       if(b.item) allItems.splice(Math.min(b.allIdx<0?allItems.length:b.allIdx,allItems.length),0,b.item);
     }else if(b.kind==='poly'){

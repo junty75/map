@@ -3062,6 +3062,7 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
   const kcol = h => 'ff' + h.slice(4, 6) + h.slice(2, 4) + h.slice(0, 2);
   // 지적도 도면(레이어·파일 이름에 지적/LSMD/KMAP/LDREG)이면 이름을 「○○리 지적도」로 짧게, 열어도 화면(줌) 그대로 (2026-10-17)
   const CADRE = /지적|LSMD|KMAP|LDREG/i;
+  const forcedName = !!cadName;
   const isCad = !!cadName || CADRE.test(file.name) || [...groups.values()].some(g => CADRE.test(g.layer));
   if (isCad && !cadName) {
     const src = [file.name.replace(/\.[^.]+$/, '')].concat([...groups.values()].map(g => g.layer)).join(' ');
@@ -3074,7 +3075,8 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
     const id = 'dx' + (si++);
     // 치수선은 얇게(1) — Vector_Convert.py KMZ_DIM_WIDTH 와 같음
     kml += '<Style id="' + id + '"><LineStyle><color>' + kcol(gr.color) + '</color><width>' + (gr.dim ? 1 : 2) + '</width></LineStyle></Style>\n';
-    const gname = isCad ? cadName + (ci++ ? ' ' + ci : '') : gr.layer + (gr.dim ? ' (치수)' : '');
+    // 항목 이름 = 레이어 이름 (2026-10-18 — 지적도 도면도 레이어별로 구분되게). 지적도 삽입 버튼(cadName 지정)만 「○○리 지적도」
+    const gname = (forcedName ? cadName + (ci++ ? ' ' + ci : '') : (gr.layer || '0')) + (gr.dim ? ' (치수)' : '');
     kml += '<Placemark><name>' + esc(gname) + '</name><styleUrl>#' + id + '</styleUrl><MultiGeometry>'
       + gr.parts.map(p => '<LineString><coordinates>' + p + '</coordinates></LineString>').join('') + '</MultiGeometry></Placemark>\n';
   }
