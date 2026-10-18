@@ -2933,21 +2933,35 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
   // 지적도는 무거워서 '지적도 삽입' 버튼으로 따로 넣는 게 낫다). 지적도만 든 파일·지적도 삽입 버튼(cadName)은 묻지 않음
   const skipCad = {};
   if (!cadName) {
-    const CADLY = /지적|LSMD|KMAP|LDREG/i, cadCnt = {};
+    // 블록 안까지 본다 — 설계 도면은 연속지적도를 블록(「천천면_연평리」 등)으로 '계획' 레이어에 넣고,
+    // 블록 안 객체가 KMAP_연속지적도 레이어인 경우가 많다(2026-10-18 실제 도면). 블록 안 '0' 레이어는 바깥 레이어를 따름
+    const CADLY = /지적|LSMD|KMAP|LDREG/i, cadCnt = {}, cadBlk = {};
+    const NODRAW = /^(VERTEX|SEQEND|ATTDEF|ATTRIB|IMAGE|WIPEOUT|VIEWPORT|ACAD_PROXY_ENTITY|PDFUNDERLAY|DWFUNDERLAY|DGNUNDERLAY)$/;
     let other = false;
-    for (const e of ents) {
-      if (e.type === 'VERTEX' || e.type === 'SEQEND' || e.type === 'ATTDEF' || e.type === 'ATTRIB') continue;
-      if (String(val(e, 67) || '').trim() === '1') continue;
-      const ly = (val(e, 8) || '0').trim();
-      if (layerOff[ly] || layerFrz[ly]) continue;
-      if (CADLY.test(ly)) cadCnt[ly] = (cadCnt[ly] || 0) + 1;
-      else if (ly.toLowerCase() !== 'defpoints') other = true;
-    }
-    const cl = Object.keys(cadCnt);
+    const scan = (list, outer, depth, bname) => {
+      if (depth > 12) return;
+      for (const e of list) {
+        if (NODRAW.test(e.type)) continue;
+        if (!depth && String(val(e, 67) || '').trim() === '1') continue;
+        let ly = (val(e, 8) || '0').trim(); if (ly === '0' && outer) ly = outer;
+        if (e.type === 'INSERT') {
+          if (layerFrz[ly]) continue;
+          const bn = (val(e, 2) || '').trim(), b = blocks[bn];
+          if (b) scan(b.ents, ly, depth + 1, bn);
+          continue;
+        }
+        if (layerOff[ly] || layerFrz[ly]) continue;
+        if (CADLY.test(ly)) { cadCnt[ly] = (cadCnt[ly] || 0) + 1; if (bname) cadBlk[bname] = 1; }
+        else if (ly.toLowerCase() !== 'defpoints') other = true;
+      }
+    };
+    scan(ents, '', 0, '');
+    const cl = Object.keys(cadCnt), bl = Object.keys(cadBlk);
     if (cl.length && other) {
       const n = cl.reduce((a, k) => a + cadCnt[k], 0);
       if (!confirm('이 도면에 연속지적도 레이어가 있습니다.\n  ' + cl.slice(0, 6).join(', ') + (cl.length > 6 ? ' 외 ' + (cl.length - 6) + '개' : '')
-        + '  (객체 ' + n.toLocaleString() + '개)\n\n지적도도 같이 불러올까요?\n\n[확인] 같이 불러옴\n[취소] 지적도 레이어는 빼고 불러옴 (지적도는 \'지적도 삽입\' 버튼으로 따로 넣을 수 있습니다)'))
+        + '  (객체 ' + n.toLocaleString() + '개)' + (bl.length ? '\n  블록: ' + bl.slice(0, 4).join(', ') + (bl.length > 4 ? ' 외 ' + (bl.length - 4) + '개' : '') : '')
+        + '\n\n지적도도 같이 불러올까요?\n\n[확인] 같이 불러옴\n[취소] 지적도 레이어는 빼고 불러옴 (지적도는 \'지적도 삽입\' 버튼으로 따로 넣을 수 있습니다)'))
         cl.forEach(k => { skipCad[k] = 1; });
     }
   }
