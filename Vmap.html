@@ -2028,6 +2028,10 @@ function addTextLabelV(coord,text,rot,color,h,ax,ay,tw){
   _ensureTextLabelLyr().getSource().addFeature(f);
   return f;
 }
+// 어댑터 — mapcommon.js _syncOwnedTexts (항목을 지우면 딸린 지번 문자도 숨김/되살림)
+function _textShownSet(){ return new Set(textLabelLyr?textLabelLyr.getSource().getFeatures():[]); }
+function _textHideMany(ls){ if(!textLabelLyr)return; const src=textLabelLyr.getSource(); ls.forEach(f=>{ try{src.removeFeature(f);}catch(e){} }); }
+function _textShowMany(ls){ try{ _ensureTextLabelLyr().getSource().addFeatures(ls); }catch(e){} }
 function clearTextLabelsV(){ if(textLabelLyr){textLabelLyr.getSource().clear();} }
 
 /* ══════════════════════════════════════════════════
@@ -3799,7 +3803,7 @@ async function loadKMZ(file){
       if(/<gpx[\s>]/i.test(kmlText))kmlText=_gpxToKml(kmlText);   // GPX(임시트랙 등) → KML 로 바꿔 같은 방식으로 읽음
     }
     const xml=new DOMParser().parseFromString(kmlText,'application/xml'),pts=[];
-    const _bulkStart=allItems.length;
+    const _bulkStart=allItems.length,_newTexts=[];
     bulkLoading=true;
     // ── KML 스타일 (styleUrl -> {line:{c,o,w}, poly:{c,o,on}}) ──
     //    캐드 변환기(Vector_Convert.py) htm 과 같은 규칙. KML 색은 aabbggrr 순서.
@@ -3846,9 +3850,9 @@ async function loadKMZ(file){
           const raw=pt.getElementsByTagName('coordinates')[0]?.textContent||'';
           const p=raw.trim().split(',');const lo=parseFloat(p[0]),la=parseFloat(p[1]);
           if(!isNaN(lo)&&!isNaN(la)&&Math.abs(lo)<=180&&Math.abs(la)<=90){
-            let _rot=0,_col='',_h=0,_ax=0,_ay=0,_tw=0;
-            for(const d of Array.from(pm.getElementsByTagName('Data'))){const nm=d.getAttribute('name');const v=d.getElementsByTagName('value')[0]?.textContent||'';if(nm==='rot')_rot=parseFloat(v)||0;else if(nm==='color')_col=v.trim();else if(nm==='h')_h=parseFloat(v)||0;else if(nm==='ax')_ax=parseFloat(v)||0;else if(nm==='ay')_ay=parseFloat(v)||0;else if(nm==='tw')_tw=parseFloat(v)||0;}
-            const c=toMerc(lo,la);pts.push(c);addTextLabelV(c,name,_rot,_col,_h,_ax,_ay,_tw);
+            let _rot=0,_col='',_h=0,_ax=0,_ay=0,_tw=0,_ly='';
+            for(const d of Array.from(pm.getElementsByTagName('Data'))){const nm=d.getAttribute('name');const v=d.getElementsByTagName('value')[0]?.textContent||'';if(nm==='layer')_ly=v.trim();else if(nm==='rot')_rot=parseFloat(v)||0;else if(nm==='color')_col=v.trim();else if(nm==='h')_h=parseFloat(v)||0;else if(nm==='ax')_ax=parseFloat(v)||0;else if(nm==='ay')_ay=parseFloat(v)||0;else if(nm==='tw')_tw=parseFloat(v)||0;}
+            const c=toMerc(lo,la);pts.push(c);const _tf=addTextLabelV(c,name,_rot,_col,_h,_ax,_ay,_tw);_tf._layer=_ly;_newTexts.push(_tf);
           }
           continue;
         }
@@ -3899,6 +3903,7 @@ async function loadKMZ(file){
         } else addMarker(c,name,'');
       }
     }
+    _textOwnerLink(_newTexts,allItems.slice(_bulkStart).filter(i=>i.type==='track'));   // 지번 문자를 선 항목에 딸리게
     bulkLoading=false;
     // 대량 로드 마무리: 표는 한 번만, 전체 가져오기를 한 묶음으로 되돌리기 가능하게 등록
     const _added=allItems.slice(_bulkStart);
@@ -4520,6 +4525,7 @@ function buildNumNameMap(){
 }
 
 function renderList(){
+  _syncOwnedTexts();   // 지운 항목에 딸린 지번 문자 숨김 / 되돌린 항목의 문자 되살림
   const filtered=getFilteredItems();
   _lastFiltered=filtered;
   const tbody=document.getElementById('photoTbody');

@@ -885,6 +885,7 @@ function removeItem(predicate) {
 }
 
 function renderList() {
+  _syncOwnedTexts();   // 지운 항목에 딸린 지번 문자 숨김 / 되돌린 항목의 문자 되살림
   const filtered = getFilteredItems();
   _lastFiltered = filtered;
   const tbody = document.getElementById('photoTbody');
@@ -2492,6 +2493,10 @@ function updateTextLabelSizes() {
   const mpp = _mapMetersPerPixel();
   textLabels.forEach(o => _applyTextLabelSize(o, mpp));
 }
+// 어댑터 — mapcommon.js _syncOwnedTexts (항목을 지우면 딸린 지번 문자도 숨김/되살림)
+function _textShownSet() { return new Set(textLabels); }
+function _textHideMany(ls) { const s = new Set(ls); ls.forEach(o => o.ov.setMap(null)); textLabels = textLabels.filter(o => !s.has(o)); }
+function _textShowMany(ls) { const mpp = _mapMetersPerPixel(); ls.forEach(o => { o.ov.setMap(textLabelsVisible ? map : null); if (!textLabels.includes(o)) textLabels.push(o); _applyTextLabelSize(o, mpp); }); }
 function clearTextLabels() {
   textLabels.forEach(o => o.ov.setMap(null));
   textLabels = [];
@@ -4280,7 +4285,7 @@ async function loadKMZ(file,bounds,kmzDiskPath) {
     }
     const xml=new DOMParser().parseFromString(kmlText,'application/xml');
     const placemarks=Array.from(xml.getElementsByTagName('Placemark'));
-    const _bulkStart=allItems.length;
+    const _bulkStart=allItems.length, _newTexts=[];
     bulkLoading=true;
 
     // ── KML 스타일 (styleUrl -> {line:{c,o,w}, poly:{c,o,on}}) ──
@@ -4395,15 +4400,15 @@ async function loadKMZ(file,bounds,kmzDiskPath) {
           const ct=point.getElementsByTagName('coordinates')[0]?.textContent||'';
           const[lng,lat]=ct.trim().split(',').map(Number);
           if(!isNaN(lat)&&!isNaN(lng)){
-            let _rot=0,_col='',_h=0,_ax=0,_ay=0,_tw=0;
+            let _rot=0,_col='',_h=0,_ax=0,_ay=0,_tw=0,_ly='';
             for(const d of Array.from(pm.getElementsByTagName('Data'))){
               const nm=d.getAttribute('name'); const v=d.getElementsByTagName('value')[0]?.textContent||'';
               if(nm==='rot')_rot=parseFloat(v)||0; else if(nm==='color')_col=v.trim();
               else if(nm==='h')_h=parseFloat(v)||0;
               else if(nm==='ax')_ax=parseFloat(v)||0; else if(nm==='ay')_ay=parseFloat(v)||0;
-              else if(nm==='tw')_tw=parseFloat(v)||0;}
+              else if(nm==='tw')_tw=parseFloat(v)||0; else if(nm==='layer')_ly=v.trim();}
             const ll=new kakao.maps.LatLng(lat,lng); bounds.extend(ll);
-            addTextLabel(ll,pmName,_rot,_col,_h,_ax,_ay,_tw);
+            const _tl=addTextLabel(ll,pmName,_rot,_col,_h,_ax,_ay,_tw); _tl._layer=_ly; _newTexts.push(_tl);
           }
           continue;
         }
@@ -4431,6 +4436,7 @@ async function loadKMZ(file,bounds,kmzDiskPath) {
         } else addMarker(ll,pmName);
       }
     }
+    _textOwnerLink(_newTexts, allItems.slice(_bulkStart).filter(i=>i.type==='track'));   // 지번 문자를 선 항목에 딸리게
     bulkLoading=false;
     // 대량 로드 마무리: 표는 한 번만 그리고, 전체 가져오기를 한 묶음으로 되돌리기 가능하게 등록
     const _added=allItems.slice(_bulkStart);

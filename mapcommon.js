@@ -2929,6 +2929,28 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
     let last = ''; try { last = localStorage.getItem('jty_dxf_crs') || ''; } catch (e) {}
     guess = /^518[5-8]$/.test(last) ? last : '5186'; why = ' (Y 30만대 이상 → GRS80 원점으로 추정)';
   }
+  // 연속지적도 레이어(지적/LSMD/KMAP/LDREG)가 다른 레이어와 같이 들어 있으면 같이 불러올지 묻는다 (2026-10-18 —
+  // 지적도는 무거워서 '지적도 삽입' 버튼으로 따로 넣는 게 낫다). 지적도만 든 파일·지적도 삽입 버튼(cadName)은 묻지 않음
+  const skipCad = {};
+  if (!cadName) {
+    const CADLY = /지적|LSMD|KMAP|LDREG/i, cadCnt = {};
+    let other = false;
+    for (const e of ents) {
+      if (e.type === 'VERTEX' || e.type === 'SEQEND' || e.type === 'ATTDEF' || e.type === 'ATTRIB') continue;
+      if (String(val(e, 67) || '').trim() === '1') continue;
+      const ly = (val(e, 8) || '0').trim();
+      if (layerOff[ly] || layerFrz[ly]) continue;
+      if (CADLY.test(ly)) cadCnt[ly] = (cadCnt[ly] || 0) + 1;
+      else if (ly.toLowerCase() !== 'defpoints') other = true;
+    }
+    const cl = Object.keys(cadCnt);
+    if (cl.length && other) {
+      const n = cl.reduce((a, k) => a + cadCnt[k], 0);
+      if (!confirm('이 도면에 연속지적도 레이어가 있습니다.\n  ' + cl.slice(0, 6).join(', ') + (cl.length > 6 ? ' 외 ' + (cl.length - 6) + '개' : '')
+        + '  (객체 ' + n.toLocaleString() + '개)\n\n지적도도 같이 불러올까요?\n\n[확인] 같이 불러옴\n[취소] 지적도 레이어는 빼고 불러옴 (지적도는 \'지적도 삽입\' 버튼으로 따로 넣을 수 있습니다)'))
+        cl.forEach(k => { skipCad[k] = 1; });
+    }
+  }
   const code = forceCode || await _dxfAskCrs('📐 DXF 좌표계 — ' + file.name,
     sample ? '도면 좌표 예: X ' + sample[0].toFixed(3) + ', Y ' + sample[1].toFixed(3) + why : '', guess);
   if (!code) return null;
@@ -2938,7 +2960,7 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
 
   const groups = new Map();   // 레이어|색|치수 → {layer, color, dim, parts:[좌표문자열]}
   const texts = [], points = [];
-  const cnt = { skipped: 0, blocks: 0, dims: 0, hidden: 0, paper: 0 };
+  const cnt = { skipped: 0, blocks: 0, dims: 0, hidden: 0, paper: 0, cad: 0 };
   // 블록 변환: 블록 안 좌표 → 바깥 좌표
   const mkXf = (parent, ins, base, sx, sy, rotDeg) => {
     const r = rotDeg * Math.PI / 180, cs = Math.cos(r), sn = Math.sin(r);
@@ -2980,8 +3002,8 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
       if (t !== 'VERTEX' && t !== 'SEQEND' && t !== 'ATTDEF') {
         const ly = layerOf(e, ctx);
         const paper = !depth && String(val(e, 67) || '').trim() === '1';   // 배치탭(도면 공간) 객체 — 모형탭만 올린다
-        if (paper || (t === 'INSERT' ? !!layerFrz[ly] : hiddenLy(ly))) {
-          if (paper) cnt.paper++; else cnt.hidden++;
+        if (paper || skipCad[ly] || (t === 'INSERT' ? !!layerFrz[ly] : hiddenLy(ly))) {
+          if (paper) cnt.paper++; else if (skipCad[ly]) cnt.cad++; else cnt.hidden++;
           if (t === 'POLYLINE') while (i + 1 < list.length && list[i + 1].type === 'VERTEX') i++;
           else if (t === 'INSERT') while (i + 1 < list.length && (list[i + 1].type === 'ATTRIB' || list[i + 1].type === 'SEQEND')) i++;
           continue;
@@ -3027,7 +3049,7 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
         if (ctx.dimRot != null) rot = ctx.dimRot - ctx.xf.rot;   // 치수 글자는 치수선 방향으로
         const q = ctx.xf.f([x, y]);
         const h = num(e, 40, 0) * ctx.xf.s * (cv.geo ? 111000 : 1);
-        texts.push({ s, x: q[0], y: q[1], h, rot: rot + ctx.xf.rot, ax, ay, color: colorOf(e, ctx) });
+        texts.push({ s, x: q[0], y: q[1], h, rot: rot + ctx.xf.rot, ax, ay, color: colorOf(e, ctx), ly });
       } else if (t === 'INSERT') {
         const b = blocks[(val(e, 2) || '').trim()]; if (!b) continue;
         cnt.blocks++;
@@ -3085,13 +3107,14 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
     kml += '<Placemark><name>' + esc(t.s) + '</name><ExtendedData><Data name="kind"><value>text</value></Data>'
       + '<Data name="rot"><value>' + t.rot.toFixed(2) + '</value></Data><Data name="color"><value>#' + t.color + '</value></Data>'
       + '<Data name="h"><value>' + (+t.h.toFixed(3)) + '</value></Data><Data name="ax"><value>' + t.ax + '</value></Data><Data name="ay"><value>' + t.ay + '</value></Data>'
+      + '<Data name="layer"><value>' + esc(forcedName ? cadName : t.ly) + '</value></Data>'   // 문자가 딸린 선 항목(=레이어 이름) — 항목을 지우면 같이 지움
       + '</ExtendedData><Point><coordinates>' + toLL(t.x, t.y) + '</coordinates></Point></Placemark>\n';
   });
   kml += '</Document></kml>';
   if (!groups.size && !points.length && !texts.length) { alert('DXF 에서 읽을 수 있는 선·점·문자가 없습니다.' + (cnt.skipped ? '\n(읽지 못한 객체 ' + cnt.skipped + '개)' : '') + (cnt.hidden ? '\n(꺼짐·동결 레이어 객체 ' + cnt.hidden + '개는 뺐습니다)' : '') + (cnt.paper ? '\n(배치탭 객체 ' + cnt.paper + '개는 뺐습니다 — 모형탭만 올립니다)' : '')); return null; }
   showSaveStatus('📐 DXF 읽음 — 선 묶음 ' + groups.size + ' · 점 ' + Math.min(points.length, 2000) + ' · 문자 ' + texts.length
     + (cnt.dims ? ' · 치수 ' + cnt.dims : '') + (cnt.blocks ? ' · 블록 ' + cnt.blocks : '')
-    + (points.length > 2000 ? ' (점은 2000개까지)' : '') + (cnt.skipped ? ' · 못 읽은 객체 ' + cnt.skipped + '개' : '') + (cnt.hidden ? ' · 꺼짐·동결 레이어 ' + cnt.hidden + '개 뺌' : '') + (cnt.paper ? ' · 배치탭 ' + cnt.paper + '개 뺌' : ''));
+    + (points.length > 2000 ? ' (점은 2000개까지)' : '') + (cnt.skipped ? ' · 못 읽은 객체 ' + cnt.skipped + '개' : '') + (cnt.hidden ? ' · 꺼짐·동결 레이어 ' + cnt.hidden + '개 뺌' : '') + (cnt.paper ? ' · 배치탭 ' + cnt.paper + '개 뺌' : '') + (cnt.cad ? ' · 연속지적도 ' + cnt.cad + '개 뺌' : ''));
   const kf = new File([kml], file.name.replace(/\.dxf$/i, '') + '.kml', { type: 'application/vnd.google-earth.kml+xml' });
   if (isCad) { kf._keepView = true; kf._cadName = cadName; }
   return kf;
@@ -3261,4 +3284,41 @@ async function dwgToKmlFile(file){
   const bin = atob(r.data), u8 = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   return dxfToKmlFile(new File([u8], file.name.replace(/\.dwg$/i, '') + '.dxf'));
+}
+
+// ══════════════════════════════════════════════════
+//  CAD 문자(지번 등)를 선 항목에 딸리게 (2026-10-18)
+//  지적도 삽입·DXF 열기로 들어온 문자는 목록 항목이 아니라 따로 남아, 항목을 지워도 지도에 그대로였다.
+//  → loadKMZ 가 문자마다 주인 항목(_owner)을 붙여 두고, renderList 때마다 주인이 목록에 없으면 숨기고
+//    (되돌리기 등으로) 다시 생기면 되살린다. 그래서 사이드바 삭제·Delete·지우개·선 메뉴 삭제·되돌리기 모두 따라간다.
+//  주인 = 문자의 layer 와 이름이 같은 새 항목('레이어 (치수)' 포함), 없으면 이번에 들어온 선 항목이 하나뿐일 때 그것.
+//  페이지 어댑터: _textHideMany(labels) · _textShowMany(labels) · _textShownSet()
+// ══════════════════════════════════════════════════
+let _ownedTexts = [];
+function _textOwnerLink(labels, tracks) {
+  if (!labels.length || !tracks.length) return;
+  const byName = {};
+  tracks.forEach(it => { if (!(it.name in byName)) byName[it.name] = it; });
+  for (const l of labels) {
+    const ly = l._layer || '';
+    const o = (ly && (byName[ly] || byName[ly + ' (치수)'])) || (tracks.length === 1 ? tracks[0] : null);
+    if (o) { l._owner = o; _ownedTexts.push(l); }
+  }
+}
+function _syncOwnedTexts() {
+  if (!_ownedTexts.length) return;
+  const alive = new Set(allItems), hide = [], show = [];
+  let shown = null;
+  for (const l of _ownedTexts) {
+    const a = alive.has(l._owner);
+    if (!a && !l._orph) {
+      if (!shown) shown = _textShownSet();
+      if (shown.has(l)) { l._orph = true; hide.push(l); }   // 따로 지운 문자는 그대로 둔다(나중에 되살리지 않게)
+      else l._owner = null;
+    }
+    else if (a && l._orph) { l._orph = false; show.push(l); }
+  }
+  if (hide.length) _textHideMany(hide);
+  if (show.length) _textShowMany(show);
+  _ownedTexts = _ownedTexts.filter(l => l._owner);
 }
