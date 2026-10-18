@@ -3167,7 +3167,7 @@ function openConvertedKml(f){
 
 // ══════════════════════════════════════════════════
 //  📁 폴더 메뉴 + 🗺 지적도 불러오기 (2026-10-17)
-//   · 📁 버튼 → 메뉴: 임시트랙 저장폴더 지정 / 지적도 경로 지정 (둘 다 PC 서버 대화상자, 서버가 기억)
+//   · 📁 버튼 → 메뉴: 임시트랙 저장폴더 지정 / 지적도 경로 지정 / 위치로 검색 폴더 지정 (모두 PC 서버 대화상자, 서버가 기억)
 //   · '지적도' 버튼 → 지도 가운데가 든 리의 연속지적도를 불러온다(서버 cadastral_load). SHP 면 리 단위로 잘라 오고,
 //     리별 DXF 폴더면 이름이 맞는 파일(dxfToKmlFile, 5186). 선은 노랑 1px 한 항목('지적도 ○○면 ○○리'), 지번은 문자(높이 2m).
 //   · 사진위치표시(PC 서버)가 켜져 있을 때만 된다(사용자 결정).
@@ -3180,7 +3180,7 @@ function folderMenu(btn){
   const m = document.createElement('div');
   m.id = 'folderMenu';
   m.style.cssText = 'position:fixed;z-index:100000;background:#fff;border-radius:10px;box-shadow:0 4px 16px rgba(0,0,0,.25);overflow:hidden;min-width:190px;font-size:14px;';
-  [['🗂 임시트랙 저장폴더 지정', setTempTrackDir], ['🗺 지적도 경로 지정', setCadastralDir]].forEach(([t, fn]) => {
+  [['🗂 임시트랙 저장폴더 지정', setTempTrackDir], ['🗺 지적도 경로 지정', setCadastralDir], ['🧭 위치로 검색 폴더 지정', setSearchDirs]].forEach(([t, fn]) => {
     const b = document.createElement('button');
     b.type = 'button'; b.textContent = t;
     b.style.cssText = 'display:block;width:100%;padding:9px 16px;border:none;background:none;text-align:left;font-size:14px;cursor:pointer;font-family:inherit;';
@@ -3195,6 +3195,17 @@ function folderMenu(btn){
   m.style.top = (r.bottom + 4) + 'px';
   setTimeout(() => document.addEventListener('mousedown', _folderMenuOut, true), 0);
 }
+// 📁 메뉴 — 위치로 검색 폴더 지정 (2026-10-18): 서버가 위치로 검색의 폴더 목록 창을 [저장] 모드로 띄운다(검색은 안 함)
+function setSearchDirs(){
+  if (!(window.__wsReady && window.__wsReady())) { alert('위치로 검색 폴더는 PC 프로그램(사진위치표시)과 연결된 상태에서 지정할 수 있습니다.'); return; }
+  if (window.__setBadge) window.__setBadge(true, '🧭 위치로 검색 폴더 지정...');
+  window.__wsSend({ type: 'search_dirs_dialog' });
+}
+window.__onSearchDirs = d => {
+  if (!window.__setBadge) return;
+  if (!d.saved) window.__setBadge(true, '위치로 검색 폴더 — 바꾸지 않음');
+  else window.__setBadge(true, '🧭 위치로 검색 폴더 저장 — 검색할 폴더 ' + d.dirs.length + '개' + (d.total > d.dirs.length ? ' (목록 ' + d.total + '개)' : ''));
+};
 function setCadastralDir(){
   if (!(window.__wsReady && window.__wsReady())) { alert('지적도 경로는 PC 프로그램(사진위치표시)과 연결된 상태에서 지정할 수 있습니다.'); return; }
   if (window.__setBadge) window.__setBadge(true, '🗺 지적도 폴더 선택...');

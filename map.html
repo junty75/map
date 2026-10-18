@@ -485,7 +485,7 @@ _apiKeyError = function(storeKey, name){
         <button type="button" id="eraseBtn" onclick="toggleEraseMode()" title="켜고 지도를 클릭하면 그 자리 근처 객체가 지워집니다 · 축소해서 누르면 근처 여러 개가 한 번에 · 버튼 다시 누르면 종료">🧽 지우개</button>
         <button type="button" onclick="resetPolylines()">선 초기화</button>
         <button type="button" onclick="resetAll()">화면 초기화</button>
-        <button type="button" onclick="folderMenu(this)" title="폴더 지정 — 임시트랙 저장폴더(그린 선 자동저장) / 지적도 경로(지적도 버튼이 불러올 폴더)">📁</button>
+        <button type="button" onclick="folderMenu(this)" title="폴더 지정 — 임시트랙 저장폴더(그린 선 자동저장) / 지적도 경로(지적도 버튼이 불러올 폴더) / 위치로 검색 폴더">📁</button>
         <button type="button" onclick="window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes')" title="도움말 (F1)">❓</button>
       </div>
       <div style="display:flex;gap:6px;align-items:center;">
@@ -5763,6 +5763,8 @@ window.onload=()=>{
           if (window.__onDwgConv) window.__onDwgConv(d);         // 📐 DWG 열기·저장
         } else if (d.type === 'cadastral') {
           if (window.__onCadastral) window.__onCadastral(d);     // 🗺 지적도 불러오기
+        } else if (d.type === 'search_dirs') {
+          if (window.__onSearchDirs) window.__onSearchDirs(d);
         } else if (d.type === 'cadastral_dir') {
           if (window.__onCadastralDir) window.__onCadastralDir(d);
         } else if (d.type === 'relink_dirs') {
