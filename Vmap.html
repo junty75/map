@@ -422,7 +422,6 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
       <button onclick="resetLines()">선 초기화</button>
       <button onclick="resetAll()">화면 초기화</button>
       <button type="button" onclick="folderMenu(this)" title="폴더 지정 — 임시트랙 저장폴더(그린 선 자동저장) / 지적도 경로(지적도 버튼이 불러올 폴더) / 위치로 검색 폴더 / 항공영상 저장폴더">📁</button>
-      <button type="button" onclick="tileMapMenu(this)" title="맵선택 — 저장해 둔 항공영상 파일(.mbtiles) 고르기 · 새 파일 · 보는 화면 자동 저장(추가·갱신) 켜기/끄기 · 저장 영상 맨 위에 보기">🗺 맵선택</button>
       <button onclick="openHelp()" title="도움말 (F1)">❓</button>
     </div>
     <div style="display:flex;gap:5px;align-items:center;">
@@ -454,7 +453,8 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
       <label id="photoNumWrap" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="체크하면 사진명을 변경합니다 — KMZ 안에 저장되는 사진과 디스크의 원본 사진을 [KMZ 파일명]_000, _001 ... 로 바꿉니다 (원본 파일명 변경은 서버 연동 필요)">
         <input type="checkbox" id="addPhotoNum"> 사진명 변경
       </label>
-      <button type="button" onclick="saveMapTiles()" style="margin-left:auto;" title="지도저장 — 지금 화면의 항공영상(브이월드 위성)을 PC 저장폴더(항공영상.mbtiles)에 더해 둡니다. 인터넷이 없을 때 브이월드 지도가 이 영상을 보여 줍니다">🛰 지도저장</button>   <!-- 2026-10-18 사용자 요청: ❓ 아래(아랫줄 오른쪽 끝) -->
+      <button type="button" onclick="tileMapMenu(this)" style="margin-left:auto;" title="맵선택 — 저장해 둔 항공영상 파일(.mbtiles) 고르기 · 새 파일 · 보는 화면 자동 저장(추가·갱신) 켜기/끄기 · 저장 영상 맨 위에 보기">🗺 맵선택</button>
+      <button type="button" onclick="saveMapTiles()" title="지도저장 — 지금 화면의 항공영상(브이월드 위성)을 PC 저장폴더(항공영상.mbtiles)에 더해 둡니다. 인터넷이 없을 때 브이월드 지도가 이 영상을 보여 줍니다">🛰 지도저장</button>   <!-- 2026-10-18 사용자 요청: ❓ 아래(아랫줄 오른쪽 끝) -->
     </div>
   </div>
   <div id="sideCol">
@@ -1681,16 +1681,51 @@ function _loadKmlFile(f){ return loadKMZ(f); }
 function _viewSave(){ const v=vmap.getView(); return { c: v.getCenter().slice(), r: v.getResolution(), rot: v.getRotation() }; }
 function _viewRestore(s){ if(!s) return; const v=vmap.getView(); v.setResolution(s.r); v.setCenter(s.c); v.setRotation(s.rot); }
 function _viewZoomWM(){ return vmap.getView().getZoom(); }
-// 저장해 둔 항공영상(서버 MBTiles) 층 — 배경 아래에 깐다: 인터넷이 끊겨 배경 타일이 안 오면 이게 보인다 (mapcommon 지도저장)
+// 저장해 둔 항공영상(서버 MBTiles) 층 (mapcommon 지도저장·맵선택) — 2026-10-18
+//  · 기본: 맨 위(zIndex 50, 선·마커 100 아래)에 깔되, 타일마다 1초 기다렸다가 같은 자리 인터넷 영상이 이미 왔으면 비워 두고(투명),
+//    아직 안 왔거나 실패했으면 저장 영상을 보여 준다 → 인터넷이 느리거나 끊기면 저장 영상, 빠르면 인터넷 영상.
+//  · '저장 영상 맨 위에 보기'(jty_tile_top) 면 기다리지 않고 늘 저장 영상.
+//  · 타일은 웹소켓으로 받는다(_tileFetch — 깃허브 https 페이지는 크롬이 127.0.0.1 그림을 막음).
 let _offTileLyr=null;
+const TILE_WAIT_MS=1000;
+// 인터넷 배경 타일이 실제로 다 받아졌는지 — 브이월드 배경 소스(OSM 제외)의 tileloadend 를 들어 'z/x/y' 를 기록한다.
+// (source.getTile 로 상태를 묻는 방식은 블록된 타일도 '받음'으로 나와 못 씀 — 2026-10-18 시험)
+const _vwLoaded=new Set(); const _vwHooked=new WeakSet();
+function _vwHookBase(){
+  vmap.getLayers().getArray().forEach(l=>{
+    if(l===_offTileLyr||!(l instanceof ol.layer.Tile))return;
+    const s=l.getSource(); if(!s||_vwHooked.has(s))return;
+    let u=null; try{u=s.getUrls&&s.getUrls();}catch(e){}
+    if(u&&u.some(x=>/openstreetmap/.test(x)))return;
+    _vwHooked.add(s);
+    s.on('tileloadend',e=>{ try{ const c=e.tile.getTileCoord(); _vwLoaded.add(c[0]+'/'+c[1]+'/'+(-c[2]-1)); if(_vwLoaded.size>20000)_vwLoaded.clear(); }catch(er){} });
+  });
+}
+function _vwBaseLoaded(z,x,y){
+  _vwHookBase();
+  if(_vwLoaded.has(z+'/'+x+'/'+y)) return true;
+  // 기록 전에 받은 타일(지도 열자마자) — 배경 소스 타일 캐시 상태로 한 번 더 (2 = 받음, 실패는 3)
+  try{ let ok=false; vmap.getLayers().getArray().forEach(l=>{ if(ok||l===_offTileLyr||!(l instanceof ol.layer.Tile)||!l.getVisible())return;
+         const s=l.getSource(); if(!_vwHooked.has(s))return; const zi=(l.getZIndex&&l.getZIndex())||0; if(zi!==1)return;
+         const t=s.getTile(z,x,-y-1,1,vmap.getView().getProjection()); ok=!!t&&t.getState()===2; }); return ok; }catch(e){ return false; }
+}
+setInterval(()=>{ try{ if(typeof vmap!=='undefined'&&vmap) _vwHookBase(); }catch(e){} },1000);   // 지도 열리자마자·지도 종류 바꿀 때 새 배경 소스도 기록
 function _offlineTileLayer(port,on,refresh){
   if(!on){ if(_offTileLyr){ vmap.removeLayer(_offTileLyr); _offTileLyr=null; } return; }
-  const url='http://127.0.0.1:'+port+'/tile/{z}/{x}/{y}'+(refresh?'?t='+Date.now():'');
   if(_offTileLyr && !refresh) return;
   if(_offTileLyr) vmap.removeLayer(_offTileLyr);
-  const top=(typeof _tileTop==='function')&&_tileTop();   // 🗺 맵선택 '저장 영상 맨 위에 보기' — 선·마커(100)보다는 아래
-  _offTileLyr=new ol.layer.Tile({source:new ol.source.XYZ({url:url,maxZoom:19}),zIndex:top?50:-1});
-  if(top) vmap.addLayer(_offTileLyr); else vmap.getLayers().insertAt(0,_offTileLyr);
+  const top=(typeof _tileTop==='function')&&_tileTop();
+  const src=new ol.source.XYZ({url:'jty:{z}/{x}/{y}',maxZoom:19,
+    tileLoadFunction:function(tile,u){
+      const img=tile.getImage(), m=/(\d+)\/(\d+)\/(\d+)/.exec(u); if(!m){ img.src=TILE_EMPTY; return; }
+      const z=+m[1],x=+m[2],y=+m[3];
+      const go=()=>_tileFetch(z,x,y,d=>{ img.src=d||TILE_EMPTY; });
+      if(top) go();
+      else setTimeout(()=>{ if(_vwBaseLoaded(z,x,y)) img.src=TILE_EMPTY; else go(); },TILE_WAIT_MS);
+    }});
+  _offTileLyr=new ol.layer.Tile({source:src,zIndex:50});
+  vmap.addLayer(_offTileLyr);
+  _vwHookBase();
 }
 function _viewLLBounds(){ const x=vmap.getView().calculateExtent(vmap.getSize()), a=fromMerc([x[0],x[1]]), b=fromMerc([x[2],x[3]]); return [a[1],a[0],b[1],b[0]]; }
 function _ctxLatLngAt(x,y){   // 화면 좌표 → [lat,lng]

@@ -3407,6 +3407,9 @@ window.__onTileMsg = function(d){
     if (d.picked !== undefined) _tileBadge(d.picked ? '🛰 항공영상 저장폴더: ' + d.picked + (d.count ? ' (이미 ' + d.count.toLocaleString() + '장)' : '') : '항공영상 저장폴더 — 바꾸지 않음');
     if (d.switched) _tileBadge('🗺 맵: ' + (d.name || '') + ' (' + (d.count || 0).toLocaleString() + '장)');
     if (typeof _offlineTileLayer === 'function') _offlineTileLayer(TILE_PORT, d.count > 0, !!d.switched);
+  } else if (d.type === 'tile_data') {
+    const cb = _tileReqCb[d.id]; delete _tileReqCb[d.id];
+    if (cb) cb(d.d ? 'data:image/jpeg;base64,' + d.d : null);
   } else if (d.type === 'tile_files') {
     _tileMenuFill(d);
   } else if (d.type === 'tile_auto_stat') {
@@ -3567,7 +3570,7 @@ function _tileMenuFill(d){
   h += '<div style="border-top:1px solid #eee;margin:4px 0;"></div>';
   h += '<label style="' + row + '"><input type="checkbox" class="tm-auto"' + (_tileAutoOn() ? ' checked' : '') + '> 보는 화면 자동 저장 (없으면 추가 · 30일 지나면 갱신)</label>';
   if (typeof _offlineTileLayer === 'function')
-    h += '<label style="' + row + '"><input type="checkbox" class="tm-top"' + (_tileTop() ? ' checked' : '') + '> 저장 영상을 맨 위에 보기 (끄면 인터넷 영상이 없을 때만 보임)</label>';
+    h += '<label style="' + row + '"><input type="checkbox" class="tm-top"' + (_tileTop() ? ' checked' : '') + '> 저장 영상을 맨 위에 보기 (끄면 인터넷 영상이 1초 안에 안 올 때만 보임)</label>';
   if (_tileAutoStat) h += '<div style="padding:2px 14px 4px;color:#888;font-size:12px;">이번 실행 자동 저장: 새로 ' + _tileAutoStat.saved.toLocaleString() + ' · 갱신 ' + _tileAutoStat.updated.toLocaleString() + '장</div>';
   h += '<div style="border-top:1px solid #eee;margin:4px 0;"></div>';
   h += '<button type="button" class="tm-dir" style="' + row + '">📁 저장폴더 ' + (d.dir ? '바꾸기' : '지정') + '</button>';
@@ -3590,4 +3593,21 @@ function _tileMenuFill(d){
     _offlineTileLayer(TILE_PORT, !!(_tileInfo && _tileInfo.count), true);
   };
   m.querySelector('.tm-dir').onclick = () => { _tileMenuClose(); setTileDir(); };
+}
+
+// ── 저장 영상 타일을 웹소켓으로 받기 (2026-10-18) ──
+//  깃허브(https) 페이지에서는 크롬이 http://127.0.0.1:8766 그림을 막는다(혼합 콘텐츠 + 로컬 네트워크 접근 — 실측).
+//  그래서 이미 붙어 있는 웹소켓으로 한 장씩 받는다: ws tile_get {z,x,y,id} → tile_data {id, d: base64 JPEG | ''}.
+//  웹소켓이 없으면(오프라인 로컬 페이지 등) 같은 출처인 로컬 HTTP 주소로.
+var _tileReqSeq = 0, _tileReqCb = {};
+var TILE_EMPTY = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+function _tileFetch(z, x, y, cb){
+  if (_tileSrvOk()) {
+    const id = ++_tileReqSeq;
+    _tileReqCb[id] = cb;
+    setTimeout(() => { if (_tileReqCb[id]) { delete _tileReqCb[id]; cb(null); } }, 15000);
+    window.__wsSend({ type: 'tile_get', z: z, x: x, y: y, id: id });
+  } else if (location.hostname === '127.0.0.1' || location.hostname === 'localhost') {
+    cb('http://127.0.0.1:' + TILE_PORT + '/tile/' + z + '/' + x + '/' + y);
+  } else cb(null);
 }

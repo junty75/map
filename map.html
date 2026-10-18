@@ -486,7 +486,6 @@ _apiKeyError = function(storeKey, name){
         <button type="button" onclick="resetPolylines()">선 초기화</button>
         <button type="button" onclick="resetAll()">화면 초기화</button>
         <button type="button" onclick="folderMenu(this)" title="폴더 지정 — 임시트랙 저장폴더(그린 선 자동저장) / 지적도 경로(지적도 버튼이 불러올 폴더) / 위치로 검색 폴더 / 항공영상 저장폴더">📁</button>
-        <button type="button" onclick="tileMapMenu(this)" title="맵선택 — 저장해 둔 항공영상 파일(.mbtiles) 고르기 · 새 파일 · 보는 화면 자동 저장(추가·갱신) 켜기/끄기">🗺 맵선택</button>
         <button type="button" onclick="window.open('https://junty75.github.io/map/help','_blank','width=900,height=700,scrollbars=yes')" title="도움말 (F1)">❓</button>
       </div>
       <div style="display:flex;gap:6px;align-items:center;">
@@ -518,7 +517,8 @@ _apiKeyError = function(storeKey, name){
         <label id="photoNumWrap" style="font-size:12px;display:inline-flex;align-items:center;gap:3px;white-space:nowrap;cursor:pointer;" title="체크하면 사진명을 변경합니다 — KMZ 안에 저장되는 사진과 디스크의 원본 사진을 [KMZ 파일명]_000, _001 ... 로 바꿉니다 (원본 파일명 변경은 서버 연동 필요)">
           <input type="checkbox" id="addPhotoNum"> 사진명 변경
         </label>
-        <button type="button" onclick="saveMapTiles()" style="margin-left:auto;" title="지도저장 — 지금 화면의 항공영상(브이월드 위성)을 PC 저장폴더(항공영상.mbtiles)에 더해 둡니다. 인터넷이 없을 때 브이월드 지도가 이 영상을 보여 줍니다">🛰 지도저장</button>   <!-- 2026-10-18 사용자 요청: ❓ 아래(아랫줄 오른쪽 끝) -->
+        <button type="button" onclick="tileMapMenu(this)" style="margin-left:auto;" title="맵선택 — 저장해 둔 항공영상 파일(.mbtiles) 고르기 · 새 파일 · 보는 화면 자동 저장(추가·갱신) 켜기/끄기">🗺 맵선택</button>
+        <button type="button" onclick="saveMapTiles()" title="지도저장 — 지금 화면의 항공영상(브이월드 위성)을 PC 저장폴더(항공영상.mbtiles)에 더해 둡니다. 인터넷이 없을 때 브이월드 지도가 이 영상을 보여 줍니다">🛰 지도저장</button>   <!-- 2026-10-18 사용자 요청: ❓ 아래(아랫줄 오른쪽 끝) -->
       </div>
     </div>
     <div id="sideCol">
