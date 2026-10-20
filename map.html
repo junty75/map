@@ -5613,6 +5613,9 @@ window.onload=()=>{
       const pos = new kakao.maps.LatLng(lat, lng);
       const isPhoto = !!path;
 
+      // 엑셀 PNU 필지 경계가 있으면 경계 + 주소 라벨만 — 노란 점은 경계를 못 그릴 때(지적도·브이월드 모두 없음)만 (2026-10-20)
+      const parcelOnly = !!(pnu && rings && rings.length);
+
       // ① 사진=펄스 링만(이름 라벨 제거 — Vmap과 동일), 좌표=라벨 유지
       const ringEl = document.createElement('div');
       ringEl.className = 'live-pin' + (isPhoto ? '' : ' coord-only');
@@ -5623,6 +5626,12 @@ window.onload=()=>{
         map, content: ringEl, position: pos,
         xAnchor: 0.5, yAnchor: 0.5, zIndex: 998
       });
+      if (pnu) _liveLabelRightClickRemove(ringEl.querySelector('.live-pin-label'), () => ringOv.setMap(null));   // 우클릭 = 주소 라벨 지우기
+      if (parcelOnly) {
+        liveOvs.push(ringOv, ...liveParcelShapes(rings));
+        bounds.extend(pos);
+        return;
+      }
 
       // ② 마커 — 사진은 드래그 가능 (초록), 좌표는 정적 (파랑)
       const marker = new kakao.maps.Marker({
@@ -5637,7 +5646,6 @@ window.onload=()=>{
       // 좌표만 있는 경우 — 드래그 이벤트 없이 마커만 추가하고 종료
       if (!isPhoto) {
         liveOvs.push(marker, ringOv);
-        if (pnu && rings && rings.length) liveOvs.push(...liveParcelShapes(rings));   // 엑셀 PNU 필지 경계
         bounds.extend(pos);
         return;
       }

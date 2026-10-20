@@ -5431,11 +5431,14 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
       if (isPhoto) {
         el.innerHTML='<div class="live-pin-ring"></div>'
                     +'<div class="live-pin-dot"></div>';   // 사진마커 이름 라벨 제거
+      } else if (pnu && rings && rings.length) {
+        // 엑셀 PNU 필지 경계가 있으면 경계 + 주소 라벨만 — 노란 점은 경계를 못 그릴 때만 (2026-10-20)
+        el.innerHTML='<div class="live-pin-label">'+name+'</div>';
+        showLiveParcel(rings);
       } else if (pnu) {
-        // 엑셀 PNU(필지/행정구역 중심) → 노란 점 (사진·좌표 마커와 구분, 라벨은 기본 그대로)
+        // 엑셀 PNU(경계 없음 — 필지/행정구역 중심) → 노란 점 (사진·좌표 마커와 구분, 라벨은 기본 그대로)
         el.innerHTML='<div class="live-pin-label">'+name+'</div>'
                     +'<div class="live-pin-dot" style="background:#ffd600;border-color:#333;"></div>';
-        if (rings && rings.length) showLiveParcel(rings);   // 그 필지 경계
       } else {
         el.innerHTML='<div class="live-pin-label">'+name+'</div>'
                     +'<div class="live-pin-dot" style="background:#2196f3;"></div>';
@@ -5443,6 +5446,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
       const ov=new ol.Overlay({element:el,position:coord,positioning:'center-center',stopEvent:isPhoto});
       vmap.addOverlay(ov);
       liveOvs.push(ov);
+      if (pnu) _liveLabelRightClickRemove(el.querySelector('.live-pin-label'), ()=>vmap.removeOverlay(ov));   // 우클릭 = 주소 라벨 지우기
       if (isPhoto) {
         makeDraggable(el,ov,path);
         pathToOv.set(path, ov);

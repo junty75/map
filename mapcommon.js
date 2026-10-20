@@ -2938,6 +2938,17 @@ function _mtextPlain(s){
   return String(s || '').replace(/\\P/g, '\n').replace(/\\[ACFHQTW][^;]*;/gi, '').replace(/\\[LlOoKk]/g, '')
     .replace(/\\S([^;]*);/g, (m, a) => a.replace(/[#^]/, '/')).replace(/[{}]/g, '').replace(/\\~/g, ' ').replace(/\\\\/g, '\\').trim();
 }
+// 엑셀 PNU 주소 라벨 — 우클릭하면 라벨만 지운다(경계는 그대로, 2026-10-20). 지도 우클릭 메뉴로 넘어가지 않게 막는다.
+//   el = 라벨 요소, remove = 페이지별 지우기(카카오 ov.setMap(null) / 브이월드 removeOverlay)
+function _liveLabelRightClickRemove(el, remove){
+  if (!el) return;
+  el.style.pointerEvents = 'auto'; el.style.cursor = 'context-menu';
+  el.title = '우클릭 = 주소 라벨 지우기';
+  ['mousedown', 'mouseup', 'pointerdown', 'pointerup'].forEach(ev =>
+    el.addEventListener(ev, e => { if (e.button === 2) e.stopPropagation(); }));
+  el.addEventListener('contextmenu', e => { e.preventDefault(); e.stopPropagation(); try { remove(); } catch (er) {} });
+}
+
 // 거리별 묶기 기준 — 조각 사이가 이보다 멀면 다른 곳, 조각이 이보다 많으면(길게 이어진 도면·지적도) 레이어별 그대로
 var DXF_SITE_GAP_M = 500, DXF_SITE_MAX_PARTS = 2000;
 // 선 조각들을 '곳'으로 나눈다(범위 사이 거리 gap 이하면 같은 곳 — 이어진 것끼리 한 덩어리).
