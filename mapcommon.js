@@ -1001,6 +1001,29 @@ function askSaveFolder(title, key){
   });
 }
 
+// 크롬 저장 창을 사용자 클릭으로 연다(클릭 직후에만 열 수 있음). 취소 → AbortError 로 reject.
+function _savePickerByClick(opts){
+  return new Promise((res, rej) => {
+    const bg = document.createElement('div');
+    bg.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.25);display:flex;align-items:center;justify-content:center;';
+    bg.innerHTML = '<div style="background:#fff;border-radius:8px;padding:16px 18px;box-shadow:0 4px 18px rgba(0,0,0,.3);font-size:14px;text-align:center;">'
+      + '<div style="margin-bottom:12px;">저장 준비가 끝났습니다 — <b>' + String(opts.suggestedName).replace(/[<&]/g, c => c === '<' ? '&lt;' : '&amp;') + '</b></div>'
+      + '<button data-k="ok" style="padding:6px 14px;margin-right:6px;font-size:14px;cursor:pointer;">💾 저장 위치 고르기 (Enter)</button>'
+      + '<button data-k="no" style="padding:6px 14px;font-size:14px;cursor:pointer;">취소 (Esc)</button></div>';
+    const close = () => { document.removeEventListener('keydown', onKey, true); bg.remove(); };
+    const abort = () => { close(); const e = new Error('취소'); e.name = 'AbortError'; rej(e); };
+    const go = () => { close(); window.showSaveFilePicker(opts).then(res, rej); };
+    const onKey = e => {
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); go(); }
+      else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); abort(); }
+    };
+    bg.addEventListener('click', e => { const k = e.target.dataset && e.target.dataset.k; if (k === 'ok') go(); else if (k === 'no') abort(); });
+    document.addEventListener('keydown', onKey, true);
+    document.body.appendChild(bg);
+    bg.querySelector('[data-k=ok]').focus();
+  });
+}
+
 // 저장 위치·파일명 확정. 반환 {folder, filename, base} / 취소 null.
 // 서버 미연결이면 예전처럼 파일명만 물어 다운로드 폴더에 저장한다.
 async function askSaveDest(defBase, ext){
@@ -1008,13 +1031,19 @@ async function askSaveDest(defBase, ext){
   if (r === undefined){
     // 서버 없음 — 크롬 저장 창(폴더·이름 고르기). id 가 같으면 크롬이 마지막에 고른 폴더로 연다(2026-10-17).
     if (window.showSaveFilePicker) {
+      const opts = { id: 'jtymap-save', suggestedName: defBase + ext,
+        types: [{ description: ext.slice(1).toUpperCase() + ' 파일', accept: { 'application/octet-stream': [ext] } }] };
+      const done = h => h ? { folder:'', filename:h.name, base:h.name.replace(/\.[^.]+$/, ''), handle:h } : null;
       try {
-        const h = await window.showSaveFilePicker({ id: 'jtymap-save', suggestedName: defBase + ext,
-          types: [{ description: ext.slice(1).toUpperCase() + ' 파일', accept: { 'application/octet-stream': [ext] } }] });
-        return { folder:'', filename:h.name, base:h.name.replace(/\.[^.]+$/, ''), handle:h };
+        return done(await window.showSaveFilePicker(opts));
       } catch (e) {
         if (e && e.name === 'AbortError') return null;   // 사용자가 취소
-        console.warn('저장 창 실패 — 다운로드 폴더로', e);  // 클릭 직후가 아니면(보안) 예전 방식
+        // 저장 전 준비(HTM 사진 모으기·주소 조회)가 길어 '클릭 직후'가 지나면 크롬이 창을 막는다(SecurityError)
+        //  → 버튼을 한 번 더 누르게 해 그 클릭으로 연다. 그래야 다운로드 폴더가 아니라 마지막 저장 폴더로 열림(2026-10-20).
+        if (e && (e.name === 'SecurityError' || e.name === 'NotAllowedError')) {
+          try { return done(await _savePickerByClick(opts)); }
+          catch (e2) { if (e2 && e2.name === 'AbortError') return null; console.warn('저장 창 실패 — 다운로드 폴더로', e2); }
+        } else console.warn('저장 창 실패 — 다운로드 폴더로', e);
       }
     }
     const n = prompt('파일명', defBase);

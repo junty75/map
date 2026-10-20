@@ -2093,8 +2093,9 @@ function clearTextLabelsV(){ if(textLabelLyr){textLabelLyr.getSource().clear();}
     · 이미 있는 글자를 우클릭하면 같은 창이 열려 수정·삭제.
     · 만들어진 글자는 KMZ 로 읽어온 CAD 문자와 완전히 같은 피처다
       → 저장(KMZ/HTM)·지우개·되돌리기가 전부 그대로 동작한다.
-    · 크기(m)는 지도 실거리 기준이라 확대하면 커진다. 0 이면 화면 13px 고정.
-      마지막에 쓴 색·크기는 다른 화면설정과 같은 통로(__saveUi)로 저장돼 다시 켜도 유지된다.
+    · 크기: 여기서 넣는 문자는 화면 13px 고정(h 0 — 확대·축소해도 그대로, 휴대폰판과 같음).
+      CAD 에서 온 문자만 높이(m) = 지도 실거리라 확대하면 커진다. 고쳐도 그 높이 유지(2026-10-20).
+      마지막에 쓴 색은 다른 화면설정과 같은 통로(__saveUi)로 저장돼 다시 켜도 유지된다.
 
    단축키를 Ctrl+T 로 두지 않은 이유: 크롬/엣지가 '새 탭'으로 선점한 조합이라 페이지가
    가로챌 수 없다(F11 전체화면에서만 동작). 그래서 막히지 않는 T 를 쓴다.
@@ -2108,7 +2109,7 @@ function cancelTextMove(msg){
   try{ vmap.getViewport().style.cursor=textMode?'crosshair':''; }catch(e){}
   if(msg) showSaveStatus(msg);
 }
-let textLastColor='#FFEB00', textLastHeight=10;
+let textLastColor='#FFEB00';
 
 // 입력칸(textarea) 크기 기억 — 오른쪽 아래를 끌어 늘린 크기를 다음 입력창에도 그대로.
 // 'WxH'(px) 로 다른 화면설정과 같은 통로(__saveUi)에 저장한다.
@@ -2178,8 +2179,6 @@ function openTextEditor(coord,target){
   const pos=isEdit?target.getGeometry().getCoordinates():coord;
   if(!pos) return;
   const old=isEdit?(target._t||{}):null;
-  // 크기 목록의 id 는 열 때마다 새로 — 입력창을 닫으면 DOM 에서 사라지므로 겹칠 일이 없다
-  const listId='textHList_'+Date.now();
   const c=document.createElement('div');
   c.className='mpopup';
   c.style.cssText='display:flex;flex-direction:column;gap:6px;font-size:12px;';
@@ -2189,17 +2188,7 @@ function openTextEditor(coord,target){
     + '<div style="display:flex;gap:5px;align-items:center;">'
     +   '<button type="button" data-k="col" title="글자 색"'
     +     ' style="width:26px;height:23px;padding:0;border:1px solid #ccc;border-radius:4px;cursor:pointer;"></button>'
-    // step=1 : ↑↓·스피너는 1m 씩. 직접 2.5 처럼 소수를 넣는 건 그대로 된다(값을 그냥 읽어 쓴다)
-    +   '<input type="number" data-k="h" list="'+listId+'" min="0" max="100000" step="1"'
-    +     ' title="글자 크기(m) — 지도 실거리 기준이라 확대/축소에 따라 커지고 작아집니다.'
-    +     '&#10;목록에서 고르거나 원하는 숫자를 직접 넣으세요(소수도 가능).  0 = 화면 고정 크기"'
-    +     ' style="width:62px;font-size:12px;font-family:inherit;padding:2px 4px;">'
-    +   '<datalist id="'+listId+'">'
-    +     '<option value="0" label="고정(화면크기)"></option>'
-    +     ['0.5','1','2','3','5','10','20','50','100','200','500']
-            .map(v=>'<option value="'+v+'" label="'+v+'m"></option>').join('')
-    +   '</datalist>'
-    +   '<span data-k="hunit" style="color:#666;">m</span>'
+    +   '<span data-k="hunit" style="color:#666;"></span>'
     +   '<span style="flex:1;color:#888;text-align:right;">Ctrl+Enter</span>'
     + '</div>'
     + '<div class="brow" style="display:flex;gap:5px;">'
@@ -2219,22 +2208,17 @@ function openTextEditor(coord,target){
 
   const ta=c.querySelector('textarea');
   const colBtn=c.querySelector('[data-k="col"]');
-  const hInp=c.querySelector('[data-k="h"]');
   const hUnit=c.querySelector('[data-k="hunit"]');
   _applyTextBox(ta);
   let col=isEdit?(old.col||'#FFEB00'):textLastColor;
   colBtn.style.background=col;
   colBtn.onclick=e=>{ e.stopPropagation(); openColorPalette(colBtn,v=>{ col=v; colBtn.style.background=v; }); };
-  // CAD 에서 온 글자는 목록에 없는 높이(예: 2.5m)를 갖고 있어도 그 값이 그대로 들어간다
-  const h0=isEdit?(Number(old.h)||0):textLastHeight;
-  hInp.value=String(h0);
-  // 비었거나 이상한 값이면 처음 값(h0)으로 되돌린다 — 실수로 지웠다고 크기가 튀지 않게
-  function _readH(){
-    const v=parseFloat(hInp.value);
-    return (isFinite(v)&&v>=0)?Math.min(v,100000):h0;
-  }
-  const paintUnit=()=>{ hUnit.textContent=(_readH()>0)?'m':'고정'; };
-  hInp.addEventListener('input',paintUnit); paintUnit();
+  // 크기: 브라우저에서 넣는 문자는 화면 고정(h 0 = 13px, 휴대폰판 img 와 같음 — 확대·축소해도 그대로).
+  //   CAD 에서 온 문자(h = 높이 m)는 고칠 때도 그 높이 그대로 → 지도 실거리라 확대하면 커진다(2026-10-20).
+  const h0=isEdit?(Number(old.h)||0):0;
+  const _readH=()=>h0;
+  hUnit.textContent=h0>0?('CAD 문자 '+h0+'m'):'크기 고정';
+  hUnit.title=h0>0?'캐드에서 온 문자 — 지도 실거리 높이라 확대·축소에 따라 커지고 작아집니다':'화면 글자 크기 고정 — 확대·축소해도 그대로';
   ta.value=isEdit?(old.txt||''):'';
 
   function done(){ closeTextEditor(); }
@@ -2243,7 +2227,6 @@ function openTextEditor(coord,target){
     const h=_readH();
     if(!txt.trim()){ if(isEdit) del(); else done(); return; }
     // 방금 쓴 색·크기를 다음 입력의 기본값으로 (다시 켜도 유지되게 설정에도 저장)
-    if(textLastHeight!==h)  { textLastHeight=h;   _saveTextPref('text_h',String(h)); }
     if(textLastColor!==col) { textLastColor=col;  _saveTextPref('text_col',col); }
     if(isEdit){
       // 줄 수·크기에 따라 스타일이 통째로 달라져서 고쳐 쓸 수 없다 → 같은 자리에 새로 만들고 교체
@@ -2271,7 +2254,6 @@ function openTextEditor(coord,target){
     const txt=ta.value.replace(/[ \t]+$/gm,'').replace(/\n+$/,'');
     if(!txt.trim()) return;
     const h=_readH();
-    if(textLastHeight!==h)  { textLastHeight=h;   _saveTextPref('text_h',String(h)); }
     if(textLastColor!==col) { textLastColor=col;  _saveTextPref('text_col',col); }
     done();
     textMovePending=np=>{
@@ -5001,7 +4983,6 @@ function initResizers(){
     if(s['vmap.meta_h'])ms.style.height      = s['vmap.meta_h'];
     // 문자(메모) 글자 크기·색 — 마지막에 쓴 값을 다음 입력의 기본값으로 (크기 0 = 화면 고정)
     if(/^\d+x\d+$/.test(s['vmap.text_box']||'')) textBoxSize=s['vmap.text_box'];
-    if(s['vmap.text_h']!=null){ const _th=parseFloat(s['vmap.text_h']); if(isFinite(_th)&&_th>=0) textLastHeight=_th; }
     if(/^#[0-9a-fA-F]{6}$/.test(s['vmap.text_col']||'')) textLastColor=s['vmap.text_col'];
     if(s['vmap.colvis']){ try{ colVis = Object.assign(colVis, JSON.parse(s['vmap.colvis'])); }catch(e){} }
     if(s['vmap.colw']){ try{ colW = Object.assign(colW, JSON.parse(s['vmap.colw'])); }catch(e){} }
@@ -5234,6 +5215,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
   function removeLive(){
     liveOvs.forEach(ov=>vmap.removeOverlay(ov));
     liveOvs=[];
+    if(liveParcelLyr){ removeLyr(liveParcelLyr); liveParcelLyr=null; }
     pathToOv.clear();
     pathToMk.clear();
   }
@@ -5408,12 +5390,33 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
     });
   }
 
+  // 엑셀 PNU 필지 경계(임시) — 노란 점과 같이 removeLive 로 지워져 다른 셀을 고르면 사라진다.
+  //   검색 토지 경계 트랙과 같은 빨강(PARCEL_STYLE) + 흰 테두리. 목록에는 안 넣음(선·마커 100 아래 zIndex 95).
+  let liveParcelLyr=null;
+  function showLiveParcel(rings){
+    if(liveParcelLyr) removeLyr(liveParcelLyr);
+    const st=PARCEL_STYLE;
+    const rs=rings.map(r=>r.map(p=>toMerc(p[1], p[0])));
+    const src=new ol.source.Vector();
+    const pg=new ol.Feature(new ol.geom.Polygon(rs));
+    pg.setStyle(new ol.style.Style({fill:new ol.style.Fill({color:hexRgba(st.fill,st.fillOpacity)})}));
+    src.addFeature(pg);
+    rs.forEach(r=>{
+      const f=new ol.Feature(new ol.geom.LineString(r.concat([r[0]])));
+      f.setStyle([new ol.style.Style({stroke:new ol.style.Stroke({color:'rgba(255,255,255,0.9)',width:st.width+3})}),
+                  new ol.style.Style({stroke:new ol.style.Stroke({color:st.color,width:st.width})})]);
+      src.addFeature(f);
+    });
+    liveParcelLyr=new ol.layer.Vector({source:src, zIndex:95});
+    addLyr(liveParcelLyr);
+  }
+
   function showLiveMulti(items){
     removeLive();
     if(!vmap||!items.length)return;
 
     const coords=[];
-    items.forEach(({lat,lng,name,path,pnu})=>{
+    items.forEach(({lat,lng,name,path,pnu,rings})=>{
       // 유효 좌표만 처리
       if (typeof lat !== 'number' || typeof lng !== 'number' ||
           isNaN(lat) || isNaN(lng)) return;
@@ -5432,6 +5435,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
         // 엑셀 PNU(필지/행정구역 중심) → 노란 점 (사진·좌표 마커와 구분, 라벨은 기본 그대로)
         el.innerHTML='<div class="live-pin-label">'+name+'</div>'
                     +'<div class="live-pin-dot" style="background:#ffd600;border-color:#333;"></div>';
+        if (rings && rings.length) showLiveParcel(rings);   // 그 필지 경계
       } else {
         el.innerHTML='<div class="live-pin-label">'+name+'</div>'
                     +'<div class="live-pin-dot" style="background:#2196f3;"></div>';
@@ -5462,6 +5466,26 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
     const cx = (minX + maxX) / 2;
     const cy = (minY + maxY) / 2;
     const sameSpot = (minX === maxX && minY === maxY);
+
+    // 엑셀 PNU 필지 경계 — 화면에서 너무 작거나(40px 미만) 화면을 넘으면 필지에 맞춰 확대·축소, 잘 보이면 아래처럼
+    const pr = items.length === 1 && items[0].pnu && items[0].rings;
+    if (pr) {
+      const ms = vmap.getSize() || [800, 600];
+      const pm = [].concat.apply([], pr).map(p => toMerc(p[1], p[0]));
+      const px = pm.map(c => c[0]), py = pm.map(c => c[1]);
+      const x0 = Math.min.apply(null, px), x1 = Math.max.apply(null, px);
+      const y0 = Math.min.apply(null, py), y1 = Math.max.apply(null, py);
+      const r0 = view.getResolution() || 1;
+      const w = (x1 - x0) / r0, h = (y1 - y0) / r0;
+      if (Math.max(w, h) < 40 || w > ms[0] * 0.9 || h > ms[1] * 0.9) {
+        const res = Math.max((x1 - x0) / Math.max(100, ms[0] - 240), (y1 - y0) / Math.max(100, ms[1] - 240), 0.1);
+        const z = Math.min(19, Math.max(3, Math.log2(156543.04 / res)));
+        const c = [(x0 + x1) / 2, (y0 + y1) / 2];
+        if (typeof view.animate === 'function') view.animate({ center: c, zoom: z, duration: 400 });
+        else { view.setCenter(c); view.setZoom(z); }
+        return;
+      }
+    }
 
     // 단일 좌표 또는 동일 좌표들 → 중심점으로 이동 + 적절한 줌
     if (coords.length === 1 || sameSpot) {
