@@ -2938,6 +2938,38 @@ function _mtextPlain(s){
   return String(s || '').replace(/\\P/g, '\n').replace(/\\[ACFHQTW][^;]*;/gi, '').replace(/\\[LlOoKk]/g, '')
     .replace(/\\S([^;]*);/g, (m, a) => a.replace(/[#^]/, '/')).replace(/[{}]/g, '').replace(/\\~/g, ' ').replace(/\\\\/g, '\\').trim();
 }
+// 거리별 묶기 기준 — 조각 사이가 이보다 멀면 다른 곳, 조각이 이보다 많으면(길게 이어진 도면·지적도) 레이어별 그대로
+var DXF_SITE_GAP_M = 500, DXF_SITE_MAX_PARTS = 2000;
+// 선 조각들을 '곳'으로 나눈다(범위 사이 거리 gap 이하면 같은 곳 — 이어진 것끼리 한 덩어리).
+//   반환: 곳이 2개 이상일 때만 [{ids:[[group, 조각번호],..], b:[minx,miny,maxx,maxy]}] (서→동), 아니면 null
+function _dxfSites(groups, gap){
+  const P = [];
+  groups.forEach(gr => gr.boxes.forEach((b, j) => P.push([gr, j, b])));
+  if (P.length < 2 || P.length > DXF_SITE_MAX_PARTS) return null;
+  const par = P.map((_, k) => k);
+  const root = a => { while (par[a] !== a) { par[a] = par[par[a]]; a = par[a]; } return a; };
+  const cells = new Map();   // gap 크기 칸에 범위를 넣어 가까운 것끼리만 비교
+  P.forEach(([, , b], k) => {
+    for (let gx = Math.floor(b[0] / gap); gx <= Math.floor(b[2] / gap); gx++)
+      for (let gy = Math.floor(b[1] / gap); gy <= Math.floor(b[3] / gap); gy++) {
+        const key = gx + ',' + gy; if (!cells.has(key)) cells.set(key, []); cells.get(key).push(k);
+      }
+  });
+  const near = (a, b) => Math.hypot(Math.max(0, a[0] - b[2], b[0] - a[2]), Math.max(0, a[1] - b[3], b[1] - a[3])) <= gap;
+  cells.forEach((list, key) => {
+    const [gx, gy] = key.split(',').map(Number);
+    const cand = [];
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) { const l = cells.get((gx + dx) + ',' + (gy + dy)); if (l) cand.push(...l); }
+    list.forEach(a => cand.forEach(c => { if (a < c && root(a) !== root(c) && near(P[a][2], P[c][2])) par[root(a)] = root(c); }));
+  });
+  const m = new Map();
+  P.forEach((p, k) => { const r = root(k); if (!m.has(r)) m.set(r, { ids: [], b: [Infinity, Infinity, -Infinity, -Infinity] });
+    const s = m.get(r); s.ids.push([p[0], p[1]]);
+    s.b = [Math.min(s.b[0], p[2][0]), Math.min(s.b[1], p[2][1]), Math.max(s.b[2], p[2][2]), Math.max(s.b[3], p[2][3])]; });
+  if (m.size < 2) return null;
+  return [...m.values()].sort((a, b) => (a.b[0] + a.b[2]) - (b.b[0] + b.b[2]));
+}
+
 async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표계 창 없이 쓸 코드, cadName = 지적도 이름(지적도 삽입)
   if (!file) return null;
   const text = _dxfDecode(await file.arrayBuffer());
@@ -3058,8 +3090,12 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
     if (xys.length < 2) return;
     if (closed) xys = xys.concat([xys[0]]);
     const ly = layerOf(e, ctx), col = colorOf(e, ctx), k = ly + '|' + col + '|' + (ctx.dim ? 1 : 0);
-    if (!groups.has(k)) groups.set(k, { layer: ly, color: col, dim: ctx.dim, parts: [] });
-    groups.get(k).parts.push(xys.map(p => { const q = ctx.xf.f(p); return toLL(q[0], q[1]); }).join(' '));
+    if (!groups.has(k)) groups.set(k, { layer: ly, color: col, dim: ctx.dim, parts: [], boxes: [] });
+    const gr = groups.get(k), b = [Infinity, Infinity, -Infinity, -Infinity];
+    gr.parts.push(xys.map(p => { const q = ctx.xf.f(p);
+      if (q[0] < b[0]) b[0] = q[0]; if (q[1] < b[1]) b[1] = q[1]; if (q[0] > b[2]) b[2] = q[0]; if (q[1] > b[3]) b[3] = q[1];
+      return toLL(q[0], q[1]); }).join(' '));
+    gr.boxes.push(b);   // 도면 좌표 범위 — 거리별 묶기(_dxfSites)용
   };
   // 꺼진·동결 레이어는 지도에 안 올린다 (2026-10-17) — 캐드 화면에 안 보이는 것은 빼고, 블록 안 '0' 레이어는 블록 레이어를 따름.
   // 블록(INSERT)이 동결 레이어면 통째로, 꺼진 레이어면 안의 '0' 레이어 것만 빠진다(캐드와 같음)
@@ -3162,7 +3198,30 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
   }
   let kml = '<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2"><Document><name>' + esc(cadName || file.name) + '</name>\n';
   let si = 0, ci = 0;
-  for (const gr of groups.values()) {
+  // 거리별 묶기 (2026-10-20) — 조각이 적고 여러 곳(500m 넘게 떨어짐)에 흩어진 설계 도면(소규모 농로·포장 여러 개소)은
+  //   레이어 대신 '곳'마다 한 항목(파일이름 1, 2 … 서→동). 길게 이어진 도면·지적도는 예전처럼 레이어별.
+  const sites = (forcedName || isCad) ? null : _dxfSites([...groups.values()], cv.geo ? DXF_SITE_GAP_M / 111000 : DXF_SITE_GAP_M);
+  const siteName = k => file.name.replace(/\.[^.]+$/, '') + ' ' + (k + 1);
+  if (sites) {
+    sites.forEach((st, k) => {
+      const id = 'dx' + (si++);
+      // 한 항목은 한 색 — 조각이 가장 많은 색(치수 아닌 것 먼저), 다 치수면 얇게
+      const tally = {};
+      st.ids.forEach(([gr]) => { const w = gr.dim ? 1 : 1000; tally[gr.color] = (tally[gr.color] || 0) + w; });
+      const color = Object.keys(tally).sort((a, b) => tally[b] - tally[a])[0];
+      const allDim = st.ids.every(([gr]) => gr.dim);
+      kml += '<Style id="' + id + '"><LineStyle><color>' + kcol(color) + '</color><width>' + (allDim ? 1 : 2) + '</width></LineStyle></Style>\n';
+      kml += '<Placemark><name>' + esc(siteName(k)) + '</name><styleUrl>#' + id + '</styleUrl><MultiGeometry>'
+        + st.ids.map(([gr, j]) => '<LineString><coordinates>' + gr.parts[j] + '</coordinates></LineString>').join('') + '</MultiGeometry></Placemark>\n';
+    });
+    // 문자는 가장 가까운 곳의 항목에 딸리게 (항목을 지우면 같이 지워짐)
+    texts.forEach(t => {
+      let best = 0, bd = Infinity;
+      sites.forEach((st, k) => { const d = Math.hypot(Math.max(0, st.b[0] - t.x, t.x - st.b[2]), Math.max(0, st.b[1] - t.y, t.y - st.b[3])); if (d < bd) { bd = d; best = k; } });
+      t.ly = siteName(best);
+    });
+  }
+  if (!sites) for (const gr of groups.values()) {
     const id = 'dx' + (si++);
     // 치수선은 얇게(1) — Vector_Convert.py KMZ_DIM_WIDTH 와 같음
     kml += '<Style id="' + id + '"><LineStyle><color>' + kcol(gr.color) + '</color><width>' + (gr.dim ? 1 : 2) + '</width></LineStyle></Style>\n';
@@ -3181,7 +3240,7 @@ async function dxfToKmlFile(file, forceCode, cadName){   // forceCode = 좌표�
   });
   kml += '</Document></kml>';
   if (!groups.size && !points.length && !texts.length) { alert('DXF 에서 읽을 수 있는 선·점·문자가 없습니다.' + (cnt.skipped ? '\n(읽지 못한 객체 ' + cnt.skipped + '개)' : '') + (cnt.hidden ? '\n(꺼짐·동결 레이어 객체 ' + cnt.hidden + '개는 뺐습니다)' : '') + (cnt.paper ? '\n(배치탭 객체 ' + cnt.paper + '개는 뺐습니다 — 모형탭만 올립니다)' : '')); return null; }
-  showSaveStatus('📐 DXF 읽음 — 선 묶음 ' + groups.size + ' · 점 ' + Math.min(points.length, 2000) + ' · 문자 ' + texts.length
+  showSaveStatus('📐 DXF 읽음 — ' + (sites ? '떨어진 곳 ' + sites.length + '개(거리별 묶음)' : '선 묶음 ' + groups.size) + ' · 점 ' + Math.min(points.length, 2000) + ' · 문자 ' + texts.length
     + (cnt.dims ? ' · 치수 ' + cnt.dims : '') + (cnt.blocks ? ' · 블록 ' + cnt.blocks : '')
     + (points.length > 2000 ? ' (점은 2000개까지)' : '') + (cnt.skipped ? ' · 못 읽은 객체 ' + cnt.skipped + '개' : '') + (cnt.hidden ? ' · 꺼짐·동결 레이어 ' + cnt.hidden + '개 뺌' : '') + (cnt.paper ? ' · 배치탭 ' + cnt.paper + '개 뺌' : '') + (cnt.cad ? ' · 연속지적도 ' + cnt.cad + '개 뺌' : ''));
   const kf = new File([kml], file.name.replace(/\.dxf$/i, '') + '.kml', { type: 'application/vnd.google-earth.kml+xml' });
