@@ -3694,10 +3694,13 @@ const resetAll=()=>{
   setMarkersClickThrough(false); hideDrawCatcher();
   stopLocationPick(); clearLocationPick(false);   // 위치검색 원·중심점 제거
   if(window.__clearRecordHelpers) window.__clearRecordHelpers();
+  // 임시(live) 표시 장식 — 예전엔 안 지워서 화면 초기화 뒤에도 초록 점·링(사진 위치)이 남았다(2026-10-26)
+  if(window.__removeLive) window.__removeLive();
+  clearLivePreview();
   locationMarkerCount=0; trackCounter=0;
   allItems=[]; selectedItems.clear(); anchorIdx=-1; lastClickedIdx=-1;
   renderList(); clearPreview();
-  if(hadKmz && window.__wsSend) window.__wsSend({type:'reset_live_broadcast'});
+  if(window.__wsSend) window.__wsSend({type:'reset_live_broadcast'});
 };
 
 // ══════════════════════════════════════════════════
@@ -5415,6 +5418,7 @@ window.onload=()=>{
     liveOvs = [];
     pathToMarker.clear();
   }
+  window.__removeLive = removeLive;   // 화면 초기화(resetAll)용 — 임시 사진의 초록 점·링, 엑셀 PNU·좌표 점
 
   // 현재 임시(_live) 객체들을 영구 객체로 확정(Insert).
   //  - _live 플래그 제거 → live_clear/clearLiveItems 로 더 이상 지워지지 않음
