@@ -5667,6 +5667,8 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           if(window.__onCadastral)window.__onCadastral(d);     // 🗺 지적도 불러오기
         } else if(d.type&&d.type.indexOf('tile_')===0){
           if(window.__onTileMsg)window.__onTileMsg(d);   // 🛰 지도저장·오프라인 항공영상 (mapcommon)
+        } else if(d.type==='map_count'){
+          if(window.__onMapCount)window.__onMapCount(d);   // 지도창 여러 개 알림 (mapcommon)
         } else if(d.type==='search_dirs'){
           if(window.__onSearchDirs)window.__onSearchDirs(d);
         } else if(d.type==='cadastral_dir'){

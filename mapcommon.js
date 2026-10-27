@@ -3300,6 +3300,44 @@ function setSearchDirs(){
   if (window.__setBadge) window.__setBadge(true, '🧭 위치로 검색 폴더 지정...');
   window.__wsSend({ type: 'search_dirs_dialog' });
 }
+// ── 지도창이 여러 개 떠 있으면 알림 배너 (2026-10-27) ──
+// 지도창마다 서버에 웹소켓으로 붙어 사진·엑셀 방송을 모두 받으므로, 여러 개면 사진 인식이 느려진다.
+// 서버(사진위치표시)가 연결·해제 때마다 map_count 를 방송 → 2개 이상이면 배너로 정리를 권한다.
+var _mapCountIgnore = 1;        // 이 수까지는 안내 안 함(✕ 로 닫으면 그때 수를 기억)
+function _mapCountBanner(n, web){
+  let el = document.getElementById('mapCountWarn');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'mapCountWarn';
+    el.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);z-index:100002;'
+      + 'background:#fff3cd;color:#664d03;border:1px solid #e0b400;border-radius:8px;'
+      + 'box-shadow:0 3px 12px rgba(0,0,0,.25);padding:8px 12px;font-size:13px;line-height:1.5;'
+      + 'max-width:92vw;display:flex;align-items:center;gap:10px;';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<span class="mcw-txt"></span>'
+    + '<button class="mcw-close" style="padding:4px 10px;font-weight:bold;white-space:nowrap;">이 창 닫기</button>'
+    + '<button class="mcw-x" title="이 안내 닫기" style="padding:4px 8px;">✕</button>';
+  el.querySelector('.mcw-txt').textContent = '⚠️ 지도창이 ' + n + '개 열려 있습니다'
+    + (web ? ' (인터넷 지도 ' + web + '개)' : '') + ' — 사진 인식이 느려집니다. 쓰지 않는 창을 닫아 주세요.';
+  el.querySelector('.mcw-x').onclick = () => { _mapCountIgnore = n; el.remove(); };
+  el.querySelector('.mcw-close').onclick = () => {
+    try { window.close(); } catch (e) {}
+    // 스크립트가 열지 않은 탭은 크롬이 close() 를 막는다 → 직접 닫도록 안내
+    setTimeout(() => {
+      if (!document.getElementById('mapCountWarn')) return;
+      el.querySelector('.mcw-txt').textContent = '⚠️ 이 창은 브라우저가 스스로 닫지 못합니다 — 탭을 직접 닫아 주세요 (Ctrl+W).';
+      el.querySelector('.mcw-close').remove();
+    }, 600);
+  };
+}
+window.__onMapCount = d => {
+  const n = +d.count || 0;
+  if (n <= 1) { _mapCountIgnore = 1; const el = document.getElementById('mapCountWarn'); if (el) el.remove(); return; }
+  if (n <= _mapCountIgnore) return;          // ✕ 로 닫은 뒤 더 늘지 않았으면 다시 띄우지 않음
+  _mapCountBanner(n, +d.web || 0);
+};
+
 window.__onSearchDirs = d => {
   if (!window.__setBadge) return;
   if (!d.saved) window.__setBadge(true, '위치로 검색 폴더 — 바꾸지 않음');
