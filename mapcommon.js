@@ -2043,8 +2043,9 @@ function _linkParams(search){
   if ((m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(q.get('pt') || ''))) o.pt = [+m[1], +m[2]];
   if (o.pt && (Math.abs(o.pt[0]) > 90 || Math.abs(o.pt[1]) > 180)) delete o.pt;
   if (q.get('lp')) o.lp = q.get('lp');
+  if (/^[\w-]{10,}$/.test(q.get('gd') || '')) o.gd = q.get('gd');
   o.n = (q.get('n') || '').slice(0, 100);
-  return (o.pt || o.lp) ? o : null;
+  return (o.pt || o.lp || o.gd) ? o : null;
 }
 var _linkFirst = (function(){
   var o = _linkParams(location.search);
@@ -2067,15 +2068,77 @@ function _openLink(o){
   (function wait(){
     if (!(typeof _mapReady === 'function' && _mapReady() && window.__showLiveMulti) && Date.now() - t0 < 20000) { setTimeout(wait, 300); return; }
     if (o.pt && window.__showLiveMulti) window.__showLiveMulti([{ name: o.n || (o.pt[0].toFixed(6) + ', ' + o.pt[1].toFixed(6)), path: null, lat: o.pt[0], lng: o.pt[1], has_gps: true }]);
-    if (!o.lp) return;
+    if (!o.lp && !o.gd) return;
     var tries = 0;
-    (function send(){                                  // 연동 서버 연결을 4초까지 기다림
-      if (window.__wsSend && window.__wsSend({ type: 'preview_file', path: o.lp })) return;
-      if (++tries < 14) { setTimeout(send, 300); return; }
+    (function send(){                                  // 사진위치표시가 켜져 있으면 PC 파일로(연결을 2.4초까지 기다림)
+      if (o.lp && window.__wsSend && window.__wsSend({ type: 'preview_file', path: o.lp })) return;
+      if (o.lp && ++tries < 8) { setTimeout(send, 300); return; }
+      if (o.gd) { _linkDrivePhoto(o); return; }       // 꺼져 있으면 구글 드라이브에서 (2026-11-01)
       window.__setBadge && window.__setBadge(false, '⚠️ 사진위치표시가 꺼져 있어 사진은 못 띄움 — 위치만 표시');
     })();
   })();
 }
+// ── 사진위치표시가 꺼져 있을 때: 구글 드라이브에서 받아 지도에 올림(📂 열기와 같은 handleDroppedFiles) ──
+//   토큰은 휴대폰 뷰어(htm/img/gdrive.js)와 같은 localStorage 'gdrive_token' — 같은 주소(junty75.github.io)라 함께 쓴다.
+//   없거나 1시간 지나 만료면 「구글 로그인」 막대 → 누르면 작은 창으로 로그인(리디렉션 주소는 등록된 /img/ — 그쪽 gdrive.js 가 토큰을 저장하고
+//   pending {popup:1} 이면 창을 닫는다) → 'gdrive_token' storage 이벤트로 이어서 받기. 지금 쓰는 지도 탭은 그대로 둔다.
+var _GD_CLIENT_ID = '680805135587-9ttr17d5u8t1h93hb05u0je7c62p3b2a.apps.googleusercontent.com';   // htm/img/gdrive.js 와 같은 것
+var _linkGdDone = {}, _linkGdWait = null;
+function _linkBadge(t, ok){ window.__setBadge && window.__setBadge(ok !== false, t); }
+function _gdLinkTok(){
+  try { var t = JSON.parse(localStorage.getItem('gdrive_token') || 'null'); return t && t.t && t.exp > Date.now() ? t.t : null; } catch(e){ return null; }
+}
+async function _linkDrivePhoto(o){
+  if (_linkGdDone[o.gd]) { _linkBadge('📷 ' + (o.n || '사진') + ' — 이미 지도에 올림'); return; }
+  var tok = _gdLinkTok();
+  if (!tok) { _linkLoginBar(o); return; }
+  _linkBadge('☁ 드라이브에서 사진 받는 중... ' + (o.n || ''));
+  try {
+    var base = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(o.gd), h = { Authorization: 'Bearer ' + tok };
+    var r1 = await fetch(base + '?fields=name,mimeType', { headers: h });
+    if (r1.status === 401) { localStorage.removeItem('gdrive_token'); _linkLoginBar(o); return; }
+    if (!r1.ok) throw new Error('HTTP ' + r1.status);
+    var meta = await r1.json();
+    var r2 = await fetch(base + '?alt=media', { headers: h });
+    if (!r2.ok) throw new Error('HTTP ' + r2.status);
+    var bl = await r2.blob();
+    var f = new File([bl], meta.name || ((o.n || 'photo') + '.jpg'), { type: meta.mimeType || bl.type || 'image/jpeg' });
+    _linkGdDone[o.gd] = 1;
+    window.__removeLive && window.__removeLive();       // 위치 점 대신 사진 마커
+    handleDroppedFiles([f], typeof vmap !== 'undefined' ? new Map() : undefined);
+    _linkBadge('☁ ' + f.name);
+  } catch(e) {
+    _linkBadge('⚠️ 드라이브 사진을 못 받음 (' + e.message + ') — 위치만 표시', false);
+  }
+}
+function _linkLoginBar(o){
+  _linkGdWait = o;
+  var bar = document.getElementById('jtyGdLoginBar');
+  if (bar) return;
+  bar = document.createElement('div'); bar.id = 'jtyGdLoginBar';
+  bar.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:99999;background:#fff;border:1px solid #1a73e8;border-radius:8px;'
+    + 'box-shadow:0 2px 10px rgba(0,0,0,.25);padding:10px 14px;font:14px sans-serif;display:flex;gap:10px;align-items:center;';
+  bar.innerHTML = '<span>📷 사진을 보려면 구글 드라이브 로그인이 필요합니다 (1시간마다)</span>'
+    + '<button id="jtyGdLoginGo" style="padding:6px 14px;background:#1a73e8;color:#fff;border:none;border-radius:6px;cursor:pointer;">구글 로그인</button>'
+    + '<button id="jtyGdLoginX" style="padding:6px 10px;border:1px solid #ccc;background:#fff;border-radius:6px;cursor:pointer;">✕</button>';
+  document.body.appendChild(bar);
+  document.getElementById('jtyGdLoginX').onclick = function(){ bar.remove(); _linkGdWait = null; };
+  document.getElementById('jtyGdLoginGo').onclick = function(){
+    var st = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { localStorage.setItem('gdrive_state', st); localStorage.setItem('gdrive_pending', JSON.stringify({ popup: 1 })); } catch(e){}
+    window.open('https://accounts.google.com/o/oauth2/v2/auth?client_id=' + encodeURIComponent(_GD_CLIENT_ID)
+      + '&redirect_uri=' + encodeURIComponent('https://junty75.github.io/img/') + '&response_type=token'
+      + '&scope=' + encodeURIComponent('https://www.googleapis.com/auth/drive') + '&include_granted_scopes=true&state=' + encodeURIComponent(st),
+      'jtyGdLogin', 'width=520,height=680');
+    _linkBadge('🔑 로그인 창에서 계정을 고르세요');
+  };
+}
+window.addEventListener('storage', function(e){
+  if (e.key !== 'gdrive_token' || !e.newValue || !_linkGdWait) return;
+  var o = _linkGdWait; _linkGdWait = null;
+  var bar = document.getElementById('jtyGdLoginBar'); if (bar) bar.remove();
+  _linkDrivePhoto(o);
+});
 (function(){
   var KA = 'jty_alive' + _LINK_PATH, KL = 'jty_link' + _LINK_PATH;
   function beat(){ try { localStorage.setItem(KA, String(Date.now())); } catch(e){} }

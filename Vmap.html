@@ -5216,6 +5216,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
   window.__wsSend=(obj)=>{ if(ws&&ws.readyState===1){ws.send(JSON.stringify(obj));return true;} return false; };
   window.__setBadge=setBadge;
   window.__showLiveMulti=items=>showLiveMulti(items);   // 링크로 열기(mapcommon _openLink)의 위치 점
+  window.__removeLive=()=>removeLive();                 //  … 드라이브 사진을 올리면 그 점을 지움
 
   function removeLive(){
     liveOvs.forEach(ov=>vmap.removeOverlay(ov));
