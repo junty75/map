@@ -2032,6 +2032,69 @@ function _pcLinkEnabled(){
   }catch(e){return /(^|[?&])pc(=1)?(&|$)/.test(q);}
 }
 
+// ── 링크로 열기 (2026-11-01) — 엑셀 '사진 링크 엑셀'(vba/엑셀/PhotoLink.py) 링크를 PC 에서 누르면
+//   휴대폰 뷰어(/img/·/Vmap/)가 여기(/map/map?pc·/map/Vmap?pc)로 넘긴다. 값: pt=위도,경도 · n=이름 · lp=PC 사진 경로 (gd=드라이브ID 는 휴대폰용)
+//   · pt 자리에 노란 점(live, 엑셀 좌표 셀과 같음)을 먼저 찍고, 사진위치표시가 켜져 있으면 lp 를 엑셀 사진 셀과 같은 미리보기(ws preview_file)로 바꾼다.
+//   · 엑셀은 링크마다 새 탭을 연다 → 이미 열린 같은 지도 탭이 있으면('jty_alive'+경로, 90초 안) 'jty_link'+경로 로 넘기고 이 탭은 닫는다.
+//     PC 지도는 뒤로가기 버퍼(pushState)가 없어 새 탭 기록이 1칸이라 window.close() 가 된다(휴대폰 뷰어 index 머리와 같은 방식).
+var _LINK_PATH = location.pathname.replace(/\.html?$/i, '');
+function _linkParams(search){
+  var q = new URLSearchParams(search || ''), o = {}, m;
+  if ((m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(q.get('pt') || ''))) o.pt = [+m[1], +m[2]];
+  if (o.pt && (Math.abs(o.pt[0]) > 90 || Math.abs(o.pt[1]) > 180)) delete o.pt;
+  if (q.get('lp')) o.lp = q.get('lp');
+  o.n = (q.get('n') || '').slice(0, 100);
+  return (o.pt || o.lp) ? o : null;
+}
+var _linkFirst = (function(){
+  var o = _linkParams(location.search);
+  if (!o) return null;
+  try {
+    if (history.length === 1 && Date.now() - (+localStorage.getItem('jty_alive' + _LINK_PATH) || 0) < 90000) {
+      localStorage.setItem('jty_link' + _LINK_PATH, JSON.stringify({ q: location.search, t: Date.now() }));
+      window.close();                                   // 닫히면 여기서 끝 — 못 닫으면 아래처럼 이 탭이 직접 연다
+    }
+  } catch(e){}
+  try {                                                 // 다시 열 때 되풀이 안 하게 주소에서 지움(?pc 는 남김)
+    var q = new URLSearchParams(location.search); ['pt','n','lp','gd'].forEach(function(k){ q.delete(k); });
+    var rest = q.toString().replace(/=(&|$)/g, '$1');
+    history.replaceState(history.state, '', location.pathname + (rest ? '?' + rest : '') + location.hash);
+  } catch(e){}
+  return o;
+})();
+function _openLink(o){
+  var t0 = Date.now();
+  (function wait(){
+    if (!(typeof _mapReady === 'function' && _mapReady() && window.__showLiveMulti) && Date.now() - t0 < 20000) { setTimeout(wait, 300); return; }
+    if (o.pt && window.__showLiveMulti) window.__showLiveMulti([{ name: o.n || (o.pt[0].toFixed(6) + ', ' + o.pt[1].toFixed(6)), path: null, lat: o.pt[0], lng: o.pt[1], has_gps: true }]);
+    if (!o.lp) return;
+    var tries = 0;
+    (function send(){                                  // 연동 서버 연결을 4초까지 기다림
+      if (window.__wsSend && window.__wsSend({ type: 'preview_file', path: o.lp })) return;
+      if (++tries < 14) { setTimeout(send, 300); return; }
+      window.__setBadge && window.__setBadge(false, '⚠️ 사진위치표시가 꺼져 있어 사진은 못 띄움 — 위치만 표시');
+    })();
+  })();
+}
+(function(){
+  var KA = 'jty_alive' + _LINK_PATH, KL = 'jty_link' + _LINK_PATH;
+  function beat(){ try { localStorage.setItem(KA, String(Date.now())); } catch(e){} }
+  beat(); setInterval(beat, 20000);                     // 숨은 탭은 크롬이 1분에 한 번으로 늦춤 → 90초 기준
+  document.addEventListener('visibilitychange', function(){ if (!document.hidden) beat(); });
+  window.addEventListener('pagehide', function(){ try { localStorage.removeItem(KA); } catch(e){} });
+  window.addEventListener('storage', function(e){
+    if (e.key !== KL || !e.newValue) return;
+    var v; try { v = JSON.parse(e.newValue); } catch(er){ return; }
+    if (!v || Date.now() - v.t > 15000) return;
+    var o = _linkParams(v.q);
+    if (o) { try { window.focus(); } catch(er){} _openLink(o); }
+  });
+  if (_linkFirst) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ _openLink(_linkFirst); });
+    else _openLink(_linkFirst);
+  }
+})();
+
 // ── 📁 경로폴더 — 엑셀 경로 수정 때 찾을 폴더 목록 관리 (창은 사진위치표시.py 가 띄운다) ──
 function initRelinkDirsBtn(){
   const b = document.getElementById('relinkDirsBtn');

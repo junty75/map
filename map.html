@@ -5412,6 +5412,7 @@ window.onload=()=>{
     return false;
   };
   window.__setBadge = setBadge;
+  window.__showLiveMulti = items => showLiveMulti(items);   // 링크로 열기(mapcommon _openLink)의 위치 점
 
   function removeLive() {
     liveOvs.forEach(ov => ov.setMap(null));

@@ -5215,6 +5215,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
   // 외부(IIFE 바깥) 함수에서 WebSocket 전송 / 배지 표시할 수 있도록 노출
   window.__wsSend=(obj)=>{ if(ws&&ws.readyState===1){ws.send(JSON.stringify(obj));return true;} return false; };
   window.__setBadge=setBadge;
+  window.__showLiveMulti=items=>showLiveMulti(items);   // 링크로 열기(mapcommon _openLink)의 위치 점
 
   function removeLive(){
     liveOvs.forEach(ov=>vmap.removeOverlay(ov));
