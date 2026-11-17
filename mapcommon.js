@@ -4022,3 +4022,185 @@ function _tileFetch(z, x, y, cb){
     cb('http://127.0.0.1:' + TILE_PORT + '/tile/' + z + '/' + x + '/' + y);
   } else cb(null);
 }
+
+// ══════════════════════════════════════════════════
+//  사이드바 트랙 우클릭 — 🔗 묶기 · ✂ 묶음 풀기 (2026-11-17)
+//  · 여러 트랙을 고르고(Ctrl·Shift) 우클릭 → 한 항목(묶음객체)으로. 선·면·색은 그대로, 이름은 첫 트랙.
+//  · 묶음객체 우클릭 → 조각(선 하나·면 하나)마다 한 항목으로. 이름 '원래이름 1, 2…'.
+//  · 되돌리기(Ctrl+Z) 됨. 지번 등 딸린 문자: 묶으면 새 항목에 딸리고, 풀면 따로 남는다(지도에 그대로).
+//  페이지 어댑터: _bundlePieceCount(item) · _trackGroupNew(items) · _trackUngroupNew(item)
+//               · _trackItemsOff(items) · _trackItemsOn(items)
+// ══════════════════════════════════════════════════
+function _sideCtxClose() {
+  const m = document.getElementById('sideCtxMenu'); if (m) m.remove();
+  document.removeEventListener('mousedown', _sideCtxOutside, true);
+  document.removeEventListener('keydown', _sideCtxKey, true);
+}
+function _sideCtxOutside(e) { const m = document.getElementById('sideCtxMenu'); if (m && !m.contains(e.target)) _sideCtxClose(); }
+function _sideCtxKey(e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _sideCtxClose(); } }
+function _sideCtxShow(e, rows) {
+  _sideCtxClose();
+  const m = document.createElement('div'); m.id = 'sideCtxMenu';
+  m.style.cssText = 'position:fixed;z-index:9700;background:#fff;border:1px solid #bbb;border-radius:6px;'
+    + 'box-shadow:0 4px 14px rgba(0,0,0,.3);padding:4px 0;font-size:12px;min-width:170px;';
+  rows.forEach(([txt, fn, tip]) => {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = txt; if (tip) b.title = tip;
+    b.style.cssText = 'display:block;width:100%;text-align:left;border:none;background:none;padding:6px 12px;font-size:12px;white-space:nowrap;'
+      + 'cursor:' + (fn ? 'pointer' : 'default') + ';color:' + (fn ? '#1a5276' : '#999') + ';';
+    if (fn) {
+      b.onmouseenter = () => b.style.background = '#d6eaf8';
+      b.onmouseleave = () => b.style.background = 'none';
+      b.onclick = () => { _sideCtxClose(); fn(); };
+    }
+    m.appendChild(b);
+  });
+  document.body.appendChild(m);
+  const r = m.getBoundingClientRect();
+  m.style.left = Math.max(2, Math.min(e.clientX, innerWidth - r.width - 4)) + 'px';
+  m.style.top = Math.max(2, Math.min(e.clientY, innerHeight - r.height - 4)) + 'px';
+  setTimeout(() => {
+    document.addEventListener('mousedown', _sideCtxOutside, true);
+    document.addEventListener('keydown', _sideCtxKey, true);
+  }, 0);
+}
+// 두 페이지 renderList 의 트랙 줄 oncontextmenu
+function sideTrackCtxMenu(e, item, idx) {
+  e.preventDefault(); e.stopPropagation();
+  if (!selectedItems.has(idx)) {
+    selectedItems.clear(); selectedItems.add(idx); anchorIdx = idx; lastClickedIdx = idx;
+    document.querySelectorAll('#photoTbody tr').forEach((r, i) => r.classList.toggle('selected', selectedItems.has(i)));
+    try { updateTrackHighlights(); } catch (er) {}
+  }
+  const f = getFilteredItems();
+  const sel = [...selectedItems].sort((a, b) => a - b).map(i => f[i]).filter(it => it && it.type === 'track' && !it._live);
+  const rows = [];
+  if (sel.length >= 2) rows.push(['🔗 선택한 트랙 ' + sel.length + '개 묶기', () => _trackGroupRun(sel),
+    '한 항목(묶음객체)으로 묶습니다 — 선·면·색은 그대로, 이름은 첫 트랙 (Ctrl+Z 되돌리기)']);
+  const n = _bundlePieceCount(item);
+  if (n >= 2) rows.push(['✂ 묶음 풀기 (' + n + '조각 → 각각 트랙)', () => _trackUngroupRun(item, n),
+    '조각(선 하나·면 하나)마다 한 항목으로 나눕니다 (Ctrl+Z 되돌리기)']);
+  if (!rows.length) rows.push(['묶기: Ctrl·Shift 로 트랙을 여러 개 고른 뒤 우클릭', null]);
+  _sideCtxShow(e, rows);
+}
+// 딸린 문자 주인 바꾸기 기록 — to=null 이면 딸림을 끊어 지도에 그대로 남긴다
+function _ownedMoveRec(froms, to) {
+  const set = new Set(froms), ls = _ownedTexts.filter(l => set.has(l._owner)), prev = ls.map(l => l._owner);
+  const lset = new Set(ls);
+  return {
+    redo() {
+      ls.forEach(l => { l._owner = to; l._orph = false; });
+      if (!to) _ownedTexts = _ownedTexts.filter(l => !lset.has(l));
+      else ls.forEach(l => { if (!_ownedTexts.includes(l)) _ownedTexts.push(l); });
+    },
+    undo() { ls.forEach((l, i) => { l._owner = prev[i]; l._orph = false; if (!_ownedTexts.includes(l)) _ownedTexts.push(l); }); }
+  };
+}
+function _trackSwapDo(rm, ad, ownFn) {
+  ownFn();
+  _trackItemsOff(rm); _trackItemsOn(ad);
+  let pos = allItems.length;
+  rm.forEach(it => { const k = allItems.indexOf(it); if (k >= 0 && k < pos) pos = k; });
+  const rs = new Set(rm);
+  for (let k = allItems.length - 1; k >= 0; k--) if (rs.has(allItems[k])) allItems.splice(k, 1);
+  allItems.splice(Math.min(pos, allItems.length), 0, ...ad);
+  selectedItems.clear(); anchorIdx = -1; lastClickedIdx = -1;
+  const f = getFilteredItems();
+  ad.forEach(it => { const k = f.indexOf(it); if (k >= 0) selectedItems.add(k); });
+  renderList();
+}
+function _trackSwap(olds, news, ownTo) {
+  const own = _ownedMoveRec(olds, ownTo);
+  _trackSwapDo(olds, news, own.redo);
+  pushHistory({ undo() { _trackSwapDo(news, olds, own.undo); }, redo() { _trackSwapDo(olds, news, own.redo); } });
+}
+function _trackGroupRun(items) {
+  const nu = _trackGroupNew(items); if (!nu) return;
+  _trackSwap(items, [nu], nu);
+  showSaveStatus('🔗 트랙 ' + items.length + '개를 한 항목(묶음객체)으로 묶었습니다 — 되돌리기 Ctrl+Z');
+}
+function _trackUngroupRun(item, n) {
+  if (n > 300 && !confirm('조각이 ' + n.toLocaleString() + '개입니다. 목록에 ' + n.toLocaleString() + '줄이 생깁니다.\n\n그래도 풀까요?')) return;
+  const news = _trackUngroupNew(item); if (!news || news.length < 2) return;
+  _trackSwap([item], news, null);
+  try { queueAddrFetch(news); } catch (e) {}
+  showSaveStatus('✂ 묶음을 ' + news.length + '개 트랙으로 풀었습니다 — 되돌리기 Ctrl+Z');
+}
+
+// ══════════════════════════════════════════════════
+//  사이드바 「문자」 탭 (2026-11-17)
+//  지도 위 문자(메모·CAD 문자·지번)를 목록으로. 항목(allItems)이 아니라 따로 그린다.
+//  클릭 = 그 문자로 이동(🔒 Hold 면 이동 안 함)·잠깐 강조, 더블클릭·우클릭 = 수정창(수정·✥ 이동·삭제).
+//  🔲 필터가 켜져 있으면 화면 안 문자만. 체크칸 = 지도에 문자 보이기/숨기기.
+//  페이지 어댑터: _textAll() · _textInfo(o) → {t, col, lat, lng} · _textFocus(o) · _textEdit(o) · _textSetVisible(on)
+//  문자 수가 바뀌는 곳에서 _textCountRefresh() 를 부른다(묶어서 한 번만 다시 그림).
+// ══════════════════════════════════════════════════
+let _textCountTimer = null, _textSel = null;
+function _textCountRefresh() {
+  if (_textCountTimer) return;
+  _textCountTimer = setTimeout(() => {
+    _textCountTimer = null;
+    if (typeof currentFilter !== 'undefined' && currentFilter === 'text') { try { renderList(); } catch (e) {} return; }
+    const sp = document.querySelector('.ftab[data-f="text"] span');
+    if (sp) sp.textContent = _textTabLabel();
+  }, 60);
+}
+function _textTabLabel() { return '문자(' + _textAll().length + ')'; }
+function _textRowsFiltered() {
+  let ls = _textAll();
+  if (typeof viewFilterOn !== 'undefined' && viewFilterOn) {
+    try {
+      const b = _viewLLBounds();
+      ls = ls.filter(o => { const i = _textInfo(o); return i.lat >= b[0] && i.lat <= b[2] && i.lng >= b[1] && i.lng <= b[3]; });
+    } catch (e) {}
+  }
+  return ls;
+}
+// renderList 가 문자 탭일 때 부른다 — 번호 칸 + 나머지 칸을 합친 한 칸(색·글자)
+function _renderTextRows(tbody) {
+  const ls = _textRowsFiltered();
+  const badge = document.getElementById('itemCountBadge'); if (badge) badge.textContent = ls.length;
+  const ncol = Math.max(2, document.querySelectorAll('#photoTable thead th').length);
+  const MAX = 5000;
+  if (_textSel && !ls.includes(_textSel)) _textSel = null;
+  const frag = document.createDocumentFragment();
+  ls.slice(0, MAX).forEach((o, i) => {
+    const inf = _textInfo(o);
+    const tr = document.createElement('tr');
+    tr._textObj = o;
+    if (o === _textSel) tr.classList.add('selected');
+    const numTd = document.createElement('td');
+    numTd.textContent = i + 1;
+    numTd.style.cssText = 'text-align:center;color:#777;font-size:11px;';
+    const nameTd = document.createElement('td');
+    nameTd.colSpan = ncol - 1;
+    const one = String(inf.t || '').replace(/\s*\n\s*/g, ' / ');
+    const sw = document.createElement('span');
+    sw.style.cssText = 'display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:6px;vertical-align:middle;'
+      + 'border:1px solid rgba(0,0,0,.45);background:' + (inf.col || '#FFEB00') + ';';
+    const nm = document.createElement('span'); nm.className = 'item-name'; nm.textContent = one || '(빈 문자)';
+    nameTd.append(sw, nm);
+    nameTd.title = (inf.t || '') + '\n— 클릭: 그 자리로 이동 · 더블클릭/우클릭: 수정·이동·삭제 · 지도에서 길게 눌러 끌면 옮김';
+    tr.append(numTd, nameTd);
+    tr.onclick = () => {
+      _textSel = o;
+      tbody.querySelectorAll('tr').forEach(r => r.classList.toggle('selected', r._textObj === o));
+      _textFocus(o);
+    };
+    tr.ondblclick = e => { e.stopPropagation(); _textEdit(o); };
+    tr.oncontextmenu = e => { e.preventDefault(); e.stopPropagation(); tr.onclick(); _textEdit(o); };
+    frag.appendChild(tr);
+  });
+  if (ls.length > MAX) {
+    const tr = document.createElement('tr'), td = document.createElement('td');
+    td.colSpan = ncol; td.style.cssText = 'color:#888;text-align:center;';
+    td.textContent = '… ' + (ls.length - MAX).toLocaleString() + '개 더 있음 (🔲 필터로 화면 안 문자만 보세요)';
+    tr.appendChild(td); frag.appendChild(tr);
+  }
+  tbody.appendChild(frag);
+}
+// 문자 탭 체크칸 — 두 페이지 applyVisibility 맨 앞에서
+function _textVisApply(on) {
+  _textSetVisible(on);
+  document.querySelectorAll('.ftab[data-f="text"]').forEach(b => b.classList.toggle('hidden-type', !on));
+  renderList();
+}

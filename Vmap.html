@@ -300,6 +300,7 @@ html,body{height:100%;margin:0;overflow:hidden;font-family:'맑은 고딕',sans-
       <button class="ftab" data-f="photo"><span>사진</span><input type="checkbox" class="vis-check" data-t="photo" checked title="지도 표시/숨기기"></button>
       <button class="ftab" data-f="marker"><span>마커</span><input type="checkbox" class="vis-check" data-t="marker" checked title="지도 표시/숨기기"></button>
       <button class="ftab" data-f="track"><span>트랙</span><input type="checkbox" class="vis-check" data-t="track" checked title="지도 표시/숨기기"></button>
+      <button class="ftab" data-f="text"><span>문자</span><input type="checkbox" class="vis-check" data-t="text" checked title="지도에 문자 표시/숨기기"></button>
     </div>
   </div>
   <div id="folderBar">
@@ -725,6 +726,51 @@ function initMap(lat, lng) {
     if (holdTimer) { clearTimeout(holdTimer); holdTimer = null; holdTarget = null; }
     if (movingMk && isDraggingMk) endMoveMode();
   });
+
+  // ✥ 문자 길게 눌러 옮기기 (2026-11-17, 마커 길게 누르기와 같은 조작 — 마커가 먼저)
+  //  0.35초 안에 5px 넘게 움직이면 그냥 지도 끌기. 잡으면 지도 끌기를 막고 끄는 대로 글자가 따라온다. Ctrl+Z 되돌리기.
+  let tHold = null;
+  vp.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || drawing || movingMk || holdTarget || tHold || eraseMode || areaMode || textMovePending) return;
+    if (typeof _routeCutSt !== 'undefined' && _routeCutSt) return;
+    if (!textLabelLyr || !textLabelLyr.getVisible()) return;
+    const px = evtScaledPixel(e);
+    const f = _textFeatAtV(px, vmap.getCoordinateFromPixel(px)); if (!f) return;
+    tHold = { f, x: e.clientX, y: e.clientY, on: false, prev: f.getGeometry().getCoordinates().slice(), id: e.pointerId };
+    tHold.timer = setTimeout(() => {
+      if (!tHold) return;
+      tHold.on = true;
+      try { vp.setPointerCapture(tHold.id); } catch(_) {}
+      vmap.getInteractions().forEach(i => { if (i instanceof ol.interaction.DragPan) i.setActive(false); });
+      document.body.style.cursor = 'move';
+      showSaveStatus('✥ 문자 이동 — 놓을 자리까지 끌어서 놓으세요');
+    }, 350);
+  });
+  vp.addEventListener('pointermove', e => {
+    if (!tHold) return;
+    if (!tHold.on) {
+      if (Math.hypot(e.clientX - tHold.x, e.clientY - tHold.y) > 5) { clearTimeout(tHold.timer); tHold = null; }
+      return;
+    }
+    const c = vmap.getCoordinateFromPixel(evtScaledPixel(e));
+    if (c) tHold.f.getGeometry().setCoordinates(c);
+  });
+  const tEnd = e => {
+    if (!tHold) return;
+    clearTimeout(tHold.timer);
+    const s = tHold; tHold = null;
+    if (!s.on) return;
+    try { vp.releasePointerCapture(e.pointerId); } catch(_) {}
+    vmap.getInteractions().forEach(i => { if (i instanceof ol.interaction.DragPan) i.setActive(true); });
+    document.body.style.cursor = '';
+    const prev = s.prev, next = s.f.getGeometry().getCoordinates().slice(), f = s.f;
+    if (prev[0] === next[0] && prev[1] === next[1]) { showSaveStatus(''); return; }
+    pushHistory({ undo(){ f.getGeometry().setCoordinates(prev); _textCountRefresh(); }, redo(){ f.getGeometry().setCoordinates(next); _textCountRefresh(); } });
+    _textCountRefresh();
+    showSaveStatus('✥ 문자 이동됨 (되돌리기 Ctrl+Z)');
+  };
+  vp.addEventListener('pointerup', tEnd);
+  vp.addEventListener('pointercancel', tEnd);
 }
 
 function endMoveMode() {
@@ -789,6 +835,7 @@ window.onload = () => {
   // ── 타입별 지도 표시/숨기기 ──
   function applyVisibility(type) {
     const show = visibility[type];
+    if (type === 'text') { _textVisApply(show); return; }   // 문자 탭 체크칸
     allItems.forEach(item => {
       if (item.type !== type) return;
       if (item.mkObj) {
@@ -1785,6 +1832,43 @@ function _ctxDot(lat,lng){
   vmap.addOverlay(ov); ov.setPosition(toMerc(lng,lat));
   return { remove(){ vmap.removeOverlay(ov); } };
 }
+// 🔗 사이드바 트랙 묶기·풀기 어댑터 (mapcommon sideTrackCtxMenu, 2026-11-17)
+//  조각 = 레이어 안 피처 하나(선 하나·면 하나, 지우개와 같은 단위). 묶기 = 피처들을 새 레이어 하나로, 풀기 = 피처마다 레이어.
+//  피처는 새로 만들지 않고 옮긴다(색·굵기·채움 그대로). 레이어가 지도에서 빠질 때 그 순간의 피처를 _feats 에 적어 두고
+//  다시 들어올 때 그대로 채운다 → 되돌리기·다시하기가 서로 꼬이지 않는다.
+function _bundlePieceCount(item){ return (item&&item.type==='track'&&item.polyLyr)?item.polyLyr.getSource().getFeatures().length:0; }
+function _lyrLike(l,feats){
+  const lyr=new ol.layer.Vector({source:new ol.source.Vector(),zIndex:(l&&l.getZIndex&&l.getZIndex())||100});
+  ['_color','_width','_opacity','_fill'].forEach(k=>{ if(l&&l[k]!==undefined) lyr[k]=l[k]; });
+  lyr._feats=feats;
+  const ln=feats.find(f=>f.getGeometry() instanceof ol.geom.LineString);
+  lyr._coords=ln?ln.getGeometry().getCoordinates():[];
+  return lyr;
+}
+function _trackGroupNew(items){
+  const feats=items.flatMap(it=>it.polyLyr?it.polyLyr.getSource().getFeatures():[]); if(feats.length<2) return null;
+  const f=items[0];
+  return {type:'track', name:f.name, address:'', polyLyr:_lyrLike(f.polyLyr,feats), _origColor:trackColorOf(f)};
+}
+function _trackUngroupNew(item){
+  const l=item.polyLyr; if(!l) return null;
+  const col=trackColorOf(item), base=item.name.replace(/^\d+_/,'');
+  return l.getSource().getFeatures().map((f,i)=>({type:'track', name:base+' '+(i+1), address:'', polyLyr:_lyrLike(l,[f]), _origColor:col}));
+}
+function _trackItemsOff(items){
+  const s=new Set();
+  items.forEach(it=>{ const l=it.polyLyr; if(!l) return; l._feats=l.getSource().getFeatures().slice(); removeLyr(l); s.add(l); });
+  polylines=polylines.filter(p=>!s.has(p));
+}
+function _trackItemsOn(items){
+  const have=new Set(polylines), show=visibility.track!==false;
+  items.forEach(it=>{
+    const l=it.polyLyr; if(!l) return;
+    if(l._feats){ const src=l.getSource(); src.clear(true); src.addFeatures(l._feats); }
+    l.setVisible(show); addLyr(l);
+    if(!have.has(l)){ polylines.push(l); have.add(l); }
+  });
+}
 // 🟥 검색한 토지 경계 → 면 트랙(KMZ 폴리곤과 같은 모양 — 선택·색 변경·지우기·KMZ 저장 그대로)
 //   이름 = 찾은 주소(목록 주소칸과 같은 줄임).
 function _parcelAddTrack(rings, name, pt){
@@ -2041,9 +2125,10 @@ function _lineKmlStyleDefsV(styles){
 }
 
 /* CAD 문자(point 모드) 텍스트 라벨 — 마커 없이 글자만(회전 포함) */
-let textLabelLyr=null;
+let textLabelLyr=null, _textSeq=0;
 function _ensureTextLabelLyr(){
-  if(!textLabelLyr){textLabelLyr=new ol.layer.Vector({source:new ol.source.Vector(),zIndex:120});addLyr(textLabelLyr);}
+  if(!textLabelLyr){textLabelLyr=new ol.layer.Vector({source:new ol.source.Vector(),zIndex:120});addLyr(textLabelLyr);
+    const s=textLabelLyr.getSource(); ['addfeature','removefeature','clear'].forEach(ev=>s.on(ev,_textCountRefresh));}
   return textLabelLyr;
 }
 function addTextLabelV(coord,text,rot,color,h,ax,ay,tw){
@@ -2104,6 +2189,7 @@ function addTextLabelV(coord,text,rot,color,h,ax,ay,tw){
     f.setStyle(_lineStyles(13,3));
   }
   f._t={txt,rot:Number(rot)||0,col,h,ax,ay,tw};   // 저장(HTM·KMZ)에서 원본 그대로 다시 쓰려고 보관
+  f._seq=++_textSeq;   // 문자 탭 목록 순서(소스의 getFeatures 순서는 일정하지 않음)
   _ensureTextLabelLyr().getSource().addFeature(f);
   return f;
 }
@@ -2114,6 +2200,20 @@ function _textShownSet(){ return new Set(textLabelLyr?textLabelLyr.getSource().g
 function _textHideMany(ls){ if(!textLabelLyr)return; const src=textLabelLyr.getSource(); ls.forEach(f=>{ try{src.removeFeature(f);}catch(e){} }); }
 function _textShowMany(ls){ try{ _ensureTextLabelLyr().getSource().addFeatures(ls); }catch(e){} }
 function clearTextLabelsV(){ if(textLabelLyr){textLabelLyr.getSource().clear();} }
+// 사이드바 「문자」 탭 어댑터 (mapcommon _renderTextRows, 2026-11-17)
+function _textAll(){ return textLabelLyr?textLabelLyr.getSource().getFeatures().filter(f=>f._t).sort((a,b)=>(a._seq||0)-(b._seq||0)):[]; }
+function _textInfo(f){ const ll=fromMerc(f.getGeometry().getCoordinates()); return {t:f._t.txt, col:f._t.col, lat:ll[1], lng:ll[0]}; }
+function _textFocus(f){
+  const c=f.getGeometry().getCoordinates(), v=vmap.getView();
+  if(!holdView){ if((v.getZoom()||0)<16) v.setZoom(17); v.setCenter(c); }
+  const el=document.createElement('div');
+  el.style.cssText='width:34px;height:34px;border:3px solid #00e5ff;border-radius:50%;background:rgba(0,229,255,.18);box-shadow:0 0 6px rgba(0,0,0,.5);pointer-events:none;';
+  const ov=new ol.Overlay({element:el,positioning:'center-center',stopEvent:false});
+  vmap.addOverlay(ov); ov.setPosition(c);
+  setTimeout(()=>vmap.removeOverlay(ov),1600);
+}
+function _textEdit(f){ if(textLabelLyr&&!textLabelLyr.getVisible()) return; openTextEditor(null,f); }
+function _textSetVisible(on){ _ensureTextLabelLyr().setVisible(!!on); if(!on) closeTextEditor(); }
 
 /* ══════════════════════════════════════════════════
    문자(메모) 입력 — T 로 켜고 지도를 클릭하면 그 자리에 글자를 넣는다. (map.html 과 같은 조작)
@@ -4601,10 +4701,11 @@ function renderList(){
   allItems.forEach(i=>cnt[i.type]++);
   document.querySelectorAll('.ftab').forEach(btn=>{
     const f=btn.dataset.f;
-    const text={all:`전체(${cnt.all})`,photo:`사진(${cnt.photo})`,marker:`마커(${cnt.marker})`,track:`트랙(${cnt.track})`}[f];
+    const text=f==='text'?_textTabLabel():{all:`전체(${cnt.all})`,photo:`사진(${cnt.photo})`,marker:`마커(${cnt.marker})`,track:`트랙(${cnt.track})`}[f];
     const sp=btn.querySelector('span');if(sp)sp.textContent=text;else btn.textContent=text;
   });
   document.getElementById('itemCountBadge').textContent=filtered.length;
+  if(currentFilter==='text'){ _renderTextRows(tbody); return; }   // 문자 탭 (mapcommon, 2026-11-17)
 
   filtered.forEach((item,idx)=>{
     const tr=document.createElement('tr');
@@ -4670,6 +4771,8 @@ function renderList(){
       e.stopPropagation();
       startEditItem(tr,item,idx);
     };
+    // 트랙 줄 우클릭 = 🔗 묶기 / ✂ 묶음 풀기 (mapcommon sideTrackCtxMenu, 2026-11-17)
+    if(item.type==='track') tr.oncontextmenu=e=>sideTrackCtxMenu(e,item,idx);
 
     tr.onmousedown=e=>{
       if(e.button!==0)return;

@@ -356,6 +356,7 @@ _apiKeyError = function(storeKey, name){
         <button class="ftab" data-f="photo"><span>사진</span><input type="checkbox" class="vis-check" data-t="photo" checked title="지도 표시/숨기기"></button>
         <button class="ftab" data-f="marker"><span>마커</span><input type="checkbox" class="vis-check" data-t="marker" checked title="지도 표시/숨기기"></button>
         <button class="ftab" data-f="track"><span>트랙</span><input type="checkbox" class="vis-check" data-t="track" checked title="지도 표시/숨기기"></button>
+        <button class="ftab" data-f="text"><span>문자</span><input type="checkbox" class="vis-check" data-t="text" checked title="지도에 문자 표시/숨기기"></button>
       </div>
     </div>
     <div id="folderBar">
@@ -897,10 +898,11 @@ function renderList() {
   allItems.forEach(i => cnt[i.type]++);
   document.querySelectorAll('.ftab').forEach(btn => {
     const f = btn.dataset.f;
-    const text = { all:`전체(${cnt.all})`, photo:`사진(${cnt.photo})`, marker:`마커(${cnt.marker})`, track:`트랙(${cnt.track})` }[f];
+    const text = f === 'text' ? _textTabLabel() : { all:`전체(${cnt.all})`, photo:`사진(${cnt.photo})`, marker:`마커(${cnt.marker})`, track:`트랙(${cnt.track})` }[f];
     const sp = btn.querySelector('span'); if (sp) sp.textContent = text; else btn.textContent = text;
   });
   document.getElementById('itemCountBadge').textContent = filtered.length;
+  if (currentFilter === 'text') { _renderTextRows(tbody); return; }   // 문자 탭 (mapcommon, 2026-11-17)
 
   filtered.forEach((item, idx) => {
     const tr = document.createElement('tr');
@@ -973,6 +975,8 @@ function renderList() {
       e.stopPropagation();
       startEditItem(tr, item, idx);
     };
+    // 트랙 줄 우클릭 = 🔗 묶기 / ✂ 묶음 풀기 (mapcommon sideTrackCtxMenu, 2026-11-17)
+    if (item.type === 'track') tr.oncontextmenu = e => sideTrackCtxMenu(e, item, idx);
 
     tr.onmousedown = e => {
       if (e.button !== 0) return;
@@ -1351,6 +1355,7 @@ document.querySelectorAll('.ftab').forEach(btn => {
 // ── 타입별 지도 표시/숨기기 ──
 function applyVisibility(type) {
   const show = visibility[type];
+  if (type === 'text') { _textVisApply(show); return; }   // 문자 탭 체크칸
   allItems.forEach(item => {
     if (item.type !== type) return;
     if (item.markerObj) {
@@ -2478,6 +2483,7 @@ function addTextLabel(latlng, text, rot, color, h, ax, ay, tw) {
                 rot: Number(rot) || 0, col, ax, ay, tw };
   textLabels.push(obj);
   if (h > 0) _applyTextLabelSize(obj, _mapMetersPerPixel());
+  _textCountRefresh();
   return obj;
 }
 // 줌 변경 시 h 있는 라벨의 px 크기 재계산 (h[m] / m/px = 화면 px)
@@ -2499,12 +2505,25 @@ function updateTextLabelSizes() {
 // 어댑터 — mapcommon.js _syncOwnedTexts (항목을 지우면 딸린 지번 문자도 숨김/되살림)
 function _textShownSet() { return new Set(textLabels); }
 function _textRecolorMany(ls, c) { ls.forEach(o => { o.col = c; o.el.style.color = c; }); }
-function _textHideMany(ls) { const s = new Set(ls); ls.forEach(o => o.ov.setMap(null)); textLabels = textLabels.filter(o => !s.has(o)); }
-function _textShowMany(ls) { const mpp = _mapMetersPerPixel(); ls.forEach(o => { o.ov.setMap(textLabelsVisible ? map : null); if (!textLabels.includes(o)) textLabels.push(o); _applyTextLabelSize(o, mpp); }); }
+function _textHideMany(ls) { const s = new Set(ls); ls.forEach(o => o.ov.setMap(null)); textLabels = textLabels.filter(o => !s.has(o)); _textCountRefresh(); }
+function _textShowMany(ls) { const mpp = _mapMetersPerPixel(); ls.forEach(o => { o.ov.setMap(textLabelsVisible ? map : null); if (!textLabels.includes(o)) textLabels.push(o); _applyTextLabelSize(o, mpp); }); _textCountRefresh(); }
 function clearTextLabels() {
   textLabels.forEach(o => o.ov.setMap(null));
   textLabels = [];
+  _textCountRefresh();
 }
+// 사이드바 「문자」 탭 어댑터 (mapcommon _renderTextRows, 2026-11-17)
+function _textAll() { return textLabels; }
+function _textInfo(o) { const p = o.ov.getPosition(); return { t: o.t, col: o.col, lat: p.getLat(), lng: p.getLng() }; }
+function _textFocus(o) {
+  const p = o.ov.getPosition();
+  if (!holdView) { if (map.getLevel() > 4) map.setLevel(3); map.panTo(p); }
+  if (o._flashT) clearTimeout(o._flashT);
+  o.el.style.outline = '2px solid #00e5ff'; o.el.style.outlineOffset = '3px'; o.el.style.background = 'rgba(0,229,255,.25)';
+  o._flashT = setTimeout(() => { o.el.style.outline = ''; o.el.style.outlineOffset = ''; o.el.style.background = ''; o._flashT = null; }, 1600);
+}
+function _textEdit(o) { if (!o.ov.getMap() && textLabelsVisible) return; openTextEditor(null, o); }
+function _textSetVisible(on) { textLabelsVisible = !!on; textLabels.forEach(o => o.ov.setMap(on ? map : null)); if (!on) closeTextEditor(); }
 
 // ══════════════════════════════════════════════════
 //  문자(메모) 입력 — T 로 켜고 지도를 클릭하면 그 자리에 글자를 넣는다.
@@ -2584,11 +2603,13 @@ function _removeTextLabel(o) {
   if (!o) return;
   o.ov.setMap(null);
   textLabels = textLabels.filter(x => x !== o);
+  _textCountRefresh();
 }
 function _restoreTextLabel(o) {
   if (!o) return;
   o.ov.setMap(textLabelsVisible ? map : null);
   if (!textLabels.includes(o)) textLabels.push(o);
+  _textCountRefresh();
 }
 
 // 입력창 열기 — target 이 있으면 그 글자를 고치는 모드, 없으면 latlng 자리에 새로 만든다
@@ -2854,7 +2875,7 @@ function _eraseApply(batch) {
   for (const b of batch) {
     if (b.kind === 'item') _removeItemSilent(b.item);
     else if (b.kind === 'parts') _eraseParts(b);
-    else { b.obj.ov.setMap(null); textLabels = textLabels.filter(x => x !== b.obj); }
+    else { b.obj.ov.setMap(null); textLabels = textLabels.filter(x => x !== b.obj); _textCountRefresh(); }
   }
   eraseHistory.push(batch);
   if (eraseHistory.length > 60) eraseHistory.shift();
@@ -2928,7 +2949,7 @@ function undoErase() {
   for (const b of batch.slice().reverse()) {
     if (b.kind === 'item') _readdItemSilent(b.item);
     else if (b.kind === 'parts') _unerasePartsK(b);
-    else { b.obj.ov.setMap(map); if (!textLabels.includes(b.obj)) textLabels.push(b.obj); }
+    else { b.obj.ov.setMap(map); if (!textLabels.includes(b.obj)) textLabels.push(b.obj); _textCountRefresh(); }
   }
   try { cullBundlePolys(); updateTextLabelSizes(); } catch (e) {}
   _updateEraseUndoBtn();
@@ -3464,6 +3485,99 @@ function _ctxDot(lat, lng) {
     content: '<div style="width:12px;height:12px;background:#e53935;border:2px solid #fff;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,.6);pointer-events:none;"></div>' });
   return { remove() { ov.setMap(null); } };
 }
+// 🔗 사이드바 트랙 묶기·풀기 어댑터 (mapcommon sideTrackCtxMenu, 2026-11-17)
+//  묶기 = 오버레이를 그대로 새 항목의 polyline + extraOverlays 로(색·면 유지). 풀기 = 조각(_eraseUnits)마다 한 항목,
+//  조각이 하나뿐인 오버레이는 그대로 쓰고 여러 조각이면 같은 모양으로 새로 만든다.
+function _bundlePieceCount(item) {
+  if (!item || item.type !== 'track') return 0;
+  let n = 0; for (const o of _itemOverlays(item)) n += _eraseUnits(o).length; return n;
+}
+function _trackGroupNew(items) {
+  const ovs = items.flatMap(it => _itemOverlays(it)); if (ovs.length < 2) return null;
+  const f = items[0];
+  return { type: 'track', name: f.name, address: '', polyline: ovs[0], extraOverlays: ovs.slice(1), _origColor: trackColorOf(f) };
+}
+function _cloneOvUnit(o, u, col) {
+  const c = o._origColor || col || '#FF0000', w = o._origWeight || 3, op = (o._opacity != null) ? o._opacity : 1;
+  let np;
+  if (o._isPoly) {
+    np = new kakao.maps.Polygon({ path: u.length === 1 ? u[0] : u, strokeWeight: w, strokeColor: c, strokeOpacity: op, strokeStyle: 'solid',
+      fillColor: o._fillColor || '#ffff00', fillOpacity: (o._fillOpacity != null) ? o._fillOpacity : 0.3 });
+    np._isPoly = true; np._fillColor = o._fillColor; np._fillOpacity = o._fillOpacity; np._rings = u; np._polys = [u];
+  } else np = new kakao.maps.Polyline({ path: u[0], strokeWeight: w, strokeColor: c, strokeOpacity: op });
+  np._origColor = c; np._origWeight = w; np._opacity = op;
+  attachPolylineRightClick(np);
+  return np;
+}
+function _trackUngroupNew(item) {
+  const col = trackColorOf(item), base = item.name.replace(/^\d+_/, ''), ovs = [];
+  for (const o of _itemOverlays(item)) {
+    const us = _eraseUnits(o);
+    if (us.length === 1) ovs.push(o); else us.forEach(u => ovs.push(_cloneOvUnit(o, u, col)));
+  }
+  return ovs.map((o, i) => ({ type: 'track', name: base + ' ' + (i + 1), address: '', polyline: o, _origColor: o._origColor || col }));
+}
+function _trackItemsOff(items) {
+  const s = new Set(items.flatMap(it => _itemOverlays(it)));
+  s.forEach(o => { o.setMap(null); o._viewCulled = false; });
+  polylines = polylines.filter(p => !s.has(p));
+}
+function _trackItemsOn(items) {
+  const have = new Set(polylines), show = visibility.track !== false;
+  items.forEach(it => _itemOverlays(it).forEach(o => { o.setMap(show ? map : null); if (!have.has(o)) { polylines.push(o); have.add(o); } }));
+  scheduleBundleCull();
+}
+
+// ✥ 문자 길게 눌러 옮기기 (2026-11-17, 사진·마커 길게 누르기와 같은 조작)
+//  글자는 pointer-events:none 이라 지도 위 누른 자리로 판정(_textLabelAt). 0.35초 안에 5px 넘게 움직이면 그냥 지도 끌기.
+//  잡은 뒤에는 지도 끌기를 막고 마우스 이동을 지도로 넘기지 않는다. 놓으면 그 자리 — Ctrl+Z 되돌리기.
+(function _installTextHoldMove() {
+  const mapEl = document.getElementById('map');
+  let st = null;
+  const busy = () => (typeof drawingMode !== 'undefined' && drawingMode) || eraseMode || areaMode || textMovePending
+    || (typeof _routeCutSt !== 'undefined' && _routeCutSt) || movingPhotoMarker;
+  mapEl.addEventListener('mousedown', e => {
+    if (e.button !== 0 || st || busy()) return;
+    const t = e.target;
+    if (t && t.tagName === 'IMG' && /^data:/.test(t.src || '')) return;   // 마커·사진 그림 위 = 마커 길게 누르기
+    if (t && t.closest && t.closest('textarea,input,button,select')) return;
+    const o = _textLabelAt(e.clientX, e.clientY); if (!o) return;
+    st = { o, x: e.clientX, y: e.clientY, on: false, prev: o.ov.getPosition() };
+    st.timer = setTimeout(() => {
+      if (!st) return;
+      st.on = true;
+      try { map.setDraggable(false); map.setCursor('move'); } catch (er) {}
+      o.el.style.outline = '2px dashed #00e5ff'; o.el.style.outlineOffset = '3px';
+      showSaveStatus('✥ 문자 이동 — 놓을 자리까지 끌어서 놓으세요');
+    }, 350);
+  }, true);
+  const onMove = e => {
+    if (!st) return;
+    if (!st.on) {
+      if (Math.hypot(e.clientX - st.x, e.clientY - st.y) > 5) { clearTimeout(st.timer); st = null; }
+      return;
+    }
+    e.stopPropagation(); e.preventDefault();
+    const ll = _ctxLatLngAt(e.clientX, e.clientY);
+    if (ll) st.o.ov.setPosition(new kakao.maps.LatLng(ll[0], ll[1]));
+  };
+  window.addEventListener('mousemove', onMove, true);
+  window.addEventListener('pointermove', e => { if (st && st.on) { e.stopPropagation(); } }, true);
+  window.addEventListener('mouseup', () => {
+    if (!st) return;
+    clearTimeout(st.timer);
+    const s = st; st = null;
+    if (!s.on) return;
+    try { map.setDraggable(true); map.setCursor(textMode ? 'crosshair' : ''); } catch (er) {}
+    s.o.el.style.outline = ''; s.o.el.style.outlineOffset = '';
+    blockMapClick();
+    const prev = s.prev, next = s.o.ov.getPosition(), o = s.o;
+    if (prev.getLat() === next.getLat() && prev.getLng() === next.getLng()) { showSaveStatus(''); return; }
+    pushHistory({ undo() { o.ov.setPosition(prev); _textCountRefresh(); }, redo() { o.ov.setPosition(next); _textCountRefresh(); } });
+    _textCountRefresh();
+    showSaveStatus('✥ 문자 이동됨 (되돌리기 Ctrl+Z)');
+  }, true);
+})();
 // 🟥 검색한 토지 경계 → 면 트랙(KMZ 폴리곤과 같은 모양 — 선택·색 변경·지우기·KMZ 저장 그대로)
 //   이름 = 찾은 주소(목록 주소칸과 같은 줄임). 멀리서 검색했으면 필지가 잘 보이게 확대.
 function _parcelAddTrack(rings, name, pt) {
