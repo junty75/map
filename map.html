@@ -6182,6 +6182,14 @@ window.onload=()=>{
           // GPS 있으면 그 위치, 없으면 화면 중심(여러 장이면 격자로 펼침)에 둔다.
           // 초록 점을 드래그해 위치를 잡고 [확인]하면 update_gps 로 사진에 기록된다.
           if (!map || !d.items || !d.items.length) return;
+          // d.keep = 엑셀 Ctrl+C 로 '지도 중심에 삽입'을 고른 경우(2026-11-17) — 임시가 아니라 목록에 바로 확정.
+          //   같은 사진의 임시 미리보기를 먼저 내리고, 이미 목록에 있는 사진은 건너뜀.
+          if (d.keep) {
+            clearLiveItems();
+            const have = new Set(allItems.filter(i => i.path).map(i => i.path));
+            d.items = d.items.filter(it => !have.has(it.path));
+            if (!d.items.length) { setBadge(true, '⚠️ 이미 목록에 있는 사진입니다'); return; }
+          }
           const center = map.getCenter();
           const b = map.getBounds();
           const spanLat = b.getNorthEast().getLat() - b.getSouthWest().getLat();
@@ -6222,7 +6230,7 @@ window.onload=()=>{
             addPhotoMarker(pos, item.imgSrc, item.name, item.takenDate || '');
             const photoEntry  = allItems[allItems.length - 1];
             photoEntry.path   = item.path;   // 저장 폴더 결정용
-            photoEntry._live  = true;        // 임시 객체 — 다른 파일 선택 시 내려감(⬇삽입으로 확정)
+            photoEntry._live  = !d.keep;     // 임시 객체 — 다른 파일 선택 시 내려감(⬇삽입으로 확정). keep 이면 바로 확정
             const photoMarker = photoEntry.markerObj ? photoEntry.markerObj.marker : null;
 
             // ② 깜빡이는 초록 링
@@ -6305,7 +6313,9 @@ window.onload=()=>{
             if (d.items.length === 1) map.panTo(placedBounds.getSouthWest());
             else if (!placedBounds.isEmpty()) map.setBounds(placedBounds, 80);
           }, 80);
-          setBadge(true, `📍 사진 ${d.items.length}장 임시 배치됨 — 초록 점 드래그로 위치 기록 · ⬇삽입으로 확정`);
+          setBadge(true, d.keep
+            ? `📍 위치 없는 사진 ${d.items.length}장 지도 중심에 삽입됨 — 초록 점 드래그로 위치 기록`
+            : `📍 사진 ${d.items.length}장 임시 배치됨 — 초록 점 드래그로 위치 기록 · ⬇삽입으로 확정`);
         } else if (d.type === 'live_insert_kmz') {
           if (!d.append) clearLiveItems();   // 사진과 함께 온 KMZ(append)는 임시 사진을 지우지 않음
           // 단일(d.data) 또는 배열(d.items) 모두 지원

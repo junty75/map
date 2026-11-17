@@ -5908,6 +5908,13 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           // GPS 있으면 그 위치, 없으면 화면 중심(여러 장이면 격자로 펼침)에 둔다.
           // 초록 핀을 길게 눌러 드래그하면 update_gps 로 사진 파일에 위치가 기록된다.
           if(!vmap||!d.items||!d.items.length)return;
+          // d.keep = 엑셀 Ctrl+C 로 '지도 중심에 삽입'을 고른 경우(2026-11-17) — 임시가 아니라 목록에 바로 확정.
+          if(d.keep){
+            clearLiveItems();
+            const have=new Set(allItems.filter(i=>i.path).map(i=>i.path));
+            d.items=d.items.filter(it=>!have.has(it.path));
+            if(!d.items.length){setBadge(true,'⚠️ 이미 목록에 있는 사진입니다');return;}
+          }
           const center=vmap.getView().getCenter();
           const ext=vmap.getView().calculateExtent(vmap.getSize());
           const spanX=ext[2]-ext[0], spanY=ext[3]-ext[1];
@@ -5933,7 +5940,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
             // ① 영구 사진 마커
             const mkObj=addPhotoMarker(coord,item.imgSrc,item.name);
             allItems[allItems.length-1].path=item.path;   // 저장 폴더 결정용
-            allItems[allItems.length-1]._live=true;        // 임시 객체 — 다른 파일 선택 시 내려감(⬇삽입으로 확정)
+            allItems[allItems.length-1]._live=!d.keep;     // 임시 객체 — 다른 파일 선택 시 내려감(⬇삽입으로 확정). keep 이면 바로 확정
             // ② 길게 눌러 드래그하는 초록 핀 (위치 기록용)
             const el=document.createElement('div');
             el.className='live-pin';
@@ -5956,7 +5963,9 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
               else{v.setCenter(placed[0]);v.setZoom(tz);}
             } else fitPts(placed);
           },80);
-          setBadge(true,'📍 사진 '+d.items.length+'장 임시 배치됨 — 초록 핀 드래그로 위치 기록 · ⬇삽입으로 확정');
+          setBadge(true,d.keep
+            ?'📍 위치 없는 사진 '+d.items.length+'장 지도 중심에 삽입됨 — 초록 핀 드래그로 위치 기록'
+            :'📍 사진 '+d.items.length+'장 임시 배치됨 — 초록 핀 드래그로 위치 기록 · ⬇삽입으로 확정');
         } else if(d.type==='live_insert_kmz'){
           if(!d.append)clearLiveItems();   // 사진과 함께 온 KMZ(append)는 임시 사진을 지우지 않음
           // 단일(d.data) 또는 배열(d.items) 모두 지원
