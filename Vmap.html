@@ -498,6 +498,7 @@ let polylines = [];   // ol.layer.Vector[]
 let drawing   = false, drawCoords = [], drawLayer = null;
 let guideLine = null, distOv = null, distEl = null;
 let movingMk  = null, movingGhost = null, inputOv = null, locCount = 0;
+let movingGroup = null;   // 2초 길게 누르기로 함께 옮기는 겹친 사진들 [{mk, prev, dx, dy}] (2026-11-17)
 let showNumbers = false, numberOverlays = [];
 let isDraggingMk = false;
 let vp = null;
@@ -668,16 +669,22 @@ function initMap(lat, lng) {
   let holdTimer = null, holdTarget = null, holdStartX = 0, holdStartY = 0;
   vp = vmap.getViewport();
 
+  // 겹친 사진 한꺼번에 옮기기 (2026-11-17): 누른 자리의 사진들(holdGroup) — 강조된(주황) 사진을 먼저 잡고,
+  //   PHOTO_GROUP_HOLD_MS(2초) 넘게 움직이지 않고 누르고 있으면 movingGroup 으로 함께 옮긴다.
+  let holdGroup = [], groupTimer = null, mkMovedYet = false;
   vp.addEventListener('pointerdown', e => {
     if (e.button !== 0 || drawing || movingMk) return;
     const px = evtScaledPixel(e);
-    let target = null;
+    const found = [];
     vmap.forEachFeatureAtPixel(px, feat => {
-      if (target) return;
       const m = markers.find(mk => mk.feat === feat);
-      if (m) target = m;
+      if (m && found.indexOf(m) < 0) found.push(m);
     }, { hitTolerance: 16 });
-    if (!target) return;
+    if (!found.length) return;
+    const selMk = _selPhotoItem && _selPhotoItem.mkObj;
+    const target = (selMk && found.indexOf(selMk) >= 0) ? selMk : found[0];
+    holdGroup = target.isPhoto ? found.filter(m => m.isPhoto) : [target];
+    mkMovedYet = false; movingGroup = null; clearTimeout(groupTimer);
     holdTarget = target; holdStartX = e.clientX; holdStartY = e.clientY;
     vp.setPointerCapture(e.pointerId);
     holdTimer = setTimeout(() => {
@@ -697,6 +704,20 @@ function initMap(lat, lng) {
       m.feat.setStyle(new ol.style.Style({})); // 실제 마커 숨김
       m._prevCoord = prevCoord; // endMoveMode에서 사용
       movingMk = m; isDraggingMk = true; movingGhost = ghost; document.body.style.cursor = 'move';
+      const n = holdGroup.length;
+      if (typeof showSaveStatus === 'function')
+        showSaveStatus(n > 1 ? `✥ 사진 이동 — 끌어서 놓으세요 (겹친 ${n}장 모두 옮기려면 2초 누르고 있기)` : '✥ 이동 — 끌어서 놓으세요');
+      if (n > 1) groupTimer = setTimeout(() => {
+        if (!movingMk || mkMovedYet) return;
+        // 2초 동안 안 움직였으면 겹친 사진 전부 — 기준 사진과의 좌표 차이를 유지하며 함께 옮긴다
+        const c0 = m._prevCoord;
+        movingGroup = holdGroup.filter(o => o !== m).map(o => {
+          const c = o.feat.getGeometry().getCoordinates().slice();
+          return { mk: o, prev: c, dx: c[0] - c0[0], dy: c[1] - c0[1] };
+        });
+        ghostEl.style.boxShadow = '0 0 0 4px rgba(255,152,0,.7), 0 2px 8px rgba(0,0,0,.5)';
+        if (typeof showSaveStatus === 'function') showSaveStatus(`✥ 겹친 사진 ${n}장 함께 이동 — 끌어서 놓으세요`);
+      }, Math.max(0, PHOTO_GROUP_HOLD_MS - 300));
     }, 300);
   });
 
@@ -710,8 +731,10 @@ function initMap(lat, lng) {
       const pixel = [(e.clientX - rect.left) * (vp.offsetWidth / rect.width), (e.clientY - rect.top) * (vp.offsetHeight / rect.height)];
       const coord = vmap.getCoordinateFromPixel(pixel);
       if (coord) {
+        if (!mkMovedYet && Math.hypot(e.clientX - holdStartX, e.clientY - holdStartY) > 3) { mkMovedYet = true; clearTimeout(groupTimer); }
         movingGhost.setPosition(coord);
         movingMk.feat.getGeometry().setCoordinates(coord); // 실제 좌표도 동시 업데이트 → fetchAddrForItem이 정확한 좌표를 읽음
+        if (movingGroup) movingGroup.forEach(g => g.mk.feat.getGeometry().setCoordinates([coord[0] + g.dx, coord[1] + g.dy]));
       }
     }
   });
@@ -785,6 +808,26 @@ function endMoveMode() {
   const newCoord  = moved.feat.getGeometry().getCoordinates().slice();
   delete moved._prevCoord;
   moved.feat.setStyle(moved.isPhoto ? mkPhotoStyle() : mkNormalStyle());
+  const grp = movingGroup; movingGroup = null;
+  if (grp && grp.length) {
+    // 겹친 사진 여러 장을 함께 옮김 — 파일 GPS 확인은 한 번, 되돌리기도 한 번에
+    if (prevCoord[0] === newCoord[0] && prevCoord[1] === newCoord[1]) { grp.forEach(g => g.mk.feat.getGeometry().setCoordinates(g.prev)); return; }
+    const all = [{ mk: moved, prev: prevCoord, next: newCoord }]
+      .concat(grp.map(g => ({ mk: g.mk, prev: g.prev, next: g.mk.feat.getGeometry().getCoordinates().slice() })))
+      .map(o => Object.assign(o, { item: allItems.find(i => i.mkObj === o.mk) }))
+      .filter(o => o.item);
+    const r = _photoMoveWriteGpsMany(all.map(o => { const [ln, la] = fromMerc(o.next); return { item: o.item, lat: la, lng: ln }; }));
+    if (r === 'cancel') { all.forEach(o => o.mk.feat.getGeometry().setCoordinates(o.prev)); return; }
+    const apply = k => all.forEach(o => {
+      o.mk.feat.getGeometry().setCoordinates(o[k]); o.item.address = '…'; fetchAddrForItem(o.item);
+      const [ln, la] = fromMerc(o[k]); _photoGpsResend(o.item, la, ln);
+    });
+    all.forEach(o => { o.item.address = '…'; fetchAddrForItem(o.item); });
+    renderList();
+    pushHistory({ undo() { apply('prev'); }, redo() { apply('next'); } });
+    if (typeof showSaveStatus === 'function') showSaveStatus(`✥ 사진 ${all.length}장 이동됨 (되돌리기 Ctrl+Z)`);
+    return;
+  }
   const item = allItems.find(i => i.mkObj === moved);
   if (item) {
     if (prevCoord[0] === newCoord[0] && prevCoord[1] === newCoord[1]) return;
@@ -2911,7 +2954,9 @@ function mkPhotoStyle(alpha=1){return new ol.style.Style({image:new ol.style.Cir
 // 선택된 사진 마커 강조 스타일 (주황·크게 — 구분용)
 function mkPhotoSelStyle(){return new ol.style.Style({image:new ol.style.Circle({radius:11,fill:new ol.style.Fill({color:'#ff9800'}),stroke:new ol.style.Stroke({color:'#fff',width:3})}),zIndex:50});}
 // 선택된 사진 마커만 강조, 나머지 사진 마커는 파란 원으로 복원
+let _selPhotoItem=null;   // 지금 강조된(주황) 사진 — 길게 누르기에서 겹친 사진 중 이것을 먼저 잡는다
 function highlightPhotoMarkersV(selItem){
+  _selPhotoItem=selItem||null;
   allItems.forEach(i=>{
     if(i.type==='photo'&&i.mkObj&&i.mkObj.feat){
       const on=(i===selItem);
@@ -5939,6 +5984,9 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
             const mkObj=addPhotoMarker(coord,item.imgSrc,item.name);
             allItems[allItems.length-1].path=item.path;   // 저장 폴더 결정용
             allItems[allItems.length-1]._live=!d.keep;     // 임시 객체 — 다른 파일 선택 시 내려감(⬇삽입으로 확정). keep 이면 바로 확정
+            // 확정 삽입(keep)은 초록 핀을 만들지 않는다 — 핀이 사진 위를 덮어 길게 누르기를 가로채
+            //   선택한 사진 대신 다른 사진이 옮겨졌다(2026-11-17). 사진 마커를 옮기면 파일 GPS 도 기록됨.
+            if(d.keep){placed.push(coord);return;}
             // ② 길게 눌러 드래그하는 초록 핀 (위치 기록용)
             const el=document.createElement('div');
             el.className='live-pin';

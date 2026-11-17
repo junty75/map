@@ -973,6 +973,23 @@ function _photoMoveWriteGps(item,lat,lng){
   badge('💾 저장 중...');
   return 'saved';
 }
+// 겹친 사진 여러 장을 한꺼번에 옮겼을 때 (2026-11-17) — 확인창은 한 번만. moves = [{item, lat, lng}, ...]
+//   반환은 _photoMoveWriteGps 와 같다('saved' · 'cancel' · 'maponly').
+function _photoMoveWriteGpsMany(moves){
+  if(moves.length===1)return _photoMoveWriteGps(moves[0].item,moves[0].lat,moves[0].lng);
+  const disk=moves.filter(m=>_photoDiskPath(m.item));
+  const badge=(t)=>{try{window.__setBadge&&window.__setBadge(true,t);}catch(e){}};
+  if(!disk.length){badge('📍 사진 '+moves.length+'장 지도 위치만 바뀜 — 원본 파일 경로를 몰라 사진 파일엔 못 씀');return 'maponly';}
+  if(!(window.__wsReady&&window.__wsReady())){badge('📍 사진 '+moves.length+'장 지도 위치만 바뀜 — 사진위치표시가 꺼져 있어 사진 파일엔 못 씀');return 'maponly';}
+  const m0=disk[0];
+  const names=disk.slice(0,6).map(m=>'  '+_photoDiskPath(m.item).split(/[\\/]/).pop()).join('\n')+(disk.length>6?`\n  ... 외 ${disk.length-6}장`:'');
+  if(!confirm(`📍 사진 ${disk.length}장 파일의 GPS 위치도 바꿀까요?\n\n${names}\n\n위도: ${(+m0.lat).toFixed(6)}\n경도: ${(+m0.lng).toFixed(6)}\n\n[확인] 파일에 저장   [취소] 원래 위치로`))return 'cancel';
+  disk.forEach(m=>window.__wsSend({type:'update_gps',path:_photoDiskPath(m.item),lat:+(+m.lat).toFixed(6),lng:+(+m.lng).toFixed(6)}));
+  badge('💾 사진 '+disk.length+'장 저장 중...');
+  return 'saved';
+}
+// 길게 누르기 단계 시간 — 이만큼 누르고 있으면 그 자리에 겹친 사진을 모두 옮긴다
+const PHOTO_GROUP_HOLD_MS=2000;
 // 되돌리기/다시하기 때 파일도 같이 (서버가 없으면 지도만)
 function _photoGpsResend(item,lat,lng){
   const p=_photoDiskPath(item);
