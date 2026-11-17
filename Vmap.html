@@ -5930,10 +5930,8 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
             if(hasGps){
               coord=toMerc(item.lng,item.lat);
             } else {
-              const r=Math.floor(noGpsIdx/cols), c=noGpsIdx%cols;
-              const offRow=r-(Math.ceil(noGpsItems.length/cols)-1)/2;
-              const offCol=c-(cols-1)/2;
-              coord=[center[0]+offCol*stepX, center[1]-offRow*stepY];
+              // 위치 없는 사진은 모두 화면 중심 한 점에 (2026-11-17 사용자 요청 — 예전엔 격자로 펼쳤음)
+              coord=[center[0],center[1]];
               noGpsIdx++;
             }
             const path=item.path;
@@ -5956,7 +5954,8 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           renderList();   // _live 플래그 반영 (임시 객체 = 흐리게 표시)
           setTimeout(()=>{
             try{vmap.updateSize();}catch(e){}
-            if(placed.length===1){
+            if(noGpsIdx===d.items.length){ /* 위치 없는 사진만 — 이미 화면 중심, 화면 그대로 */ }
+            else if(placed.length===1){
               const v=vmap.getView();const z=v.getZoom();
               const tz=(typeof z==='number'&&z>=14)?z:16;
               if(typeof v.animate==='function')v.animate({center:placed[0],zoom:tz,duration:400});

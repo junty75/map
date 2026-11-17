@@ -6215,13 +6215,8 @@ window.onload=()=>{
             if (hasGps) {
               pos = new kakao.maps.LatLng(item.lat, item.lng);
             } else {
-              // 화면 중심을 기준으로 격자 오프셋 (여러 장이 겹치지 않게)
-              const r = Math.floor(noGpsIdx / cols), c = noGpsIdx % cols;
-              const offRow = r - (Math.ceil(noGpsItems.length / cols) - 1) / 2;
-              const offCol = c - (cols - 1) / 2;
-              pos = new kakao.maps.LatLng(
-                center.getLat() - offRow * stepLat,
-                center.getLng() + offCol * stepLng);
+              // 위치 없는 사진은 모두 화면 중심 한 점에 (2026-11-17 사용자 요청 — 예전엔 격자로 펼쳤음)
+              pos = new kakao.maps.LatLng(center.getLat(), center.getLng());
               noGpsIdx++;
             }
             const path = item.path;
@@ -6310,7 +6305,9 @@ window.onload=()=>{
           renderList();   // _live 플래그 반영 (임시 객체 = 흐리게 표시)
           setTimeout(() => {
             if (map) map.relayout();
-            if (d.items.length === 1) map.panTo(placedBounds.getSouthWest());
+            // 위치 없는 사진만이면 이미 화면 중심이라 화면을 그대로 둔다(한 점이라 맞추면 최대 확대가 됨)
+            if (noGpsIdx === d.items.length) { /* 그대로 */ }
+            else if (d.items.length === 1) map.panTo(placedBounds.getSouthWest());
             else if (!placedBounds.isEmpty()) map.setBounds(placedBounds, 80);
           }, 80);
           setBadge(true, d.keep
