@@ -2472,7 +2472,7 @@ function addTextLabel(latlng, text, rot, color, h, ax, ay, tw) {
           : 'white-space:nowrap;') +
     'text-align:' + (xa >= 0.75 ? 'right' : (xa >= 0.25 ? 'center' : 'left')) + ';' +
     'font-weight:bold;line-height:' + lh + ';color:' + col + ';' +
-    'pointer-events:none;font-size:13px;' +
+    'pointer-events:none;font-size:' + _textPxOf(h) + 'px;' +   // h<0 = 화면 고정 크기(px), 0 = 13px
     'text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 0 2px #000;';
   el.innerHTML = safe;
   const ov = new kakao.maps.CustomOverlay({
@@ -2658,10 +2658,9 @@ function openTextEditor(latlng, target) {
   colBtn.onclick = e => { e.stopPropagation(); openColorPalette(colBtn, v => { col = v; colBtn.style.background = v; }); };
   // 크기: 브라우저에서 넣는 문자는 화면 고정(h 0 = 13px, 휴대폰판 img 와 같음 — 확대·축소해도 그대로).
   //   CAD 에서 온 문자(h = 높이 m)는 고칠 때도 그 높이 그대로 → 지도 실거리라 확대하면 커진다(2026-10-20).
+  //   화면 고정 문자도 크기(px)를 고를 수 있다(2026-11-17, mapcommon _textSizeUi — h = -px).
   const h0 = isEdit ? (Number(target.h) || 0) : 0;
-  const _readH = () => h0;
-  hUnit.textContent = h0 > 0 ? ('CAD 문자 ' + h0 + 'm') : '크기 고정';
-  hUnit.title = h0 > 0 ? '캐드에서 온 문자 — 지도 실거리 높이라 확대·축소에 따라 커지고 작아집니다' : '화면 글자 크기 고정 — 확대·축소해도 그대로';
+  const _readH = _textSizeUi(hUnit, h0, isEdit);
   ta.value = isEdit ? (target.t || '') : '';
 
   function done() { closeTextEditor(); }
@@ -5349,6 +5348,7 @@ function buildPhotoJpeg(imgSrc,lat,lng){
     // 문자(메모) 글자 크기·색 — 마지막에 쓴 값을 다음 입력의 기본값으로 (크기 0 = 화면 고정)
     if(/^\d+x\d+$/.test(s['map.text_box']||'')) textBoxSize=s['map.text_box'];
     if(/^#[0-9a-fA-F]{6}$/.test(s['map.text_col']||'')) textLastColor=s['map.text_col'];
+    if(/^\d+$/.test(s['map.text_px']||'')) textLastPx=Math.min(200,Math.max(6,+s['map.text_px']));
     if(s['map.colvis']){ try{ colVis = Object.assign(colVis, JSON.parse(s['map.colvis'])); }catch(e){} }
     if(s['map.colw']){ try{ colW = Object.assign(colW, JSON.parse(s['map.colw'])); }catch(e){} }
     if((s['map.colvis']||s['map.colw'])){ if(typeof applyColHeaders==='function') applyColHeaders(); if(typeof renderList==='function') renderList(); }

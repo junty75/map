@@ -643,6 +643,32 @@ function _saveTextPref(key, val) {
   try { window.__saveUi && window.__saveUi(key, val); } catch (e) {}
 }
 
+// ── 문자 크기 (2026-11-17) ──
+//  화면 고정 문자(지도에서 넣는 메모)도 크기를 고를 수 있다 — 확대·축소해도 화면에서 그 px 그대로.
+//  저장은 높이 칸(h)에 음수로: h = -px (13px 는 예전처럼 0). h > 0 = CAD 문자(지도 실거리 m)는 그대로.
+//  → KMZ·HTM 형식이 안 바뀌고, 예전 판·휴대폰판은 h ≤ 0 을 13px 로 읽는다.
+let textLastPx = 13;   // 마지막에 쓴 크기 — __saveUi 'text_px', 페이지 applyUi 가 되읽음
+function _textPxOf(h) { h = Number(h) || 0; return h < 0 ? Math.min(200, Math.max(6, -h)) : 13; }
+// 입력창의 크기 칸 — CAD 문자는 높이(m)만 보여 주고, 아니면 px 숫자칸. 돌려주는 함수 = 저장할 h
+function _textSizeUi(hUnit, h0, isEdit) {
+  if (h0 > 0) {
+    hUnit.textContent = 'CAD 문자 ' + h0 + 'm';
+    hUnit.title = '캐드에서 온 문자 — 지도 실거리 높이라 확대·축소에 따라 커지고 작아집니다';
+    return () => h0;
+  }
+  hUnit.innerHTML = '크기 <input type="number" min="6" max="200" step="1" style="width:46px;font-size:12px;padding:1px 2px;"> px';
+  hUnit.title = '화면 글자 크기(px) — 확대·축소해도 화면에서 이 크기 그대로';
+  const inp = hUnit.querySelector('input');
+  inp.value = isEdit ? _textPxOf(h0) : textLastPx;
+  return () => {
+    let v = Math.round(Number(inp.value));
+    if (!(v >= 6)) v = v > 0 ? 6 : 13;
+    if (v > 200) v = 200;
+    if (v !== textLastPx) { textLastPx = v; _saveTextPref('text_px', String(v)); }
+    return v === 13 ? 0 : -v;
+  };
+}
+
 function _applyTextBox(ta) {
   const m = /^(\d+)x(\d+)$/.exec(textBoxSize || '');
   if (m) { ta.style.width = m[1] + 'px'; ta.style.height = m[2] + 'px'; }
@@ -1649,7 +1675,7 @@ const BASEMAP_HTM = [
 "    'transform-origin:' + (xa * 100) + '% ' + (ya * 100) + '%;' +",
 "    (wrap ? 'white-space:normal;word-break:normal;overflow-wrap:break-word;'",
 "          : 'white-space:nowrap;') +",
-"    'font-size:13px;' +",
+"    'font-size:' + (h < 0 ? Math.min(200, Math.max(6, -h)) : 13) + 'px;' +",
 "    'text-align:' + (xa >= 0.75 ? 'right' : (xa >= 0.25 ? 'center' : 'left')) + ';' +",
 "    'font-weight:bold;line-height:' + lh + ';color:' + col + ';pointer-events:none;' +",
 "    'text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000,0 0 2px #000;';",

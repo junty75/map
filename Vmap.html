@@ -2186,7 +2186,8 @@ function addTextLabelV(coord,text,rot,color,h,ax,ay,tw){
     });
   }else{
     // h 없음(옛 KMZ · '고정' 크기 메모) — 화면 13px 고정
-    f.setStyle(_lineStyles(13,3));
+    const fp=_textPxOf(h);   // h<0 = 화면 고정 크기(px), 0 = 13px (2026-11-17)
+    f.setStyle(_lineStyles(fp,Math.max(3,fp/5)));
   }
   f._t={txt,rot:Number(rot)||0,col,h,ax,ay,tw};   // 저장(HTM·KMZ)에서 원본 그대로 다시 쓰려고 보관
   f._seq=++_textSeq;   // 문자 탭 목록 순서(소스의 getFeatures 순서는 일정하지 않음)
@@ -2344,10 +2345,9 @@ function openTextEditor(coord,target){
   colBtn.onclick=e=>{ e.stopPropagation(); openColorPalette(colBtn,v=>{ col=v; colBtn.style.background=v; }); };
   // 크기: 브라우저에서 넣는 문자는 화면 고정(h 0 = 13px, 휴대폰판 img 와 같음 — 확대·축소해도 그대로).
   //   CAD 에서 온 문자(h = 높이 m)는 고칠 때도 그 높이 그대로 → 지도 실거리라 확대하면 커진다(2026-10-20).
+  //   화면 고정 문자도 크기(px)를 고를 수 있다(2026-11-17, mapcommon _textSizeUi — h = -px).
   const h0=isEdit?(Number(old.h)||0):0;
-  const _readH=()=>h0;
-  hUnit.textContent=h0>0?('CAD 문자 '+h0+'m'):'크기 고정';
-  hUnit.title=h0>0?'캐드에서 온 문자 — 지도 실거리 높이라 확대·축소에 따라 커지고 작아집니다':'화면 글자 크기 고정 — 확대·축소해도 그대로';
+  const _readH=_textSizeUi(hUnit,h0,isEdit);
   ta.value=isEdit?(old.txt||''):'';
 
   function done(){ closeTextEditor(); }
@@ -5120,6 +5120,7 @@ function initResizers(){
     // 문자(메모) 글자 크기·색 — 마지막에 쓴 값을 다음 입력의 기본값으로 (크기 0 = 화면 고정)
     if(/^\d+x\d+$/.test(s['vmap.text_box']||'')) textBoxSize=s['vmap.text_box'];
     if(/^#[0-9a-fA-F]{6}$/.test(s['vmap.text_col']||'')) textLastColor=s['vmap.text_col'];
+    if(/^\d+$/.test(s['vmap.text_px']||'')) textLastPx=Math.min(200,Math.max(6,+s['vmap.text_px']));
     if(s['vmap.colvis']){ try{ colVis = Object.assign(colVis, JSON.parse(s['vmap.colvis'])); }catch(e){} }
     if(s['vmap.colw']){ try{ colW = Object.assign(colW, JSON.parse(s['vmap.colw'])); }catch(e){} }
     if((s['vmap.colvis']||s['vmap.colw'])){ if(typeof applyColHeaders==='function') applyColHeaders(); if(typeof renderList==='function') renderList(); }
