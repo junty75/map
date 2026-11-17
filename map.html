@@ -3099,7 +3099,13 @@ function addPhotoMarker(latlng, imgSrc, filename, takenDate, fileHandle=null) {
   let _dragStartPos2 = null;
   kakao.maps.event.addListener(marker,'mousedown',()=>{if(drawingMode)return;map.setDraggable(false);holdTimer=setTimeout(()=>{iw.close();marker.setDraggable(true);_dragStartPos2=marker.getPosition();movingPhotoMarker={marker,iw,name:filename};},300);});
   ['mouseup','mouseout'].forEach(evt=>kakao.maps.event.addListener(marker,evt,()=>{clearTimeout(holdTimer);map.setDraggable(true);}));
-  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;const prev=_dragStartPos2;const next=marker.getPosition();_dragStartPos2=null;updateMarkerAddr(marker);if(prev&&(prev.getLat()!==next.getLat()||prev.getLng()!==next.getLng())){pushHistory({undo(){marker.setPosition(prev);updateMarkerAddr(marker);},redo(){marker.setPosition(next);updateMarkerAddr(marker);}});}}});
+  kakao.maps.event.addListener(marker,'dragend',()=>{if(movingPhotoMarker&&marker===movingPhotoMarker.marker){marker.setDraggable(false);movingPhotoMarker=null;const prev=_dragStartPos2;const next=marker.getPosition();_dragStartPos2=null;
+    if(!prev||(prev.getLat()===next.getLat()&&prev.getLng()===next.getLng()))return;
+    // 삽입된 사진도 원본 경로가 있으면 사진 파일 GPS 까지 바꾼다(mapcommon _photoMoveWriteGps, 2026-11-17)
+    const ent=allItems.find(i=>i.markerObj?.marker===marker);
+    if(_photoMoveWriteGps(ent,next.getLat(),next.getLng())==='cancel'){marker.setPosition(prev);return;}
+    updateMarkerAddr(marker);
+    pushHistory({undo(){marker.setPosition(prev);updateMarkerAddr(marker);_photoGpsResend(ent,prev.getLat(),prev.getLng());},redo(){marker.setPosition(next);updateMarkerAddr(marker);_photoGpsResend(ent,next.getLat(),next.getLng());}});}});
 
   if (!markers.find(m=>m.marker===marker)) {
     const markerObj={marker,iw,name:filename,fileHandle};

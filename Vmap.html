@@ -741,10 +741,14 @@ function endMoveMode() {
   moved.feat.setStyle(moved.isPhoto ? mkPhotoStyle() : mkNormalStyle());
   const item = allItems.find(i => i.mkObj === moved);
   if (item) {
+    if (prevCoord[0] === newCoord[0] && prevCoord[1] === newCoord[1]) return;
+    // 삽입된 사진도 원본 경로가 있으면 사진 파일 GPS 까지 바꾼다(mapcommon _photoMoveWriteGps, 2026-11-17)
+    const [nLng, nLat] = fromMerc(newCoord), [pLng, pLat] = fromMerc(prevCoord);
+    if (_photoMoveWriteGps(item, nLat, nLng) === 'cancel') { moved.feat.getGeometry().setCoordinates(prevCoord); return; }
     item.address = '…'; renderList(); fetchAddrForItem(item);
     pushHistory({
-      undo() { moved.feat.getGeometry().setCoordinates(prevCoord); item.address='…'; fetchAddrForItem(item); },
-      redo() { moved.feat.getGeometry().setCoordinates(newCoord);  item.address='…'; fetchAddrForItem(item); }
+      undo() { moved.feat.getGeometry().setCoordinates(prevCoord); item.address='…'; fetchAddrForItem(item); _photoGpsResend(item, pLat, pLng); },
+      redo() { moved.feat.getGeometry().setCoordinates(newCoord);  item.address='…'; fetchAddrForItem(item); _photoGpsResend(item, nLat, nLng); }
     });
   }
 }

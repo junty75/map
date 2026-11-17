@@ -927,6 +927,32 @@ async function _exifrMeta(file){
 // 촬영일 'YYYY-MM-DD' — exifr 는 촬영 시각을 현지 시각 Date 로 준다. toISOString() 은 UTC 라 오전 사진이 전날로 밀린다.
 function _ymdLocal(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
 
+// ── 목록에 삽입된 사진 마커를 길게 눌러 옮겼을 때 사진 파일 GPS 도 바꾸기 (2026-11-17) ──
+//   임시 사진(초록 점)은 원래 update_gps 로 파일에 썼지만, 삽입된 사진은 지도 위치만 바뀌었다.
+//   디스크 원본 경로(item.path)가 있고 사진위치표시 서버가 붙어 있으면 같은 update_gps 를 보낸다.
+//   반환: 'saved'(파일에 씀) · 'cancel'(사용자가 취소 → 호출한 쪽이 원위치) · 'maponly'(지도 위치만)
+function _photoDiskPath(item){
+  if(!item||item.type!=='photo'||item._live)return '';   // 임시 사진은 초록 점 쪽이 처리
+  const p=String(item.path||'');
+  return (/^([a-zA-Z]:[\\/]|\\\\)/.test(p)&&p.indexOf('|')<0)?p:'';
+}
+function _photoMoveWriteGps(item,lat,lng){
+  const p=_photoDiskPath(item);
+  const badge=(t)=>{try{window.__setBadge&&window.__setBadge(true,t);}catch(e){}};
+  if(!p){ if(item&&item.type==='photo'&&!item._live)badge('📍 지도 위치만 바뀜 — 원본 파일 경로를 몰라 사진 파일엔 못 씀(KMZ 로 저장하면 새 위치로 저장)'); return 'maponly'; }
+  if(!(window.__wsReady&&window.__wsReady())){ badge('📍 지도 위치만 바뀜 — 사진위치표시가 꺼져 있어 사진 파일엔 못 씀'); return 'maponly'; }
+  const name=p.split(/[\\/]/).pop();
+  if(!confirm(`📍 사진 파일의 GPS 위치도 바꿀까요?\n\n파일: ${name}\n위도: ${(+lat).toFixed(6)}\n경도: ${(+lng).toFixed(6)}\n\n[확인] 파일에 저장   [취소] 원래 위치로`))return 'cancel';
+  window.__wsSend({type:'update_gps',path:p,lat:+(+lat).toFixed(6),lng:+(+lng).toFixed(6)});
+  badge('💾 저장 중...');
+  return 'saved';
+}
+// 되돌리기/다시하기 때 파일도 같이 (서버가 없으면 지도만)
+function _photoGpsResend(item,lat,lng){
+  const p=_photoDiskPath(item);
+  if(p&&window.__wsReady&&window.__wsReady()){window.__wsSend({type:'update_gps',path:p,lat:+(+lat).toFixed(6),lng:+(+lng).toFixed(6)});try{window.__setBadge(true,'💾 저장 중...');}catch(e){}}
+}
+
 // GPX → KML 텍스트. 위치로 검색·탐색기에서 온 GPX(임시트랙 등)를 KMZ 로더로 그대로 읽기 위함.
 //  트랙(trk/trkseg)·경로(rte) → LineString, 웨이포인트(wpt) → Point.
 //  선 색·굵기는 gpx_style 확장(<color>RRGGBB</color><width>)이 있으면 살린다(임시트랙 자동저장이 씀).
