@@ -1367,6 +1367,7 @@ function mapClick(evt) {
   // CSS scale 확대 중엔 OL이 주는 픽셀/좌표가 어긋나므로 직접 보정
   let pixel = evt.pixel, coord = evt.coordinate;
   if (cssScale > 1 && evt.originalEvent) { pixel = evtScaledPixel(evt.originalEvent); coord = vmap.getCoordinateFromPixel(pixel); }
+  { const ll = fromMerc(coord); if (routeCutPick(ll[1], ll[0])) return; }   // ✂ 경로 자르기 중 (mapcommon)
   // 위치로 검색 — ①중심점 클릭 ②반경 정하고 다시 클릭
   if (locPickMode === 'center') {
     locCenter = coord.slice();
@@ -1759,6 +1760,30 @@ function _ctxAreaAt(lat,lng){ if(!areaMode) toggleAreaMeasure(); areaAddPointV(t
 function _trackPtsOf(item){
   const l=item&&item.polyLyr; if(!l) return null;
   const L=_lyrLines([l]); return (L.length===1&&L[0].length>=2)?L[0]:null;
+}
+// ✂ 경로 자르기 어댑터 (mapcommon.js routeCutStart/routeCutPick, 2026-11-17)
+//  선만 든 트랙의 조각들 [[[lat,lng],..],..] — 면이 있으면 null. 조각 = 레이어 안 LineString 피처 하나씩(지우개와 같은 방식)
+function _trackPartsOf(item){
+  const l=item&&item.polyLyr; if(!l||polyParts(l).length) return null;
+  const ps=coordParts(l).map(cs=>cs.map(c=>{const ll=fromMerc(c);return [ll[1], ll[0]];})).filter(pa=>pa.length>=2);
+  return ps.length?ps:null;
+}
+function _trackSetParts(item, parts){
+  const l=item&&item.polyLyr; if(!l||!parts.length) return;
+  const src=l.getSource(), old=src.getFeatures().filter(f=>f.getGeometry() instanceof ol.geom.LineString);
+  const st=(old[0]&&old[0].getStyle())||lineSt(l._color||'#FF0000', l._width||3);
+  old.forEach(f=>src.removeFeature(f));
+  parts.forEach(pa=>{ const f=new ol.Feature(new ol.geom.LineString(pa.map(p=>toMerc(p[1], p[0])))); f.setStyle(st); src.addFeature(f); });
+  l._coords=parts[0].map(p=>toMerc(p[1], p[0]));
+  renderList(); if(typeof updateTrackHighlights==='function') updateTrackHighlights();
+  if(l._autoSave) autoSaveTrackV(item);
+}
+function _ctxDot(lat,lng){
+  const el=document.createElement('div');
+  el.style.cssText='width:12px;height:12px;background:#e53935;border:2px solid #fff;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,.6);pointer-events:none;';
+  const ov=new ol.Overlay({element:el,positioning:'center-center',stopEvent:false});
+  vmap.addOverlay(ov); ov.setPosition(toMerc(lng,lat));
+  return { remove(){ vmap.removeOverlay(ov); } };
 }
 // 🟥 검색한 토지 경계 → 면 트랙(KMZ 폴리곤과 같은 모양 — 선택·색 변경·지우기·KMZ 저장 그대로)
 //   이름 = 찾은 주소(목록 주소칸과 같은 줄임).

@@ -2643,11 +2643,12 @@ function _routeCtxClose(){
 function _routeCtxOutside(e){ const m = document.getElementById('routeCtxMenu'); if (m && !m.contains(e.target)) _routeCtxClose(); }
 function _routeCtxKey(e){ if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); _routeCtxClose(); } }
 // 지도 빈 곳 우클릭 메뉴 (2026-10-17) — 마커 입력 / 문자 입력 / 거리 재기 / 면적 재기 / 경로 찾기.
-// 사이드바에서 트랙을 골라 두었으면 그 대신 경유지 추가 / 지점 삭제 / 출발지 변경 / 도착지 변경 만 띄운다.
+// 사이드바에서 트랙을 골라 두었으면 그 대신 경유지 추가 / ✂ 경로 자르기 / 지점 삭제 / 출발지 변경 / 도착지 변경 만 띄운다.
 // 페이지 어댑터: _ctxMarkerAt(lat,lng) · _ctxTextAt(lat,lng) · _ctxAreaAt(lat,lng). 거리 = 선 그리기, 경로 = 경로찾기를 그 점에서 시작.
 // 메뉴를 띄웠으면 true (페이지는 원래 우클릭 동작을 건너뜀)
 function mapCtxMenu(x, y, lat, lng){
   if (_isDrawing()) return false;
+  if (routeCutCancel()) return true;   // ✂ 자르기 중 우클릭 = 취소
   _routeCtxClose();
   const m = document.createElement('div');
   m.id = 'routeCtxMenu';
@@ -2662,7 +2663,9 @@ function mapCtxMenu(x, y, lat, lng){
     m.appendChild(b);
   };
   const it = _routeSelTrack();
-  if (it && _trackPtsOf(it)) {
+  const single = !!(it && _trackPtsOf(it));
+  const cutOnly = !single && !!(it && it._routeCut && _trackPartsOf(it));   // 잘라서 조각이 여럿인 경로 → 자르기만
+  if (single || cutOnly) {
     // 트랙을 골라 둔 상태 → 경로 편집 메뉴만 (2026-10-17 사용자 요청)
     // 머리줄 = 트랙 이름 + 경로 옵션 목록(바꾸면 그 옵션으로 다시 찾기, 2026-10-17)
     const head = document.createElement('div');
@@ -2676,9 +2679,13 @@ function mapCtxMenu(x, y, lat, lng){
     const curOpt = it._routeOpt && ROUTE_OPTS[it._routeOpt] ? it._routeOpt : _routeProfile();
     Object.keys(ROUTE_OPTS).forEach(k => { const o = document.createElement('option'); o.value = k; o.textContent = ROUTE_OPTS[k].name; if (k === curOpt) o.selected = true; hs.appendChild(o); });
     hs.onchange = () => { const v = hs.value; _routeCtxClose(); _routeSetOpt(it, v); };
-    head.appendChild(hn); head.appendChild(hs);
+    head.appendChild(hn); if (single) head.appendChild(hs);
     m.appendChild(head);
-    [['via', '📍 경유지 추가'], ['del', '❌ 지점 삭제'], ['start', '🚩 출발지 변경'], ['end', '🏁 도착지 변경']].forEach(([k, t]) => btn(t, () => _routeEditWp(it, k, [lat, lng])));
+    if (single) {
+      btn('📍 경유지 추가', () => _routeEditWp(it, 'via', [lat, lng]));
+      btn('✂ 경로 자르기', () => routeCutStart(it));   // 2026-11-17 — 두 점 사이 구간 지우기
+      [['del', '❌ 지점 삭제'], ['start', '🚩 출발지 변경'], ['end', '🏁 도착지 변경']].forEach(([k, t]) => btn(t, () => _routeEditWp(it, k, [lat, lng])));
+    } else btn('✂ 경로 자르기', () => routeCutStart(it));
   } else {
     btn('📍 마커 입력', () => _ctxMarkerAt(lat, lng));
     btn('📝 문자 입력', () => _ctxTextAt(lat, lng));
@@ -2705,8 +2712,9 @@ function mapCtxMenu(x, y, lat, lng){
 //  페이지의 showPolyMenu 맨 앞에서 부른다. obj = 카카오 Polyline/Polygon 또는 브이월드 레이어. 어댑터 _ctxLatLngAt(x,y) → [lat,lng]
 function routeCtxOnPoly(x, y, obj){
   if (_isDrawing()) return false;
+  if (routeCutCancel()) return true;   // ✂ 자르기 중 우클릭 = 취소
   const it = _routeSelTrack();
-  if (!it || !_trackPtsOf(it)) return false;
+  if (!it || !(_trackPtsOf(it) || (it._routeCut && _trackPartsOf(it)))) return false;
   if (!(it.polyline === obj || it.polyLyr === obj || (it.extraOverlays || []).includes(obj))) return false;
   const ll = _ctxLatLngAt(x, y);
   if (!ll) return false;
@@ -2751,6 +2759,120 @@ async function _routeEditWp(it, kind, p){
   else w[w.length - 1] = p;
   const why = { via: '경유지 넣고', del: '지점 지우고', start: '출발지 바꾸고', end: '도착지 바꾸고' }[kind] + ' 다시 찾는 중…';
   await _routeRedoItem(it, it._routeOpt && ROUTE_OPTS[it._routeOpt] ? it._routeOpt : _routeProfile(), why);
+}
+
+// ── ✂ 경로 자르기 (2026-11-17) — 경로 메뉴에서 누른 뒤 선 위 두 점을 차례로 클릭 → 그 사이 구간을 지운다 ──
+//   · 가운데를 자르면 남은 두 조각은 **한 항목(묶음선)** 그대로(사용자 요청) — it._routeCut = true 로 표시해 두고,
+//     조각이 여럿이면 경로 메뉴에는 머리줄 + 자르기만 나온다(경유지·옵션 다시 찾기는 한 줄 경로일 때만).
+//   · 끝 쪽을 잘라 한 줄만 남으면 경유점도 맞춰 줄여 계속 경로로 쓸 수 있다.
+//   · 취소: 안내줄의 [✕ 취소] · Esc · 지도 우클릭. 되돌리기: Ctrl+Z.
+//   · 페이지 어댑터: _trackPartsOf(it) → [[[lat,lng],..],..] (선만 든 트랙, 아니면 null) · _trackSetParts(it, parts) · _ctxDot(lat,lng) → {remove()}
+//     지도 클릭 받기: 페이지 지도 클릭 처리 맨 앞에서 routeCutPick(lat,lng) 가 true 면 그 클릭은 끝.
+var _routeCutSt = null;   // { it, a: 첫 점 투영 | null, dot, bar }
+function _cutProj(parts, p){
+  const r = Math.PI / 180, c = Math.cos(p[0] * r), X = q => [(q[1] - p[1]) * c * 111320, (q[0] - p[0]) * 110540];
+  let best = null;
+  parts.forEach((pa, k) => {
+    for (let i = 0; i < pa.length - 1; i++) {
+      const a = X(pa[i]), b = X(pa[i + 1]), dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy;
+      let t = L ? -(a[0] * dx + a[1] * dy) / L : 0; t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(a[0] + dx * t, a[1] + dy * t);
+      if (!best || d < best.d) best = { k, i, t, d, pt: [pa[i][0] + (pa[i + 1][0] - pa[i][0]) * t, pa[i][1] + (pa[i + 1][1] - pa[i][1]) * t] };
+    }
+  });
+  return best;
+}
+function _cutKey(q){ return q.k * 1e7 + q.i + q.t; }
+function _cutDedup(pa){ return pa.filter((q, i) => !i || Math.abs(q[0] - pa[i - 1][0]) > 1e-9 || Math.abs(q[1] - pa[i - 1][1]) > 1e-9); }
+// A~B 사이를 뺀 조각 목록 (0.5m 안 되는 자투리는 버림)
+function _cutApply(parts, A, B){
+  if (_cutKey(B) < _cutKey(A)) { const t = A; A = B; B = t; }
+  const out = [];
+  parts.forEach((pa, k) => {
+    if (k < A.k || k > B.k) { out.push(pa); return; }
+    if (k === A.k) { const h = _cutDedup(pa.slice(0, A.i + 1).concat([A.pt])); if (h.length >= 2 && _routeLen(h) > 0.5) out.push(h); }
+    if (k === B.k) { const t = _cutDedup([B.pt].concat(pa.slice(B.i + 1))); if (t.length >= 2 && _routeLen(t) > 0.5) out.push(t); }
+  });
+  return { out, A, B };
+}
+// 지금 화면에서 클릭 허용 거리(m) — 25px
+function _cutTolM(){
+  try {
+    const b = _viewLLBounds(), el = document.getElementById('map') || document.getElementById('vmap');
+    const w = _routeHav([b[0], b[1]], [b[0], b[3]]), px = (el && el.clientWidth) || innerWidth;
+    return Math.max(3, w / px * 25);
+  } catch (e) { return 30; }
+}
+function routeCutStart(it){
+  const parts = _trackPartsOf(it);
+  if (!parts || !parts.length) return;
+  if (_isDrawing()) return;
+  routeCutCancel(true);
+  const bar = document.createElement('div');
+  bar.id = 'routeCutBar';
+  bar.style.cssText = 'position:fixed;top:64px;left:50%;transform:translateX(-50%);z-index:100001;background:#fff8e1;border:2px solid #f9a825;border-radius:10px;box-shadow:0 4px 14px rgba(0,0,0,.25);padding:7px 10px 7px 14px;font-size:14px;display:flex;align-items:center;gap:10px;white-space:nowrap;';
+  bar.innerHTML = '<span data-k="msg"></span><button type="button" data-k="x" style="font-size:13px;padding:3px 10px;cursor:pointer;border:1px solid #bbb;border-radius:6px;background:#fff;">✕ 취소 (Esc)</button>';
+  bar.querySelector('[data-k="x"]').onclick = e => { e.stopPropagation(); routeCutCancel(); };
+  ['mousedown', 'click', 'contextmenu'].forEach(ev => bar.addEventListener(ev, e => e.stopPropagation()));
+  document.body.appendChild(bar);
+  _routeCutSt = { it, a: null, dot: null, bar };
+  _routeCutMsg('✂ 경로 자르기 — 지울 구간의 <b>첫 점</b>을 선 위에서 클릭하세요');
+  document.addEventListener('keydown', _routeCutKeyH, true);
+  try { _setMapCursor('crosshair'); } catch (e) {}
+}
+function _routeCutMsg(h){ const s = _routeCutSt && _routeCutSt.bar.querySelector('[data-k="msg"]'); if (s) s.innerHTML = h; }
+function _routeCutKeyH(e){ if (e.key === 'Escape' && _routeCutSt) { e.preventDefault(); e.stopPropagation(); routeCutCancel(); } }
+function routeCutCancel(quiet){
+  if (!_routeCutSt) return false;
+  const st = _routeCutSt; _routeCutSt = null;
+  try { if (st.dot) st.dot.remove(); } catch (e) {}
+  st.bar.remove();
+  document.removeEventListener('keydown', _routeCutKeyH, true);
+  try { _setMapCursor(''); } catch (e) {}
+  if (!quiet) showSaveStatus('✂ 경로 자르기를 취소했습니다');
+  return true;
+}
+// 페이지 지도 클릭 맨 앞에서 부른다. 자르기 중이면 true(그 클릭은 여기서 끝)
+function routeCutPick(lat, lng){
+  const st = _routeCutSt;
+  if (!st) return false;
+  const it = st.it;
+  const parts = allItems.includes(it) ? _trackPartsOf(it) : null;
+  if (!parts || !parts.length) { routeCutCancel(true); return true; }
+  const q = _cutProj(parts, [lat, lng]);
+  if (!q || q.d > _cutTolM()) { _routeCutMsg('✂ 선에서 너무 멉니다 — <b>' + (st.a ? '둘째' : '첫') + ' 점</b>을 선 위(가까이)에서 클릭하세요'); return true; }
+  if (!st.a) {
+    st.a = q; st.dot = _ctxDot(q.pt[0], q.pt[1]);
+    _routeCutMsg('✂ 이제 지울 구간의 <b>끝 점</b>을 클릭하세요 — 두 점 사이가 지워집니다');
+    return true;
+  }
+  if (Math.abs(_cutKey(q) - _cutKey(st.a)) < 1e-9) { _routeCutMsg('✂ 첫 점과 같은 자리입니다 — <b>끝 점</b>을 다른 곳에 클릭하세요'); return true; }
+  const r = _cutApply(parts, st.a, q);
+  if (!r.out.length) { _routeCutMsg('✂ 선 전체가 지워집니다 — 항목을 지우려면 취소하고 지우개·삭제를 쓰세요'); return true; }
+  routeCutCancel(true);
+  const before = { parts, wps: it._routeWps ? it._routeWps.map(p => p.slice()) : null, rc: !!it._routeCut };
+  let wps = null;
+  if (r.out.length === 1 && before.wps && before.wps.length >= 2 && parts.length === 1) {
+    // 한쪽 끝을 잘라 한 줄만 남음 → 남은 쪽 경유점 + 자른 자리를 새 출발/도착으로 (계속 경로로 쓸 수 있게)
+    const kA = _cutKey(r.A), kB = _cutKey(r.B);
+    const keys = before.wps.map(w => { const p = _cutProj(parts, w); return p ? _cutKey(p) : 0; });
+    const head = r.out[0][0], tailCut = Math.abs(head[0] - parts[0][0][0]) < 1e-9 && Math.abs(head[1] - parts[0][0][1]) < 1e-9;
+    if (tailCut) wps = before.wps.filter((w, i) => keys[i] < kA).concat([r.A.pt]);          // 뒤쪽을 잘라냄
+    else wps = [r.B.pt].concat(before.wps.filter((w, i) => keys[i] > kB));                // 앞쪽을 잘라냄
+    if (wps.length < 2) wps = [r.out[0][0], r.out[0][r.out[0].length - 1]];
+  }
+  const after = { parts: r.out, wps, rc: r.out.length > 1 || before.rc };
+  const put = s => {
+    _trackSetParts(it, s.parts);
+    if (s.wps) it._routeWps = s.wps.map(p => p.slice()); else delete it._routeWps;
+    if (s.rc) it._routeCut = true; else delete it._routeCut;
+  };
+  put(after);
+  try { pushHistory({ undo(){ put(before); }, redo(){ put(after); } }); } catch (e) {}
+  const lenOf = ps => ps.reduce((s, pa) => s + _routeLen(pa), 0);
+  showSaveStatus('✂ "' + (it.name || '경로') + '" ' + _routeFmtD(lenOf(parts) - lenOf(r.out)) + ' 잘라냄 · 남은 ' + _routeFmtD(lenOf(r.out))
+    + (r.out.length > 1 ? ' (' + r.out.length + '조각, 한 항목)' : '') + ' · Ctrl+Z 되돌리기');
+  return true;
 }
 
 // ══════════════════════════════════════════════════

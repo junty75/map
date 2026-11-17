@@ -2129,6 +2129,7 @@ function initializeMap(center, level) {
   });
 
   kakao.maps.event.addListener(map, 'click', e => {
+    if (routeCutPick(e.latLng.getLat(), e.latLng.getLng())) return;   // ✂ 경로 자르기 중 (mapcommon)
     if (_blockMapClick) return;
     if (textMovePending) { const f = textMovePending; cancelTextMove(); f(e.latLng); return; }   // 문자 이동 — 클릭한 자리로
     if (eraseMode) { eraseAt(e.latLng); return; }       // 지우개 — 누른 자리 근처 삭제
@@ -3440,6 +3441,28 @@ function _trackPtsOf(item) {
   if (!pl || pl._isPoly || pl._parts || (item.extraOverlays && item.extraOverlays.length)) return null;
   const parts = pathParts(pl);
   return (parts.length === 1 && parts[0].length >= 2) ? parts[0].map(p => [p.getLat(), p.getLng()]) : null;
+}
+// ✂ 경로 자르기 어댑터 (mapcommon.js routeCutStart/routeCutPick, 2026-11-17)
+//  선만 든 트랙의 조각들 [[[lat,lng],..],..] — 면·딸린 오버레이가 있으면 null
+function _trackPartsOf(item) {
+  const pl = item && item.polyline;
+  if (!pl || pl._isPoly || (item.extraOverlays && item.extraOverlays.length)) return null;
+  const ps = pathParts(pl).map(pa => pa.map(p => [p.getLat(), p.getLng()])).filter(pa => pa.length >= 2);
+  return ps.length ? ps : null;
+}
+// 조각들로 다시 세팅 — 2개 이상이면 한 항목 안의 묶음선(_parts, 지우개와 같은 방식)
+function _trackSetParts(item, parts) {
+  const pl = item && item.polyline; if (!pl || !parts.length) return;
+  const ps = parts.map(pa => pa.map(p => new kakao.maps.LatLng(p[0], p[1])));
+  if (ps.length > 1) { pl._parts = ps; pl.setPath(ps); } else { delete pl._parts; pl.setPath(ps[0]); }
+  delete pl._pnum;
+  renderList(); updateTrackHighlights();
+  if (pl._autoSave) autoSaveTrack(item);
+}
+function _ctxDot(lat, lng) {
+  const ov = new kakao.maps.CustomOverlay({ map, position: new kakao.maps.LatLng(lat, lng), xAnchor: 0.5, yAnchor: 0.5, zIndex: 30,
+    content: '<div style="width:12px;height:12px;background:#e53935;border:2px solid #fff;border-radius:50%;box-shadow:0 0 4px rgba(0,0,0,.6);pointer-events:none;"></div>' });
+  return { remove() { ov.setMap(null); } };
 }
 // 🟥 검색한 토지 경계 → 면 트랙(KMZ 폴리곤과 같은 모양 — 선택·색 변경·지우기·KMZ 저장 그대로)
 //   이름 = 찾은 주소(목록 주소칸과 같은 줄임). 멀리서 검색했으면 필지가 잘 보이게 확대.
