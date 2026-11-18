@@ -1293,7 +1293,7 @@ async function kakaoReverse(lng, lat) {
           const a = res[0].address;
           const parcel = a?.address_name || '';
           const road   = res[0].road_address?.address_name || '';
-          if (parcel || road) { resolve({addr: parcel || road, pnu: buildPnuKakao(a)}); return; }
+          if (parcel || road) { resolve({addr: sanJoin(parcel || road), pnu: buildPnuKakao(a)}); return; }
         }
         // 지번·도로명 모두 없음 → 행정구역(리까지)이라도. 정렬키는 법정동코드만(번지 0)
         _kakaoRegionAddr(kakaoGeocoder, lng, lat, (name, bcode) =>
@@ -1329,7 +1329,7 @@ async function _vworldReverse(lng, lat) {
     if (!parcel && !road) { parcel=res[0]?.text||''; road=res[1]?.text||''; struct=res[0]?.structure||struct; }
     if (road) { road=road.replace(/\s*\([^)]*\)/g,'').trim(); const parts=road.split(' '); if(parts.length>1) road=parts.slice(1).join(' '); }
     const addr = (parcel && road) ? `${parcel} / ${road}` : (parcel || road || '');
-    return { addr, pnu: buildPnuVworld(struct) };
+    return { addr: sanJoin(addr), pnu: buildPnuVworld(struct) };   // 산번지 '산67-9'
   }
   return { addr:'', pnu:'' };   // status OK인데 결과 없음(NOT_FOUND) 등
 }

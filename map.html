@@ -646,8 +646,8 @@ function buildPnu(bcode, adr) {
 
 function shortAddr(fullAddr) {
   if (!fullAddr) return '';
-  const out = trimRegion(fullAddr.trim().split(/\s+/));
-  return out.join(' ') || fullAddr;
+  const out = trimRegion(sanJoin(fullAddr).trim().split(/\s+/));
+  return out.join(' ') || sanJoin(fullAddr);
 }
 
 function fetchAddr(latlng, callback) {
@@ -2197,7 +2197,7 @@ function initializeMap(center, level) {
       const el = document.getElementById('address-display');
       el.onclick = () => copyAddressOnly(el.innerText);   // 주소만 복사 (위경도+주소+번호 마커는 Ctrl+C) — mapcommon.js
       if (status===kakao.maps.services.Status.OK && res[0]?.address) {
-        const legal = res[0].address.address_name;
+        const legal = sanJoin(res[0].address.address_name);   // 산번지 '산67-9'
         const roadFull = res[0].road_address?.address_name;
         const road = roadFull ? roadFull.split(' ').slice(1).join(' ') : '';
         el.innerText = road ? `${legal} / ${road}` : legal;
@@ -5175,7 +5175,7 @@ async function exportCSV() {
   if(!am.length){alert('내보낼 마커가 없습니다.');return;}
   const dest=await askSaveDest(defaultSaveName(document.getElementById('address-display').innerText.split(' ')[0]||'markers'),'.csv');if(!dest)return;
   const nnm=buildNumNameMap();
-  const getAddr=m=>new Promise(r=>{if(m.addr!==undefined){r(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(res,status)=>{m.addr=status===kakao.maps.services.Status.OK?(res[0].address?.address_name||''):'';if(m.addr){r(m.addr);return;}_kakaoRegionAddr(geocoder,pos.getLng(),pos.getLat(),n=>{m.addr=n;r(n);});});});
+  const getAddr=m=>new Promise(r=>{if(m.addr!==undefined){r(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(res,status)=>{m.addr=status===kakao.maps.services.Status.OK?sanJoin(res[0].address?.address_name||''):'';if(m.addr){r(m.addr);return;}_kakaoRegionAddr(geocoder,pos.getLng(),pos.getLat(),n=>{m.addr=n;r(n);});});});
   let csv='﻿이름,위도,경도,주소\n';
   for(const m of am){const pos=m.marker.getPosition?m.marker.getPosition():null;if(!pos)continue;const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
   saveBlobTo(dest, new Blob([csv],{type:'text/csv;charset=utf-8;'}));
@@ -5329,7 +5329,7 @@ async function exportSelectedCSV(){
   if(!sm.length){alert('선택된 마커가 없습니다.');return;}
   const dest=await askSaveDest(defaultSaveName('selected'),'.csv');if(!dest)return;
   const nnm=buildNumNameMap();
-  const getAddr=m=>new Promise(res=>{if(m.addr!==undefined){res(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(result,status)=>{m.addr=status===kakao.maps.services.Status.OK?(result[0].address?.address_name||''):'';if(m.addr){res(m.addr);return;}_kakaoRegionAddr(geocoder,pos.getLng(),pos.getLat(),n=>{m.addr=n;res(n);});});});
+  const getAddr=m=>new Promise(res=>{if(m.addr!==undefined){res(m.addr);return;}const pos=m.marker.getPosition();geocoder.coord2Address(pos.getLng(),pos.getLat(),(result,status)=>{m.addr=status===kakao.maps.services.Status.OK?sanJoin(result[0].address?.address_name||''):'';if(m.addr){res(m.addr);return;}_kakaoRegionAddr(geocoder,pos.getLng(),pos.getLat(),n=>{m.addr=n;res(n);});});});
   let csv='﻿이름,위도,경도,주소\n';
   for(const m of sm){const pos=m.marker.getPosition();const name=(nnm?.get(m)||m.name||'').replace(/"/g,'""');const addr=(await getAddr(m)).replace(/"/g,'""');csv+=`"${name}",${pos.getLat()},${pos.getLng()},"${addr}"\n`;}
   saveBlobTo(dest, new Blob([csv],{type:'text/csv;charset=utf-8;'}));

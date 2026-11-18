@@ -73,6 +73,11 @@ function trimRegion(parts) {
   return parts.slice(i);
 }
 
+// 산번지 붙여 쓰기 — 카카오·브이월드 모두 '… 노곡리 산 67-9' 로 주므로 '산67-9' 로 (휴대폰 뷰어와 같은 형식, 2026-11-18)
+function sanJoin(s) {
+  return String(s || '').replace(/(^|\s)산\s+(\d)/g, '$1산$2');
+}
+
 // 지번 주소가 없는 위치(바다·하천·미등록 토지 등) — 카카오 법정 행정구역(시도~리·동)으로 대신.
 //  coord2Address 가 ZERO_RESULT 여도 coord2RegionCode 는 행정구역을 준다(실측).
 //  cb(행정구역 전체 이름, 법정동코드 10자리)  — 못 찾으면 cb('', '')
@@ -522,7 +527,7 @@ async function _jusoCollect(api, q) {
   for (const r of all) {
     const d = {
       name: r.place_name || '',
-      addr: r.address_name || '',
+      addr: sanJoin(r.address_name || ''),
       road: r.road_address_name || (r.road_address && r.road_address.address_name) || '',
       lat: parseFloat(r.y), lng: parseFloat(r.x),
       atype: r.address_type || ''   // REGION = 리·동만 (필지 아님 → 토지 경계 안 그림)
@@ -1351,7 +1356,7 @@ const BASEMAP_HTM = [
 "      return parts.length > 1 ? parts.slice(1).join(' ') : name;",
 "    }",
 "    if (status === kakao.maps.services.Status.OK && (result[0].address || result[0].road_address)) {",
-"      var legal = result[0].address ? dropSido(result[0].address.address_name) : '';",
+"      var legal = result[0].address ? dropSido(result[0].address.address_name).replace(/(^| )산 +([0-9])/g, '$1산$2') : '';",
 "      var road  = result[0].road_address ? ' / ' + dropSido(result[0].road_address.address_name) : '';",
 "      addrEl.value = legal + road;",
 "    } else {",
