@@ -6159,8 +6159,9 @@ window.onload=()=>{
           d.items.forEach(item => {
             if (typeof item.lat !== 'number' || typeof item.lng !== 'number' ||
                 isNaN(item.lat) || isNaN(item.lng)) return;   // GPS 없음 → 미리보기만
-            if (permPaths.has(item.path)) return;   // 이미 영구 삽입됨 → 위치 핀 생략
             const latlng = new kakao.maps.LatLng(item.lat, item.lng);
+            // 이미 영구 삽입됨 → 위치 핀은 생략하되 지도는 그 위치로 이동 (2026-11-19 — 예전엔 이동도 안 했음)
+            if (permPaths.has(item.path)) { liveBounds.extend(latlng); liveCoords.push(latlng); return; }
             const path = item.path;
 
             // ① 사진 마커 삽입 (썸네일 포함)

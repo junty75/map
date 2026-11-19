@@ -5918,8 +5918,9 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
           d.items.forEach(item=>{
             if(typeof item.lat!=='number'||typeof item.lng!=='number'||
                isNaN(item.lat)||isNaN(item.lng))return;   // GPS 없음 → 미리보기만
-            if(permPaths.has(item.path))return;   // 이미 영구 삽입됨 → 위치 핀 생략
             const coord=toMerc(item.lng,item.lat);
+            // 이미 영구 삽입됨 → 위치 핀은 생략하되 지도는 그 위치로 이동 (2026-11-19 — 예전엔 이동도 안 했음)
+            if(permPaths.has(item.path)){coords.push(coord);return;}
             const path=item.path;
             // ① 사진 마커 삽입 (썸네일)
             const mkObj=addPhotoMarker(coord,item.imgSrc,item.name);
