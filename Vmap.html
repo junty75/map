@@ -586,6 +586,7 @@ function initMap(lat, lng) {
     pixelRatio         : 1
   };
   vmap = new vw.ol3.Map('vmap', vw.ol3.MapOptions);
+  try { _vwHookBase(); } catch (e) {}   // 첫 화면부터 OSM 예비 층은 받지 않게 (그리기 전에 끔)
 
   // ── 최대 확대 한 단계 늘리기 (브이월드 기본 19 → 20) ──────────────────────────
   // 카카오(map.html, minLevel:0)의 최대 확대가 z20 상당이라 브이월드가 한 단계 낮았다.
@@ -1015,7 +1016,7 @@ window.onload = () => {
   openSidebar();   // 지도 열릴 때 사이드바를 기본으로 펼친 상태로
 };
 
-function chgMapType(t) { if (vmap) vmap.setBasemapType(vw.ol3.BasemapType[t]); }
+function chgMapType(t) { if (vmap) { vmap.setBasemapType(vw.ol3.BasemapType[t]); try { _vwHookBase(); } catch (e) {} } }   // 새로 깔린 OSM 층도 바로 끔
 
 /* ════════════════════════════════════
    연도별 항공사진 (국토지리정보원 국토정보플랫폼)
@@ -1786,14 +1787,27 @@ const TILE_WAIT_MS=1000;
 // 인터넷 배경 타일이 실제로 다 받아졌는지 — 브이월드 배경 소스(OSM 제외)의 tileloadend 를 들어 'z/x/y' 를 기록한다.
 // (source.getTile 로 상태를 묻는 방식은 블록된 타일도 '받음'으로 나와 못 씀 — 2026-10-18 시험)
 const _vwLoaded=new Set(); const _vwHooked=new WeakSet();
+// 브이월드 SDK 는 고른 지도(항공·하이브리드·일반) 밑에 OpenStreetMap 층을 늘 깔아 화면마다 OSM 타일을 같은 수만큼 더 받았다
+//   (2026-11-19 실측: 처음 화면 OSM 25 + 위성 25 + 라벨 25, 항공사진으로 바꾸고 옮기면 OSM 56 + 위성 20) → 항공영상이 늦게 뜸.
+//   OSM 층은 꺼 두고, 브이월드 타일이 하나도 안 오고 실패만 쌓일 때(키·도메인 막힘 등)만 예비로 다시 켠다.
+let _vwOk=0, _vwErr=0, _vwOsmBackup=false;
+function _vwIsOsm(s){ let u=null; try{u=s&&s.getUrls&&s.getUrls();}catch(e){} return !!(u&&u.some(x=>/openstreetmap/.test(x))); }
+function _vwOsmSync(){
+  if(!vmap) return;
+  vmap.getLayers().getArray().forEach(l=>{
+    if(!(l instanceof ol.layer.Tile)||!_vwIsOsm(l.getSource()))return;
+    if(l.getVisible()!==_vwOsmBackup) l.setVisible(_vwOsmBackup);
+  });
+}
 function _vwHookBase(){
+  _vwOsmSync();
   vmap.getLayers().getArray().forEach(l=>{
     if(l===_offTileLyr||!(l instanceof ol.layer.Tile))return;
     const s=l.getSource(); if(!s||_vwHooked.has(s))return;
-    let u=null; try{u=s.getUrls&&s.getUrls();}catch(e){}
-    if(u&&u.some(x=>/openstreetmap/.test(x)))return;
+    if(_vwIsOsm(s))return;
     _vwHooked.add(s);
-    s.on('tileloadend',e=>{ try{ const c=e.tile.getTileCoord(); _vwLoaded.add(c[0]+'/'+c[1]+'/'+(-c[2]-1)); if(_vwLoaded.size>20000)_vwLoaded.clear(); }catch(er){} });
+    s.on('tileloadend',e=>{ _vwOk++; try{ const c=e.tile.getTileCoord(); _vwLoaded.add(c[0]+'/'+c[1]+'/'+(-c[2]-1)); if(_vwLoaded.size>20000)_vwLoaded.clear(); }catch(er){} });
+    s.on('tileloaderror',()=>{ _vwErr++; if(!_vwOsmBackup&&_vwOk===0&&_vwErr>=8){ _vwOsmBackup=true; _vwOsmSync(); console.warn('브이월드 배경 타일이 안 와서 OSM 예비 층을 켭니다'); } });
   });
 }
 function _vwBaseLoaded(z,x,y){
