@@ -109,8 +109,60 @@ function geohashEncode(lat, lng, prec) {
 
 function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+// 디스크 경로 없이 사진 데이터만 가진 사진(HTM 에서 불러온 사진 등) — 메모리 JPEG 의 EXIF 에 직접 쓴다(2026-11-19)
+function _metaIsMemPhoto(item) {
+  return !!(item && item.type === 'photo' && !item.path && typeof item.imgSrc === 'string'
+            && item.imgSrc.startsWith('data:image/jpeg') && typeof piexif !== 'undefined');
+}
+
 function _metaIsEditablePhoto(item) {
-  return !!(item && item.path && /\.(jpe?g|tiff?)$/i.test(item.path));
+  return !!(item && item.path && /\.(jpe?g|tiff?)$/i.test(item.path)) || _metaIsMemPhoto(item);
+}
+
+// 메모리 JPEG 의 XPTitle(40091)·XPComment(40092) 읽기 — 서버의 제목·설명과 같은 칸
+function _memMetaRead(item) {
+  const dec = a => {
+    if (!a || !a.length) return '';
+    let s = '';
+    for (let i = 0; i + 1 < a.length; i += 2) { const c = a[i] | (a[i + 1] << 8); if (!c) break; s += String.fromCharCode(c); }
+    return s.trim();
+  };
+  try {
+    const z = piexif.load(item.imgSrc)['0th'] || {};
+    return { title: dec(z[40091]), desc: dec(z[40092]) };
+  } catch (e) { return { title: '', desc: '' }; }
+}
+
+function _memMetaWrite(item, title, desc) {
+  const enc = s => { const b = []; for (let i = 0; i < s.length; i++) { const c = s.charCodeAt(i); b.push(c & 0xff, (c >> 8) & 0xff); } b.push(0, 0); return b; };
+  let exif;
+  try { exif = piexif.load(item.imgSrc); } catch (e) { exif = null; }
+  if (!exif) exif = { '0th': {}, 'Exif': {}, 'GPS': {}, '1st': {}, 'thumbnail': null };
+  exif['0th'] = exif['0th'] || {};
+  const z = exif['0th'];
+  if (title) z[40091] = enc(title); else delete z[40091];
+  if (desc)  z[40092] = enc(desc);  else delete z[40092];
+  let bytes;
+  try { bytes = piexif.dump(exif); }
+  catch (e) {   // 옛 EXIF 에 piexif 가 못 쓰는 칸이 있으면 위치·방향·촬영일만 남기고 다시
+    const o = exif, n = { '0th': {}, 'Exif': {}, 'GPS': o['GPS'] || {}, '1st': {}, 'thumbnail': null };
+    [piexif.ImageIFD.Orientation, piexif.ImageIFD.DateTime, 40091, 40092].forEach(k => { if (o['0th'][k] !== undefined) n['0th'][k] = o['0th'][k]; });
+    const dto = (o['Exif'] || {})[piexif.ExifIFD.DateTimeOriginal];
+    if (dto !== undefined) n['Exif'][piexif.ExifIFD.DateTimeOriginal] = dto;
+    bytes = piexif.dump(n);
+  }
+  let base = item.imgSrc;
+  try { base = piexif.remove(item.imgSrc); } catch (e) {}
+  item.imgSrc = piexif.insert(bytes, base);
+  const mo = item.markerObj || item.mkObj;   // 카카오 markerObj / 브이월드 mkObj
+  if (mo && 'imgSrc' in mo) mo.imgSrc = item.imgSrc;
+}
+
+// HTM 저장·불러오기용 — PHOTOS 6번째 값 = 설명. 저장 때 사진을 다시 압축해 EXIF 가 빠지므로 따로 싣는다.
+function _htmPhotoDesc(item) { return _metaIsMemPhoto(item) ? _memMetaRead(item).desc : ''; }
+function _htmPhotoDescApply(item, desc) {
+  if (!desc || !_metaIsMemPhoto(item)) return;
+  try { _memMetaWrite(item, _memMetaRead(item).title, String(desc)); } catch (e) { console.warn('HTM 설명 읽기 실패:', e); }
 }
 
 function updateMetaPanel(item) {
@@ -120,7 +172,8 @@ function updateMetaPanel(item) {
   _metaReqPath = item ? (item.path || item._srcKmz || '') : '';
   const eb = document.getElementById('metaEditBtn');
   if (eb) eb.disabled = !_metaIsEditablePhoto(item);   // 사진만 수정 가능
-  renderMeta(item, null);   // 우선 가진 정보로 즉시 표시
+  if (!_metaReqPath && _metaIsMemPhoto(item)) _metaSm = _memMetaRead(item);   // HTM 사진 — 자기 EXIF
+  renderMeta(item, _metaSm);   // 우선 가진 정보로 즉시 표시
   if (_metaReqPath && window.__wsReady && window.__wsReady())
     window.__wsSend({ type: 'get_file_meta', path: _metaReqPath });
 }
@@ -129,16 +182,41 @@ function updateMetaPanel(item) {
 function openMetaEdit() {
   if (!_metaIsEditablePhoto(_metaItem)) return;
   const m = document.getElementById('metaEditModal');
-  // 저장된 제목이 있으면 그걸, 없으면 빈칸(사진 파일명을 기본값으로 넣지 않음)
-  document.getElementById('metaEditTitle').value = (_metaSm && _metaSm.title) || '';
+  const mem = !_metaItem.path;
+  if (mem) _metaSm = _memMetaRead(_metaItem);
+  // 저장된 제목이 있으면 그걸, 없으면 빈칸(사진 파일명을 기본값으로 넣지 않음).
+  // HTM 사진은 파일명이 아니라 사용자가 붙인 이름이라 제목이 비었으면 이름을 채운다.
+  document.getElementById('metaEditTitle').value = (_metaSm && _metaSm.title) || (mem ? (_metaItem.name || '') : '');
   document.getElementById('metaEditDesc').value  = (_metaSm && _metaSm.desc) || '';
-  m._path = _metaItem.path;
+  m._path = _metaItem.path || '';
+  m._memItem = mem ? _metaItem : null;
   m.style.display = 'flex';
   setTimeout(() => document.getElementById('metaEditTitle').focus(), 30);
 }
 
 function saveMetaEdit() {
   const m = document.getElementById('metaEditModal');
+  if (m._memItem) {   // 경로 없는 사진(HTM 등) — 서버 없이 메모리 사진에 기록, 내보내기(HTM·KMZ)에 그대로 들어감
+    const it = m._memItem, title = document.getElementById('metaEditTitle').value.trim(),
+          desc = document.getElementById('metaEditDesc').value.trim();
+    try { _memMetaWrite(it, title, desc); }
+    catch (e) { console.error('메타 기록 실패:', e); alert('메타정보를 기록하지 못했습니다: ' + (e && e.message || e)); return; }
+    if (title && title !== it.name) {
+      it.name = title;
+      if (it.mkObj) it.mkObj.name = title;
+      if (it.markerObj) {   // 카카오 — 이름 칸 고치기(map.html 의 이름 바꾸기와 같은 곳들)
+        it.markerObj.name = title;
+        try { const f = markers.find(x => x.marker === it.markerObj.marker); if (f) f.name = title; } catch (e) {}
+        try { const c = it.markerObj.iw && it.markerObj.iw.getContent(); const t = c && (c.querySelector('span') || c.querySelector('div')); if (t) t.textContent = title; } catch (e) {}
+      }
+    }
+    m._memItem = null;
+    m.style.display = 'none';
+    if (typeof renderList === 'function') renderList();
+    if (_metaItem === it) { _metaSm = _memMetaRead(it); renderMeta(it, _metaSm); }
+    showSaveStatus('💾 메타정보 반영됨 — 파일로 남기려면 HTM·KMZ 로 다시 저장하세요');
+    return;
+  }
   if (!m._path) return;
   // 서버(사진위치표시.py)로 전송. 미연결이면 조용히 닫지 말고 알림 + 모달 유지(입력 보존).
   const sent = window.__wsSend && window.__wsSend({

@@ -4220,6 +4220,7 @@ function _loadExportedData1(D,bounds,_bulkStart){
     const ll=LL(p), name=p[2]||'사진';
     if(_hasPtExp(sigs,'M',p[0],p[1],name)){skipped++;return;}
     _addPtExp(sigs,'M',p[0],p[1],name); addPhotoMarker(ll,p[3],name,'');
+    if(p[5])_htmPhotoDescApply(allItems[allItems.length-1],p[5]);   // 6번째 값 = 설명
   });
 
   // 대량 로드 마무리 — loadKMZ 와 같은 순서(표 1회, 주소는 큐로 12건/초, 되돌리기 1건)
@@ -5067,7 +5068,9 @@ async function _collectHtmData(selectedOnly, items, textPred){
       // 5번째 값 = 주소. 뷰어에서 사진을 키웠을 때 이름과 함께 보여준다
       // (없으면 뷰어가 그때 조회한다). 옛 리더는 4번째까지만 보므로 호환에 문제 없음.
       const addr=_htmAddr(it.address||m.addr);
-      D.PHOTOS.push([R(pos.getLat()),R(pos.getLng()),name,src,addr]);
+      // 6번째 값 = 설명(메타정보 수정에서 넣은 것 — 다시 압축하면 EXIF 가 빠지므로 따로)
+      const desc=_htmPhotoDesc(it);
+      D.PHOTOS.push(desc?[R(pos.getLat()),R(pos.getLng()),name,src,addr,desc]:[R(pos.getLat()),R(pos.getLng()),name,src,addr]);
     }else{
       D.MARKERS.push([R(pos.getLat()),R(pos.getLng()),name]);
     }

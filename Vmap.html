@@ -3941,6 +3941,7 @@ function _loadExportedDataV(D,pts){
     const c=C(p), name=p[2]||'사진';
     if(_hasPtV(sigs,'M',c,name)){skipped++;return;}
     _addPtV(sigs,'M',c,name); addPhotoMarker(c,p[3],name);
+    if(p[5])_htmPhotoDescApply(allItems[allItems.length-1],p[5]);   // 6번째 값 = 설명
   });
 
   renderList();fitPts(pts);
@@ -4419,7 +4420,9 @@ async function _collectHtmData(selectedOnly,items,textPred){
       try{ if(m.imgSrc)src=await compressImage(m.imgSrc); }catch(e){}
       // 5번째 값 = 주소 (뷰어에서 사진 크게 볼 때 이름과 함께 표시)
       const addr=_htmAddr(it.address||m.addr);
-      D.PHOTOS.push([ll[0],ll[1],name,src,addr]);
+      // 6번째 값 = 설명(메타정보 수정에서 넣은 것 — 다시 압축하면 EXIF 가 빠지므로 따로)
+      const desc=_htmPhotoDesc(it);
+      D.PHOTOS.push(desc?[ll[0],ll[1],name,src,addr,desc]:[ll[0],ll[1],name,src,addr]);
     }else{
       D.MARKERS.push([ll[0],ll[1],name]);
     }
