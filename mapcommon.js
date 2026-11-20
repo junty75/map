@@ -2813,15 +2813,16 @@ function mapCtxMenu(x, y, lat, lng){
       [['del', '❌ 지점 삭제'], ['start', '🚩 출발지 변경'], ['end', '🏁 도착지 변경']].forEach(([k, t]) => btn(t, () => _routeEditWp(it, k, [lat, lng])));
     } else btn('✂ 경로 자르기', () => routeCutStart(it));
   } else {
-    btn('📍 마커 입력', () => _ctxMarkerAt(lat, lng));
-    btn('📝 문자 입력', () => _ctxTextAt(lat, lng));
+    // 순서(2026-11-20 사용자 요청): 경로 찾기 · 거리 재기 · 면적 재기 · 문자 입력 · 마커 입력 · 취소
+    btn('🧭 경로 찾기', () => { toggleRouteDraw(); routeClick(lat, lng); });
     btn('📏 거리 재기 (Alt)', () => {
       if (typeof areaMode !== 'undefined' && areaMode) stopAreaMeasure();
       _drawStart(); _drawAppendPts([[lat, lng]]);
       showSaveStatus('📏 거리 재기 — 지도를 클릭해 점 찍기 · 우클릭=끝내기(목록에 트랙으로) · Backspace=한 점 취소');
     });
     btn('📐 면적 재기', () => _ctxAreaAt(lat, lng));
-    btn('🧭 경로 찾기', () => { toggleRouteDraw(); routeClick(lat, lng); });
+    btn('📝 문자 입력', () => _ctxTextAt(lat, lng));
+    btn('📍 마커 입력', () => _ctxMarkerAt(lat, lng));
   }
   btn('✕ 취소', null);
   document.body.appendChild(m);
