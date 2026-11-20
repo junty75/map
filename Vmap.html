@@ -5601,7 +5601,7 @@ function parseCSV(line){const r=[];let cur='',inQ=false;for(const ch of line){if
     const rs=rings.map(r=>r.map(p=>toMerc(p[1], p[0])));
     const src=new ol.source.Vector();
     const pg=new ol.Feature(new ol.geom.Polygon(rs));
-    pg.setStyle(new ol.style.Style({fill:new ol.style.Fill({color:hexRgba(st.fill,st.fillOpacity)})}));
+    pg.setStyle(new ol.style.Style({fill:new ol.style.Fill({color:hexRgba(st.fill,st.liveFillOpacity)})}));
     src.addFeature(pg);
     rs.forEach(r=>{
       const f=new ol.Feature(new ol.geom.LineString(r.concat([r[0]])));

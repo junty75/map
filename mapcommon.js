@@ -3087,7 +3087,8 @@ async function _elePrepare(lines){
 //   · 페이지 어댑터: _parcelAddTrack(rings[[[lat,lng],..],..], name, [lat,lng]) → 'added' | 'dup'
 // ══════════════════════════════════════════════════
 var _parcelSeq = 0, _parcelName = '', _parcelPt = null, _parcelNoSrvSaid = false, _parcelNoShpSaid = false;
-var PARCEL_STYLE = { color: '#FF0000', width: 4, fill: '#FF0000', fillOpacity: 0.15 };
+var PARCEL_STYLE = { color: '#FF0000', width: 4, fill: '#FF0000', fillOpacity: 0.15,
+  liveFillOpacity: 0.05 };   // 엑셀 PNU 셀 임시 경계 채움(살짝만 — 2026-11-20 사용자 요청), 테두리는 그대로
 function parcelShowAt(lat, lng, atype, name){
   parcelClear();
   if (atype === 'REGION') return;

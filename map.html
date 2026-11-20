@@ -5781,7 +5781,7 @@ window.onload=()=>{
     const st = PARCEL_STYLE;
     const paths = rings.map(r => r.map(p => new kakao.maps.LatLng(p[0], p[1])));
     const out = [new kakao.maps.Polygon({ map, path: paths.length === 1 ? paths[0] : paths, strokeWeight: 0,
-      fillColor: st.fill, fillOpacity: st.fillOpacity, zIndex: 5 })];
+      fillColor: st.fill, fillOpacity: st.liveFillOpacity, zIndex: 5 })];
     paths.forEach(pa => {
       const ring = pa.concat([pa[0]]);
       out.push(new kakao.maps.Polyline({ map, path: ring, strokeWeight: st.width + 3, strokeColor: '#FFFFFF', strokeOpacity: 0.9, zIndex: 6 }));
