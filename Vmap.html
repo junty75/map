@@ -22,7 +22,7 @@ if (location.search.indexOf('resetkey') >= 0) {
 try { (location.hash||'').replace(/^#/,'').split('&').forEach(function(kv){var p=kv.split('=');if(p.length===2&&p[1]){var k=decodeURIComponent(p[0]);if(k==='kakao_js_key'||k==='vworld_key'||k==='kakao_rest_key')localStorage.setItem(k,decodeURIComponent(p[1]));}}); } catch(e){}
 window.JTY_API_KEYS = {
   kakao_js_key: '94bf4516825c146467eb2318cd55b782',
-  vworld_key  : '55FD7275-A6F5-3B69-9966-CD4BFA2FD35F'
+  vworld_key  : 'EABC42F8-F1D3-4393-A966-38EE01F4B4C6'
 };
 try {
   localStorage.setItem('kakao_js_key', window.JTY_API_KEYS.kakao_js_key);
