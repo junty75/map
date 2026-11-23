@@ -2444,7 +2444,7 @@ async function _routeAsk(s, a, b){
 
 // ── 브이월드 도로중심선 길찾기 (2026-10-17, 휴대폰 gdrive.js vwSeg 이식) ──
 //  연속수치지형도 도로중심선(LT_L_N3A0020000)을 JSONP 로 받아(CORS 헤더 없음) _vwGraphRoute 로 최단경로.
-//  키: 페이지 키(깃허브 배포본은 github.io 도메인 등록 키 고정) — file:// 로컬 모드는 domain=http://localhost.
+//  키: 페이지 키(깃허브 배포본은 github.io 도메인 등록 키 고정) — 2026-11-23 부터 어디서든 domain=github.io + Referer 없음.
 //  a→b 가 4km 넘으면 받는 양이 많아 안 한다. 결과 [{pts, dist, time:0, src:'vworld'}] 또는 [].
 var _vwCache = [];
 function _vwKey(){
@@ -2458,13 +2458,15 @@ function _vwJsonp(url, ms){
     const t = setTimeout(() => { window[cb] = function () {}; end(null); }, ms);
     window[cb] = j => end(j);
     s.onerror = () => end(null);
+    s.referrerPolicy = 'no-referrer';   // 2026-11-23: localhost Referer 면 키가 거절됨 — domain 값으로만 인증
     s.src = url + '&callback=' + cb;
     document.head.appendChild(s);
   });
 }
 async function _vwRoads(box){
   const key = _vwKey(); if (!key) return null;
-  const dom = location.protocol === 'file:' ? 'http://localhost' : location.origin;
+  // 2026-11-23 키 통일(55FD…): 데이터 API 는 github.io 도메인으로만 허용 — 로컬 모드도 같은 domain(+ Referer 없음)
+  const dom = 'https://junty75.github.io';
   const base = 'https://api.vworld.kr/req/data?service=data&request=GetFeature&data=LT_L_N3A0020000&key=' + key
     + '&domain=' + encodeURIComponent(dom) + '&geomFilter=BOX(' + box.map(v => v.toFixed(6)).join(',') + ')&crs=EPSG:4326&format=json&size=1000';
   const hit = _vwCache.find(c => c[0] === base); if (hit) return hit[1];
